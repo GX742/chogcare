@@ -109,7 +109,7 @@ export async function createPaymentRequest(pending: PendingCreation, signal: Abo
     if (data?.creationNotStarted === true) clearUnstartedCreation(pending.input.mode, pending.key, storage);
     if (data?.creationNotStarted === true && data?.code === "BRIDGE_COST_LIMIT") throw new Error("Bridge fees are too high for this amount. No payment was created. Increase the amount or try again later.");
     if (data?.creationNotStarted === true && data?.code === "NFT_NOT_OWNED") throw new Error("This NFT is not held by your wallet. No payment was created. Try again: your current CHOG NFT will be found automatically.");
-    if (data?.creationNotStarted === true && data?.code === "NFT_DAILY_LIMIT") throw new Error("Your NFTs have already used today's grants. Try after 00:00 UTC. No payment was created.");
+    if (data?.creationNotStarted === true && data?.code === "NFT_DAILY_LIMIT") throw new Error("Your wallet or NFT already has today's donation. Try after 00:00 UTC. No payment was created.");
     throw new Error(data?.creationNotStarted === true ? "No payment was created. Check your details and availability, then try again." : "The request is not resolved yet. Retry this same request; do not send another payment. Your recovery reference is saved.");
   }
   return data as unknown;

@@ -80,6 +80,7 @@ export async function verifyPoolPayout(client, payout, txHash, logIndex) {
   const network = deliveryNetwork(payout.chainId ?? 1);
   const { receipt } = await finalizedReceipt(client, network.id, txHash);
   const event = transferAt(receipt, network.usdc, logIndex);
-  if (!same(event.from, payout.treasury) || !same(event.to, payout.recipient) || event.value !== 500_000n) throw new Error("Expected exactly 0.50 Ethereum USDC to the bound recipient.");
+  const units=payout.units??1_000_000;
+  if (![500_000,1_000_000].includes(units) || !same(event.from, payout.treasury) || !same(event.to, payout.recipient) || event.value !== BigInt(units)) throw new Error("Expected the exact reserved USDC amount to the bound recipient.");
   return { kind: "confirmed-pool-payout", txHash: txHash.toLowerCase(), logIndex, blockNumber: receipt.blockNumber.toString(), blockHash: receipt.blockHash };
 }

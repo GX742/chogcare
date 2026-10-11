@@ -28,7 +28,7 @@ function fixture(t) {
   }, day);
   const transaction = { type: 2, chainId: 1, nonce: 0, to: ETHEREUM_USDC, value: 0n, gasLimit: 60_000n,
     maxFeePerGas: 10_000_000_000n, maxPriorityFeePerGas: 1_000_000_000n,
-    data: iface.encodeFunctionData("transfer", [GIVETH_PROJECT_RECIPIENT, 500_000n]) };
+    data: iface.encodeFunctionData("transfer", [GIVETH_PROJECT_RECIPIENT, 1_000_000n]) };
   return { db, wallet, ledger, outbox, transaction };
 }
 
@@ -95,7 +95,7 @@ test("outbox rejects wrong chain, sender, token, value, data, fee cap and unsupp
   const foreignWallet = Wallet.createRandom();
   for (const change of [
     { chainId: 143 }, { type: 1 }, { to: foreignWallet.address }, { value: 1n },
-    { data: iface.encodeFunctionData("transfer", [foreignWallet.address, 500_000n]) },
+    { data: iface.encodeFunctionData("transfer", [foreignWallet.address, 1_000_000n]) },
     { data: iface.encodeFunctionData("transfer", [GIVETH_PROJECT_RECIPIENT, 500_001n]) },
     { data: transaction.data + "00" }, { gasLimit: 150_001n }, { maxFeePerGas: 100_000_000_000n },
   ]) {
@@ -120,7 +120,7 @@ test("nonce conflict rolls back ledger submission atomically; no unreserved payo
   assert.equal(db.prepare("SELECT state FROM pool_reservations WHERE invoice_id='b'").get().state, "reserved");
   assert.equal(db.prepare("SELECT COUNT(*) AS n FROM pool_payout_days").get().n, 1);
   const nextNonce = await wallet.signTransaction({ ...transaction, nonce: 1 });
-  assert.throws(() => outbox.persistSignedGrant("missing", "burundi", nextNonce, day), /verified NFT proof/);
+  assert.throws(() => outbox.persistSignedGrant("missing", "burundi", nextNonce, day), /payout reservation/);
   outbox.persistSignedGrant("b", "burundi", nextNonce, day);
   assert.equal(db.prepare("SELECT COUNT(*) AS n FROM pool_payout_days").get().n, 2);
   await assert.rejects(outbox.broadcast({ getChainId: async () => 143 }, "a"), /Wrong payout network/);
@@ -144,7 +144,7 @@ test("only finalized exact onchain delivery atomically marks both outbox and gra
   const receipt = { status: "success", transactionHash: hash, blockNumber: 100n, blockHash, logs: [{
     address: ETHEREUM_USDC, blockHash, blockNumber: 100n, transactionHash: hash, logIndex: 0, removed: false,
     topics: encodeEventTopics({ abi: erc20Abi, eventName: "Transfer", args: { from: wallet.address, to: GIVETH_PROJECT_RECIPIENT } }),
-    data: encodeAbiParameters([{ type: "uint256" }], [500_000n]),
+    data: encodeAbiParameters([{ type: "uint256" }], [1_000_000n]),
   }] };
   let finalized = 99n;
   const rpc = { getChainId: async () => 1, getTransactionReceipt: async () => receipt,
@@ -168,10 +168,10 @@ test("signed payout survives a real SQLite close/reopen and cannot become a seco
     const wallet = Wallet.createRandom();
     let outbox = createPayoutOutbox(db, wallet.address);
     const ledger = createPoolLedger(db);
-    ledger.creditVerifiedFunding({ chainId: 1, txHash: "0x" + "aa".repeat(32), logIndex: 0, units: 500_000 });
+    ledger.creditVerifiedFunding({ chainId: 1, txHash: "0x" + "aa".repeat(32), logIndex: 0, units: 1_000_000 });
     ledger.reserve({ invoiceId: "disk-test", collection: PAYMENT_POLICY.nftCollection, tokenId: "9" }, day);
     createNftProofLedger(db).recordVerifiedProof({ kind: "confirmed-nft-transfer", invoiceId: "disk-test", chainId: 143, collection: PAYMENT_POLICY.nftCollection, tokenId: "9", sender: wallet.address, txHash: "0x" + "bb".repeat(32), blockNumber: "100", blockHash: "0x" + "cc".repeat(32) }, day);
-    const raw = await wallet.signTransaction({ type: 2, chainId: 1, nonce: 5, to: ETHEREUM_USDC, value: 0n, gasLimit: 60_000n, maxFeePerGas: 10_000_000_000n, maxPriorityFeePerGas: 1_000_000_000n, data: iface.encodeFunctionData("transfer", [GIVETH_PROJECT_RECIPIENT, 500_000n]) });
+    const raw = await wallet.signTransaction({ type: 2, chainId: 1, nonce: 5, to: ETHEREUM_USDC, value: 0n, gasLimit: 60_000n, maxFeePerGas: 10_000_000_000n, maxPriorityFeePerGas: 1_000_000_000n, data: iface.encodeFunctionData("transfer", [GIVETH_PROJECT_RECIPIENT, 1_000_000n]) });
     const hash = outbox.persistSignedGrant("disk-test", "burundi", raw, day);
     db.close(); db = new DatabaseSync(filename);
     outbox = createPayoutOutbox(db, wallet.address);

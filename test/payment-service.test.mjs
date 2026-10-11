@@ -15,8 +15,8 @@ test("own payment API creates non-payable previews and refuses real invoices", a
   assert.equal(config.paymentsEnabled, false);
   assert.equal(config.verificationDisposition, "non-refundable donation");
   assert.match(config.claimFrequency, /UTC/);
-  assert.equal(config.dailyPoolLimitUsdc, "10.00");
-  assert.equal(config.maxDailyClaims, 20);
+  assert.equal(config.dailyPoolLimitUsdc, "3.00");
+  assert.equal(config.maxDailyClaims, 3);
   assert.equal(config.poolFunded, false);
   assert.equal(config.availableClaims, 0);
   const request = { mode: "nft", amount: "1", holderAddress: "0x1111111111111111111111111111111111111111", initiativeId: "burundi" };

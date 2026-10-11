@@ -25,7 +25,9 @@ export function createNftProofLedger(db) {
           typeof proof.tokenId !== "string" || !/^\d{1,78}$/.test(proof.tokenId) || BigInt(proof.tokenId) >= 2n ** 256n ||
           !/^\d{1,78}$/.test(proof.blockNumber) || !/^0x[0-9a-fA-F]{64}$/.test(proof.blockHash)) throw new Error("A confirmed Monad NFT proof is required.");
       const allowedScope=nftGrantScope(proof.sender,proof.invoiceId);
-      const scope=reservationScope??allowedScope;
+      // A new proof is daily by default for every owner. Only the trusted
+      // persisted reservation may explicitly resume a legacy repeat scope.
+      const scope=reservationScope??"daily";
       if(scope!=="daily"&&scope!==allowedScope)throw new Error("NFT proof is not eligible for repeat grants.");
       const campaign = `${scope}:${new Date(now).toISOString().slice(0, 10)}`;
       db.prepare("INSERT INTO nft_proofs VALUES (?, ?, ?, ?, ?, ?, ?)").run(

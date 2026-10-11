@@ -12,7 +12,7 @@ const collection = PAYMENT_POLICY.nftCollection;
 const day = Date.parse("2026-10-08T12:00:00Z");
 const funding = { chainId: 1, txHash: "0x" + "ab".repeat(32), logIndex: 0, units: 20_000_000 };
 const grant = i => ({ invoiceId: `invoice-${i}`, collection, tokenId: String(i) });
-test("daily cap is $10 including pending grants; the 21st simultaneous invoice cannot reserve", async () => {
+test("daily cap is $3 including pending grants; the fourth simultaneous invoice cannot reserve", async () => {
   const db = new DatabaseSync(":memory:");
   try {
     const ledger = createPoolLedger(db);
@@ -22,22 +22,22 @@ test("daily cap is $10 including pending grants; the 21st simultaneous invoice c
     ledger.creditVerifiedFunding(funding); // duplicate receipt is not another deposit
     assert.equal(ledger.summary(day).fundedAvailableUnits, 20_000_000);
     const attempts = await Promise.allSettled(Array.from({ length: 30 }, (_, i) => Promise.resolve().then(() => ledger.reserve(grant(i), day))));
-    assert.equal(attempts.filter(item => item.status === "fulfilled").length, 20);
-    assert.equal(ledger.summary(day).reservedTodayUnits, 10_000_000);
+    assert.equal(attempts.filter(item => item.status === "fulfilled").length, 3);
+    assert.equal(ledger.summary(day).reservedTodayUnits, 3_000_000);
     assert.equal(ledger.summary(day).availableClaims, 0);
     // Another owner/leading zero representation cannot obtain a second grant for NFT 1.
     assert.throws(() => ledger.reserve({ ...grant(1), invoiceId: "new-owner", tokenId: "01" }, day));
     assert.equal(ledger.reserve(grant(1), day + 86_400_000).day, "2026-10-08");
-    assert.equal(ledger.summary(day + 86_400_000).availableClaims, 20);
+    assert.equal(ledger.summary(day + 86_400_000).availableClaims, 3);
     ledger.reserve({ ...grant(1), invoiceId: "tomorrow" }, day + 86_400_000);
-    assert.equal(ledger.summary(day + 86_400_000).availableClaims, 19);
+    assert.equal(ledger.summary(day + 86_400_000).availableClaims, 2);
   } finally { db.close(); }
 });
 test("midnight resets the cap, not funding, and does not release uncertain payouts", () => {
   const db = new DatabaseSync(":memory:");
   try {
     const ledger = createPoolLedger(db);
-    ledger.creditVerifiedFunding({ ...funding, units: 500_000 });
+    ledger.creditVerifiedFunding({ ...funding, units: 1_000_000 });
     ledger.reserve(grant(1), day);
     const hash = "0x" + "cd".repeat(32);
     ledger.recordSubmission("invoice-1", hash);
@@ -48,7 +48,7 @@ test("midnight resets the cap, not funding, and does not release uncertain payou
     ledger.markPaid("invoice-1", hash);
     ledger.markPaid("invoice-1", hash);
     assert.equal(ledger.summary(day).fundedAvailableUnits, 0);
-    assert.throws(() => ledger.creditVerifiedFunding({ ...funding, units: 1_000_000 }), /conflict/);
+    assert.throws(() => ledger.creditVerifiedFunding({ ...funding, units: 2_000_000 }), /conflict/);
   } finally { db.close(); }
 });
 
@@ -83,8 +83,8 @@ test("independent concurrent workers cannot exceed the shared SQLite daily cap",
       worker.once("message", resolve); worker.once("error", reject);
     }));
     const counts = await Promise.all(attempts);
-    assert.equal(counts.reduce((sum, value) => sum + value, 0), 20);
-    assert.equal(ledger.summary(day).reservedTodayUnits, 10_000_000);
+    assert.equal(counts.reduce((sum, value) => sum + value, 0), 3);
+    assert.equal(ledger.summary(day).reservedTodayUnits, 3_000_000);
   } finally {
     await Promise.all(workers.map(worker => worker.terminate()));
     db.close();
@@ -94,14 +94,14 @@ test("independent concurrent workers cannot exceed the shared SQLite daily cap",
   }
 });
 
-test("a delayed payout backlog cannot bypass today's $10 submission cap", () => {
+test("a delayed payout backlog cannot bypass today's $3 submission cap", () => {
   const db = new DatabaseSync(":memory:");
   try {
     const ledger = createPoolLedger(db);
     ledger.creditVerifiedFunding(funding);
-    for (let i = 0; i < 30; i++) ledger.reserve(grant(i), day + (i >= 20 ? 86_400_000 : 0));
-    for (let i = 0; i < 20; i++) ledger.recordSubmission(`invoice-${i}`, "0x" + BigInt(i + 1).toString(16).padStart(64, "0"), day + 86_400_000);
-    assert.throws(() => ledger.recordSubmission("invoice-20", "0x" + "aa".repeat(32), day + 86_400_000), /submission limit/);
-    ledger.recordSubmission("invoice-20", "0x" + "aa".repeat(32), day + 2 * 86_400_000);
+    for (let i = 0; i < 6; i++) ledger.reserve(grant(i), day + (i >= 3 ? 86_400_000 : 0));
+    for (let i = 0; i < 3; i++) ledger.recordSubmission(`invoice-${i}`, "0x" + BigInt(i + 1).toString(16).padStart(64, "0"), day + 86_400_000);
+    assert.throws(() => ledger.recordSubmission("invoice-3", "0x" + "aa".repeat(32), day + 86_400_000), /submission limit/);
+    ledger.recordSubmission("invoice-3", "0x" + "aa".repeat(32), day + 2 * 86_400_000);
   } finally { db.close(); }
 });

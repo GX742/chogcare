@@ -1,9 +1,10 @@
 import { isAddress, zeroAddress } from "viem";
 import { chogBeneficiary, supportsNft } from "./chog-beneficiary.ts";
+import { NFT_POOL_GRANT_USDC } from "./nft-pool-policy.ts";
 
 export type NftInvoice = {
   kind:"payment"; mode:"nft"; id:string; state:"awaiting-payment"|"verifying"|"verified"|"paying"|"confirming"|"delivered"|"expired"|"manual-review";
-  amount:"1";asset:"MON";chainId:143;destinationChainId:10;initiativeId:string;recipient:string;subsidyUsdc:"0.50";
+  amount:"1";asset:"MON";chainId:143;destinationChainId:10;initiativeId:string;recipient:string;subsidyUsdc:"0.50"|"1.00";
   tokenId:string;holderAddress:string;depositAddress:string;paymentUri:string;expiresAt:number;claimDay:string;
   depositHash:string|null;destinationHash:string|null;observedDestinationHash:string|null;message:string|null;
 };
@@ -12,7 +13,7 @@ export function validateNftInvoice(value:unknown):NftInvoice {
   const x=value as NftInvoice;
   const addr=(s:unknown)=>typeof s==="string"&&isAddress(s)&&s.toLowerCase()!==zeroAddress;
   if(x.kind!=="payment"||x.mode!=="nft"||!/^([a-f0-9]{64})$/.test(x.id)||x.amount!=="1"||x.asset!=="MON"||x.chainId!==143||x.destinationChainId!==10||!supportsNft(x.initiativeId)||
-    x.recipient?.toLowerCase()!==chogBeneficiary(x.initiativeId,10).toLowerCase()||x.subsidyUsdc!=="0.50"||!addr(x.holderAddress)||!addr(x.depositAddress)||x.holderAddress.toLowerCase()===x.depositAddress.toLowerCase()||
+    x.recipient?.toLowerCase()!==chogBeneficiary(x.initiativeId,10).toLowerCase()||!["0.50",NFT_POOL_GRANT_USDC].includes(x.subsidyUsdc)||!addr(x.holderAddress)||!addr(x.depositAddress)||x.holderAddress.toLowerCase()===x.depositAddress.toLowerCase()||
     typeof x.tokenId!=="string"||!/^\d{1,78}$/.test(x.tokenId)||BigInt(x.tokenId)>=2n**256n||!Number.isSafeInteger(x.expiresAt)||!/^\d{4}-\d{2}-\d{2}$/.test(x.claimDay)||
     x.paymentUri!==`ethereum:${x.depositAddress}@143?value=1000000000000000000`||
     !["awaiting-payment","verifying","verified","paying","confirming","delivered","expired","manual-review"].includes(x.state)||

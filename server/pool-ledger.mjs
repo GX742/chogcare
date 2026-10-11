@@ -1,8 +1,8 @@
 import { DAILY_POOL_UNITS, SUBSIDY_UNITS, PAYMENT_POLICY } from "./policy.mjs";
 import { isAddress, zeroAddress } from "viem";
 import { atomic as transaction } from "./sqlite-transaction.mjs";
-import { nftGrantScope } from "./nft-repeat-policy.mjs";
 import { migratePoolRepeatScope } from "./pool-repeat-migration.mjs";
+import { migratePoolGrantPolicy } from "./pool-grant-migration.mjs";
 
 const hashPattern = /^0x[0-9a-fA-F]{64}$/;
 const dayKey = now => {
@@ -26,18 +26,20 @@ export function createPoolLedger(db, chainId = 1) {
       collection TEXT NOT NULL,
       token_id TEXT NOT NULL,
       day TEXT NOT NULL,
-      units INTEGER NOT NULL CHECK(units = 500000),
+      units INTEGER NOT NULL CHECK(units IN (500000,1000000)),
       state TEXT NOT NULL CHECK(state IN ('reserved', 'submitted', 'paid')),
       payout_hash TEXT UNIQUE,
       claim_scope TEXT NOT NULL DEFAULT 'daily',
+      holder_address TEXT,
       UNIQUE(collection, token_id, day, claim_scope)
     );
     CREATE TABLE IF NOT EXISTS pool_payout_days (
       invoice_id TEXT PRIMARY KEY REFERENCES pool_reservations(invoice_id),
       day TEXT NOT NULL,
-      units INTEGER NOT NULL CHECK(units=500000)
+      units INTEGER NOT NULL CHECK(units IN (500000,1000000))
     );`);
   migratePoolRepeatScope(db);
+  migratePoolGrantPolicy(db);
   transaction(db, () => {
     const bound = db.prepare("SELECT chain_id FROM pool_network WHERE singleton=1").get();
     if (bound && bound.chain_id !== chainId) throw new Error("Pool network cannot be changed in place.");
@@ -71,20 +73,23 @@ export function createPoolLedger(db, chainId = 1) {
       if (!isAddress(collection) || collection.toLowerCase() === zeroAddress || collection.toLowerCase() !== PAYMENT_POLICY.nftCollection) throw new Error("Unsupported collection.");
       if (!/^\d{1,78}$/.test(tokenId) || BigInt(tokenId) >= 2n ** 256n) throw new Error("Invalid NFT token ID.");
       const normalized = String(BigInt(tokenId));
-      const scope = nftGrantScope(holderAddress,invoiceId);
+      if(holderAddress!==undefined&&(!isAddress(holderAddress)||holderAddress.toLowerCase()===zeroAddress))throw new Error("Invalid NFT holder.");
+      const holder=holderAddress?.toLowerCase()??null;
+      const scope = "daily";
       return atomic(() => {
         const old = db.prepare("SELECT * FROM pool_reservations WHERE invoice_id=?").get(invoiceId);
         if (old) {
-          if (old.collection !== collection.toLowerCase() || old.token_id !== normalized) throw new Error("Invoice reservation conflict.");
+          if (old.collection !== collection.toLowerCase() || old.token_id !== normalized || holder&&old.holder_address&&old.holder_address!==holder) throw new Error("Invoice reservation conflict.");
           return old; // Retry, including after midnight, never reserves another grant.
         }
-        const used = db.prepare("SELECT COALESCE(SUM(units),0) AS units FROM pool_reservations WHERE day=?").get(day).units;
-        if (used + SUBSIDY_UNITS > DAILY_POOL_UNITS) throw new Error("The $10 daily pool limit has been reached.");
+        const used = db.prepare("SELECT COALESCE(SUM(units),0) AS units,COUNT(*) AS claims FROM pool_reservations WHERE day=?").get(day);
+        if (used.units + SUBSIDY_UNITS > DAILY_POOL_UNITS || used.claims>=PAYMENT_POLICY.maxDailyClaims) throw new Error("The $3 daily pool limit has been reached.");
         if (balance() < SUBSIDY_UNITS) throw new Error("Pool funding is insufficient. Do not request a verification payment.");
-        // A normal owner cannot reuse a token that has already received an
-        // exceptional grant today, including after transferring ownership.
-        if(scope==="daily"&&db.prepare("SELECT 1 FROM pool_reservations WHERE collection=? AND token_id=? AND day=?").get(collection.toLowerCase(),normalized,day))throw new Error("This NFT already has a daily grant.");
-        db.prepare("INSERT INTO pool_reservations (invoice_id,collection,token_id,day,units,state,payout_hash,claim_scope) VALUES (?, ?, ?, ?, ?, 'reserved', NULL, ?)").run(invoiceId, collection.toLowerCase(), normalized, day, SUBSIDY_UNITS,scope);
+        if(holder&&db.prepare("SELECT 1 FROM pool_reservations WHERE holder_address=? AND day=?").get(holder,day))throw new Error("This wallet already has a daily grant.");
+        // Collection + canonical token ID + UTC day stays used after a transfer,
+        // including any legacy exceptional reservation that already exists.
+        if(db.prepare("SELECT 1 FROM pool_reservations WHERE collection=? AND token_id=? AND day=?").get(collection.toLowerCase(),normalized,day))throw new Error("This NFT already has a daily grant.");
+        db.prepare("INSERT INTO pool_reservations (invoice_id,collection,token_id,day,units,state,payout_hash,claim_scope,holder_address) VALUES (?, ?, ?, ?, ?, 'reserved', NULL, ?, ?)").run(invoiceId, collection.toLowerCase(), normalized, day, SUBSIDY_UNITS,scope,holder);
         return db.prepare("SELECT * FROM pool_reservations WHERE invoice_id=?").get(invoiceId);
       });
     },
@@ -98,9 +103,9 @@ export function createPoolLedger(db, chainId = 1) {
         if (row.payout_hash) return;
         // A delayed backlog must not bypass today's send budget. This limits send
         // authorizations; chain inclusion can still fall on a later UTC day.
-        const used = db.prepare("SELECT COALESCE(SUM(units),0) AS units FROM pool_payout_days WHERE day=?").get(submissionDay).units;
-        if (used + SUBSIDY_UNITS > DAILY_POOL_UNITS) throw new Error("The $10 daily payout submission limit has been reached.");
-        db.prepare("INSERT INTO pool_payout_days VALUES (?, ?, ?)").run(invoiceId, submissionDay, SUBSIDY_UNITS);
+        const used = db.prepare("SELECT COALESCE(SUM(units),0) AS units,COUNT(*) AS claims FROM pool_payout_days WHERE day=?").get(submissionDay);
+        if (used.units + row.units > DAILY_POOL_UNITS || used.claims>=PAYMENT_POLICY.maxDailyClaims) throw new Error("The $3 daily payout submission limit has been reached.");
+        db.prepare("INSERT INTO pool_payout_days VALUES (?, ?, ?)").run(invoiceId, submissionDay, row.units);
         db.prepare("UPDATE pool_reservations SET state='submitted', payout_hash=? WHERE invoice_id=?").run(signedTransactionHash.toLowerCase(), invoiceId);
       });
     },
@@ -112,9 +117,9 @@ export function createPoolLedger(db, chainId = 1) {
     },
     summary(now = Date.now()) {
       const day = dayKey(now);
-      const used = db.prepare("SELECT COALESCE(SUM(units),0) AS units FROM pool_reservations WHERE day=?").get(day).units;
+      const used = db.prepare("SELECT COALESCE(SUM(units),0) AS units,COUNT(*) AS claims FROM pool_reservations WHERE day=?").get(day);
       const available = balance();
-      return { dailyLimitUnits: DAILY_POOL_UNITS, reservedTodayUnits: used, fundedAvailableUnits: available, availableClaims: Math.max(0, Math.floor(Math.min(DAILY_POOL_UNITS - used, available) / SUBSIDY_UNITS)) };
+      return { dailyLimitUnits: DAILY_POOL_UNITS, reservedTodayUnits: used.units, fundedAvailableUnits: available, availableClaims: Math.max(0, Math.min(PAYMENT_POLICY.maxDailyClaims-used.claims,Math.floor(Math.min(DAILY_POOL_UNITS-used.units,available)/SUBSIDY_UNITS))) };
     },
   };
 }

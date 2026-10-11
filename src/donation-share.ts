@@ -14,7 +14,7 @@ export function donationShare(input:{state:string;mode:"chog"|"nft";amount:strin
   const final=input.state==="delivered";
   const text=input.mode==="chog"
     ? `I donated ${amount} $CHOG to support ${initiative} through ChogCare. ${final?"Donation delivered.":"Received by the initiative, final confirmation in progress."}`
-    : `My CHOG NFT helped send $0.50 from the ChogCare pool to ${initiative}. Donation delivered.`;
+    : `My CHOG NFT helped send $${amount} from the ChogCare pool to ${initiative}. ${final?"Donation delivered.":"Donation received."}`;
   const url=new URL("https://twitter.com/intent/tweet");
   url.searchParams.set("text",text);url.searchParams.set("url",site.href);
   return {text,site:site.href,href:url.href,demo:site.hostname.endsWith(".example")};

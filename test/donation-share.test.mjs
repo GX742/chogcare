@@ -12,6 +12,13 @@ test("NFT share attributes the $0.50 donation to the pool, not the holder's paym
   const share=donationShare({...input,mode:"nft",amount:"0.50"});
   assert.match(share.text,/\$0.50 from the ChogCare pool/);assert.doesNotMatch(share.text,/I donated|1 MON/);
 });
+
+test("new NFT share uses the invoice's $1 amount while confirming without claiming finality",()=>{
+  const share=donationShare({...input,mode:"nft",state:"confirming",amount:"1.00"});
+  assert.match(share.text,/\$1.00 from the ChogCare pool/);
+  assert.match(share.text,/Donation received/);
+  assert.doesNotMatch(share.text,/Donation delivered|1 MON/);
+});
 test("share is available after receipt observation; failed or unfinished states remain private",()=>{
   assert.match(donationShare({...input,state:"confirming"}).text,/final confirmation in progress/);
   for(const state of ["processing","paying","expired","manual-review"])assert.equal(donationShare({...input,state}),null);

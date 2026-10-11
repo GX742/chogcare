@@ -69,10 +69,12 @@ test("funding credits only an approved funder and treasury on Ethereum USDC", as
   await assert.rejects(verifyPoolFunding(fixture(ETHEREUM_USDC, 10_000_000n, 143).rpc, config, hash, 2));
 });
 
-test("pool delivery requires the persisted hash and exact 0.50 USDC beneficiary transfer", async () => {
-  const payout = { treasury: from, recipient: to, txHash: hash };
-  assert.equal((await verifyPoolPayout(fixture(ETHEREUM_USDC, 500_000n, 1).rpc, payout, hash, 2)).kind, "confirmed-pool-payout");
-  for (const units of [499_999n, 500_001n]) await assert.rejects(verifyPoolPayout(fixture(ETHEREUM_USDC, units, 1).rpc, payout, hash, 2));
-  await assert.rejects(verifyPoolPayout(fixture(ETHEREUM_USDC, 500_000n, 1).rpc, { ...payout, recipient: other }, hash, 2));
-  await assert.rejects(verifyPoolPayout(fixture(ETHEREUM_USDC, 500_000n, 1).rpc, { ...payout, txHash: blockHash }, hash, 2));
+test("pool delivery requires the exact reserved amount for new and legacy grants", async () => {
+  for(const amount of [500_000,1_000_000]){
+  const payout = { treasury: from, recipient: to, txHash: hash,units:amount };
+  assert.equal((await verifyPoolPayout(fixture(ETHEREUM_USDC, BigInt(amount), 1).rpc, payout, hash, 2)).kind, "confirmed-pool-payout");
+  for (const units of [BigInt(amount)-1n,BigInt(amount)+1n]) await assert.rejects(verifyPoolPayout(fixture(ETHEREUM_USDC, units, 1).rpc, payout, hash, 2));
+  await assert.rejects(verifyPoolPayout(fixture(ETHEREUM_USDC, BigInt(amount), 1).rpc, { ...payout, recipient: other }, hash, 2));
+  await assert.rejects(verifyPoolPayout(fixture(ETHEREUM_USDC, BigInt(amount), 1).rpc, { ...payout, txHash: blockHash }, hash, 2));
+  }
 });

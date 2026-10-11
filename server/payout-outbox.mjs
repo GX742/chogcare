@@ -48,8 +48,10 @@ export function createPayoutOutbox(db, treasury, chainId = 1) {
           tx.gasLimit * tx.maxFeePerGas > 1_000_000_000_000_000n) throw new Error("Payout violates chain, sender, asset or gas policy.");
       // Exact canonical data: no approve(), extra calls, hidden trailing payload,
       // foreign recipient or bridge/provider-specific bytes are accepted.
-      const expectedData = transferAbi.encodeFunctionData("transfer", [recipient, 500_000n]);
-      if (tx.data.toLowerCase() !== expectedData.toLowerCase()) throw new Error("Payout must send exactly 0.50 USDC to the approved beneficiary.");
+      const reservation=db.prepare("SELECT units FROM pool_reservations WHERE invoice_id=?").get(invoiceId);
+      if(!reservation||![500_000,1_000_000].includes(reservation.units))throw new Error("Missing valid payout reservation.");
+      const expectedData = transferAbi.encodeFunctionData("transfer", [recipient, BigInt(reservation.units)]);
+      if (tx.data.toLowerCase() !== expectedData.toLowerCase()) throw new Error("Payout must send the exact reserved USDC amount to the approved beneficiary.");
       return atomic(db, () => {
         // Bind the signing job to the invoice, not just to any approved recipient.
         // Older single-beneficiary databases/tests have no nft_invoices table.
@@ -90,7 +92,8 @@ export function createPayoutOutbox(db, treasury, chainId = 1) {
     },
     async confirm(client, invoiceId, logIndex) {
       const row = load(invoiceId);
-      await verifyPoolPayout(client, { treasury, recipient: row.recipient, txHash: row.tx_hash, chainId }, row.tx_hash, logIndex);
+      const reservation=db.prepare("SELECT units FROM pool_reservations WHERE invoice_id=?").get(invoiceId);
+      await verifyPoolPayout(client, { treasury, recipient: row.recipient, txHash: row.tx_hash, chainId, units:reservation.units }, row.tx_hash, logIndex);
       atomic(db, () => {
         ledger.markPaid(invoiceId, row.tx_hash);
         db.prepare("UPDATE pool_outbox SET state='delivered' WHERE invoice_id=?").run(invoiceId);

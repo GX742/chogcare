@@ -61,7 +61,7 @@ test("AUDIT REGRESSION: one public holder cannot reserve all NFT checkout slots"
   await f.processor.issue(f.input("1"));
   for(const id of ["2","3"])await assert.rejects(f.processor.issue(f.input(id)),/already active/);
   assert.equal(f.reads(),0,"no ownership-control transaction was needed to reserve");
-  assert.equal(f.processor.publicStatus().availableClaims,19);
+  assert.equal(f.processor.publicStatus().availableClaims,2);
   assert.equal(f.processor.publicStatus().availableCheckoutSlots,2);
   assert.equal(f.processor.publicStatus().nftPaymentsEnabled,true);
 });
@@ -75,7 +75,7 @@ test("AUDIT REGRESSION: transient NFT proof failure retries the pinned hash with
   f.advance(5000);await f.processor.tick();
   assert.equal(f.reads(),reads+1,"the same proof is re-verified after backoff");
   assert.equal(f.processor.get(invoice.id).depositHash,pinned);
-  assert.equal(f.processor.publicStatus().reservedTodayUsdc,"0.50");
+  assert.equal(f.processor.publicStatus().reservedTodayUsdc,"1.00");
 });
 
 test("AUDIT REGRESSION: two browser sessions behind one proxy have independent polling budgets",async t=>{

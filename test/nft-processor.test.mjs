@@ -60,8 +60,8 @@ async function fixture(t, { checkpoint = () => {}, holderAddress = holder } = {}
     corruptFunding(token,from=NFT_POOL_FUNDER){fundingToken=token;fundingFrom=from;},
     setOwner(value){owner=value;},setGas(value){gas=value;},setFee(value){fee=value;},setTimeout(value){timeout=value;},
     async advance(ms){clock+=ms;await worker.tick();},
-    deposit(x,changes={}){sourceTip+=1n;const tx={hash:h(1000+deposits.length),blockNumber:sourceTip,blockHash:h(sourceTip),from:holder,to:x.depositAddress,value:10n**18n,input:"0x",...changes};deposits.push(tx);return tx.hash;},
-    async settle(finalized=false,token=usdc){assert.ok(accepted);const tx=Transaction.from(broadcasts.at(-1));const recipient=iface.decodeFunctionData("transfer",tx.data)[0];const b=destTip+1n;receipts.set(tx.hash,{status:"success",transactionHash:tx.hash,blockNumber:b,blockHash:h(b),logs:[transfer(token,tx.from,recipient,500000n,tx.hash,b)]});nonce=tx.nonce+1;tokenBalance-=500000n;if(finalized)destTip=b;await worker.tick();return tx;},
+    deposit(x,changes={}){sourceTip+=1n;const tx={hash:h(1000+deposits.length),blockNumber:sourceTip,blockHash:h(sourceTip),from:x.holderAddress,to:x.depositAddress,value:10n**18n,input:"0x",...changes};deposits.push(tx);return tx.hash;},
+    async settle(finalized=false,token=usdc){assert.ok(accepted);const tx=Transaction.from(broadcasts.at(-1));const [recipient,units]=iface.decodeFunctionData("transfer",tx.data);const b=destTip+1n;receipts.set(tx.hash,{status:"success",transactionHash:tx.hash,blockNumber:b,blockHash:h(b),logs:[transfer(token,tx.from,recipient,units,tx.hash,b)]});nonce=tx.nonce+1;tokenBalance-=units;if(finalized)destTip=b;await worker.tick();return tx;},
     async finalize(){destTip+=100n;await worker.tick();},
     async restart(){await worker.close();worker=createNftProcessor(settings,deps);await worker.tick();},
   };
@@ -79,22 +79,22 @@ for(const initiativeId of ["school-supplies","solar-foundation","vida-verde"])te
   assert.equal(f.worker.get(invoice.id).state,"confirming");
   await f.restart();await f.finalize();
   assert.equal(f.worker.get(invoice.id).state,"delivered");
-  assert.equal(f.broadcasts.length,1);assert.equal(f.worker.publicStatus().availableClaims,19);
+  assert.equal(f.broadcasts.length,1);assert.equal(f.worker.publicStatus().availableClaims,2);
 });
 
-test("allowlisted holder repeats the same NFT, but still needs new proof and cannot exceed $10",async t=>{
+test("legacy repeat holder gets one $1 grant per UTC day, including across restarts",async t=>{
   const f=await fixture(t,{holderAddress:"0x19a863aec37c83c7cb34548c29f1f7e41bcb51ca"});await f.fund();
-  for(let i=0;i<20;i++) {
-    const invoice=await f.worker.issue(f.input("1638"));
-    await assert.rejects(f.worker.issue(f.input("1638")),/active|not ready/);
-    assert.equal(f.broadcasts.length,i);
-    f.deposit(invoice);await f.worker.tick();await f.settle(true);
-    assert.equal(f.worker.get(invoice.id).state,"delivered");
-    if(i===0)await f.restart();
-  }
-  assert.equal(f.worker.publicStatus().availableClaims,0);
-  await assert.rejects(f.worker.issue(f.input("1638")));
-  assert.equal(f.broadcasts.length,20);
+  const invoice=await f.worker.issue(f.input("1638"));
+  f.deposit(invoice);await f.worker.tick();await f.settle(true);
+  assert.equal(f.worker.get(invoice.id).state,"delivered");
+  await f.restart();
+  await assert.rejects(f.worker.issue(f.input("1638")),/reserved for today/);
+  await assert.rejects(f.worker.issue(f.input("1639")),/reserved for today/);
+  assert.equal(f.worker.publicStatus().availableClaims,2);
+  assert.equal(f.broadcasts.length,1);
+  await f.advance(86400000);
+  const tomorrow=await f.worker.issue(f.input("1638"));
+  assert.equal(tomorrow.subsidyUsdc,"1.00");
 });
 
 test("smart-wallet deposits are discovered after a legacy cursor skipped them; double payment produces one grant",async t=>{
@@ -114,7 +114,7 @@ test("smart-wallet deposits are discovered after a legacy cursor skipped them; d
   assert.equal(f.broadcasts.length,1);
   await f.settle(true);
   assert.equal(f.worker.get(invoice.id).state,"delivered");
-  assert.equal(f.worker.publicStatus().availableClaims,19);
+  assert.equal(f.worker.publicStatus().availableClaims,2);
 });
 
 test("NFT discovery selects owned token without client token ID and keeps owner verification",async t=>{
@@ -137,7 +137,7 @@ test("NFT discovery rejects no holdings without allocating an address",async t=>
   const id="b".repeat(64);
   await assert.rejects(f.worker.issue(input,id),{code:"NFT_NOT_OWNED"});
   assert.equal(f.worker.canRetryUnissuedNft(id),true);
-  assert.equal(f.worker.publicStatus().availableClaims,20);
+  assert.equal(f.worker.publicStatus().availableClaims,3);
 });
 
 test("NFT checkout stays closed until verified Optimism funding AND gas; wrong token/sender cannot fund",async t=>{
@@ -167,20 +167,37 @@ test("additional approved funder is scanned; reconciliation and restart cannot d
     assert.equal(ledger.summary().fundedAvailableUnits,10000000);
     assert.equal(db.prepare("SELECT COUNT(*) AS n FROM pool_funding").get().n,1);
   } finally {db.close();}
-  await f.restart();assert.equal(f.worker.publicStatus().availableClaims,20);
+  await f.restart();assert.equal(f.worker.publicStatus().availableClaims,3);
 });
-test("NFT flow: reserve -> exact MON proof -> signed 0.50 Optimism USDC -> receipt -> finalized",async t=>{
+test("NFT flow: reserve -> exact MON proof -> signed 1.00 Optimism USDC -> receipt -> finalized",async t=>{
   const f=await fixture(t);await f.fund();
   const x=await f.worker.issue(f.input());assert.equal(validateNftInvoice(x).state,"awaiting-payment");
-  assert.equal(f.worker.publicStatus().reservedTodayUsdc,"0.50");assert.equal(f.worker.publicStatus().availableClaims,19);
+  assert.equal(f.worker.publicStatus().reservedTodayUsdc,"1.00");assert.equal(f.worker.publicStatus().availableClaims,2);
   await assert.rejects(f.worker.issue(f.input()));await assert.rejects(f.worker.issue({...f.input("2"),initiativeId:"gainforest"}));
   f.deposit(x);await f.worker.tick();assert.equal(f.worker.get(x.id).state,"paying");
   const tx=await f.settle(false);assert.equal(tx.chainId,10n);assert.equal(tx.to.toLowerCase(),usdc.toLowerCase());
-  assert.equal(tx.data,iface.encodeFunctionData("transfer",[GIVETH_PROJECT_RECIPIENT,500000n]));
+  assert.equal(tx.data,iface.encodeFunctionData("transfer",[GIVETH_PROJECT_RECIPIENT,1000000n]));
   assert.equal(f.worker.get(x.id).state,"confirming");
   await f.finalize();assert.equal(f.worker.get(x.id).state,"delivered");assert.equal(f.broadcasts.length,1);
   await f.restart();assert.equal(f.worker.get(x.id).state,"delivered");assert.equal(f.broadcasts.length,1);
   await assert.rejects(f.worker.issue(f.input()));
+});
+
+test("a legacy $0.50 reservation keeps its exact payout and public invoice through restart",async t=>{
+  const f=await fixture(t);await f.fund();const invoice=await f.worker.issue(f.input());
+  const db=new DatabaseSync(f.filename);
+  const record=JSON.parse(db.prepare("SELECT document FROM nft_invoices WHERE id=?").get(invoice.id).document);
+  delete record.subsidyUnits;
+  db.prepare("UPDATE pool_reservations SET units=500000 WHERE invoice_id=?").run(invoice.id);
+  db.prepare("UPDATE nft_invoices SET document=? WHERE id=?").run(JSON.stringify(record),invoice.id);
+  db.close();
+  await f.restart();
+  assert.equal(validateNftInvoice(f.worker.get(invoice.id)).subsidyUsdc,"0.50");
+  f.deposit(invoice);await f.worker.tick();const tx=await f.settle(true);
+  assert.equal(iface.decodeFunctionData("transfer",tx.data)[1],500000n);
+  assert.equal(f.worker.get(invoice.id).state,"delivered");
+  await f.restart();assert.equal(f.broadcasts.length,1);
+  assert.equal(f.worker.get(invoice.id).subsidyUsdc,"0.50");
 });
 test("wrong MON amount or lost NFT ownership never authorizes a payout",async t=>{
   const f=await fixture(t);await f.fund();const x=await f.worker.issue(f.input());
@@ -196,9 +213,9 @@ test("RPC timeout/restart rebroadcasts exact persisted NFT payout bytes, never a
 });
 test("unpaid expired reservations release only after finalized source window; bad receipt token cannot mark paid",async t=>{
   const f=await fixture(t);await f.fund();const x=await f.worker.issue(f.input());await f.advance(11*60000+1000);
-  assert.equal(f.worker.get(x.id).state,"expired");assert.equal(f.worker.publicStatus().availableClaims,20);
+  assert.equal(f.worker.get(x.id).state,"expired");assert.equal(f.worker.publicStatus().availableClaims,3);
   const y=await f.worker.issue(f.input());f.deposit(y);await f.worker.tick();await f.settle(true,ETHEREUM_USDC);
-  assert.notEqual(f.worker.get(y.id).state,"delivered");assert.equal(f.worker.publicStatus().reservedTodayUsdc,"0.50");
+  assert.notEqual(f.worker.get(y.id).state,"delivered");assert.equal(f.worker.publicStatus().reservedTodayUsdc,"1.00");
 });
 test("parallel issuance is bounded; chain is pinned across restarts; gas spikes pause without payout",async t=>{
   const f=await fixture(t);await f.fund();const results=await Promise.allSettled([f.worker.issue(f.input()),f.worker.issue(f.input("2"))]);
@@ -211,22 +228,25 @@ test("NFT invoice validator rejects wrong chain, QR, recipient and changed subsi
   const f=await fixture(t);await f.fund();const x=await f.worker.issue(f.input());
   for(const change of [{chainId:10},{destinationChainId:1},{paymentUri:"ethereum:"+other},{recipient:other},{subsidyUsdc:"0.49"},{state:"delivered"}])assert.throws(()=>validateNftInvoice({...x,...change}));
 });
-test("twenty finalized NFT grants exhaust the $10 budget; a 21st invoice cannot take MON",async t=>{
+test("three distinct holders receive $1 each; a fourth invoice cannot take MON",async t=>{
   const f=await fixture(t);await f.fund();
-  for(let i=1;i<=20;i++){
-    const x=await f.worker.issue(f.input(String(i)));f.deposit(x);await f.worker.tick();await f.settle(true);
+  for(let i=1;i<=3;i++){
+    const owner=`0x${String(i).repeat(40)}`;f.setOwner(owner);
+    const x=await f.worker.issue({...f.input(String(i)),holderAddress:owner});f.deposit(x);await f.worker.tick();await f.settle(true);
     assert.equal(f.worker.get(x.id).state,"delivered");
   }
-  assert.equal(f.worker.publicStatus().reservedTodayUsdc,"10.00");
+  assert.equal(f.worker.publicStatus().reservedTodayUsdc,"3.00");
   assert.equal(f.worker.publicStatus().availableClaims,0);
-  await assert.rejects(f.worker.issue(f.input("21")));
-  assert.equal(f.broadcasts.length,20);
+  await assert.rejects(f.worker.issue({...f.input("4"),holderAddress:`0x${"4".repeat(40)}`}));
+  assert.equal(f.broadcasts.length,3);
 });
 test("a new owner cannot reuse a token's daily grant; expired old payment cannot satisfy a fresh invoice",async t=>{
   const f=await fixture(t);await f.fund();const x=await f.worker.issue(f.input());f.deposit(x);await f.worker.tick();await f.settle(true);
-  f.setOwner(other);await assert.rejects(f.worker.issue({...f.input(),holderAddress:other}));
-  f.setOwner(holder);const old=await f.worker.issue(f.input("2"));await f.advance(661000);
-  const fresh=await f.worker.issue(f.input("2"));assert.notEqual(old.depositAddress,fresh.depositAddress);
+  f.setOwner(other);await f.restart();
+  await assert.rejects(f.worker.issue({...f.input(),holderAddress:other}),error=>error.code==="NFT_DAILY_LIMIT");
+  await assert.rejects(f.worker.issue({...f.input("0001"),holderAddress:other}),error=>error.code==="NFT_DAILY_LIMIT");
+  const old=await f.worker.issue({...f.input("2"),holderAddress:other});await f.advance(661000);
+  const fresh=await f.worker.issue({...f.input("2"),holderAddress:other});assert.notEqual(old.depositAddress,fresh.depositAddress);
   f.deposit(old);await f.worker.tick();assert.equal(f.worker.get(fresh.id).state,"awaiting-payment");assert.equal(f.broadcasts.length,1);
 });
 
@@ -240,7 +260,7 @@ test("proof timeout retries the same pinned deposit after backoff and restart, w
     return getTransaction(args);
   };
   await f.worker.tick();assert.equal(f.worker.get(x.id).state,"verifying");
-  assert.equal(f.worker.get(x.id).depositHash,pinned);assert.equal(f.worker.publicStatus().reservedTodayUsdc,"0.50");
+  assert.equal(f.worker.get(x.id).depositHash,pinned);assert.equal(f.worker.publicStatus().reservedTodayUsdc,"1.00");
   // Another transfer must not replace the pinned proof or create another grant.
   f.deposit(x);await f.worker.tick();assert.equal(reads.length,1);
   await f.restart();assert.equal(reads.length,1);
@@ -263,7 +283,7 @@ test("proof retry exhaustion retains the paid reservation even after invoice exp
   await f.worker.tick();
   for (const delay of [5000,10000,20000,40000,80000,160000,300000]) await f.advance(delay);
   assert.equal(reads,8);assert.equal(f.worker.get(x.id).state,"manual-review");
-  assert.equal(f.worker.get(x.id).depositHash,pinned);assert.equal(f.worker.publicStatus().reservedTodayUsdc,"0.50");
+  assert.equal(f.worker.get(x.id).depositHash,pinned);assert.equal(f.worker.publicStatus().reservedTodayUsdc,"1.00");
   await f.advance(600000);await f.restart();assert.equal(reads,8);assert.equal(f.broadcasts.length,0);
   assert.equal(f.worker.get(x.id).state,"manual-review");
   await assert.rejects(f.worker.issue(f.input("2")),/already active/);
@@ -291,12 +311,12 @@ test("public NFT admission bounds identities and reports a full queue separately
   await f.worker.issue({...f.input("2"),holderAddress:other});
   const third="0x3333333333333333333333333333333333333333";
   f.setOwner(third);await f.worker.issue({...f.input("3"),holderAddress:third});
-  const full=f.worker.publicStatus();assert.equal(full.availableClaims,17);assert.equal(full.availableCheckoutSlots,0);
+  const full=f.worker.publicStatus();assert.equal(full.availableClaims,0);assert.equal(full.availableCheckoutSlots,0);
   assert.equal(full.nftQueueFull,true);assert.equal(full.nftPaymentsEnabled,false);
   await assert.rejects(f.worker.issue({...f.input("4"),holderAddress:third}),/not ready/);
   await f.restart();assert.equal(f.worker.publicStatus().nftQueueFull,true);
   await f.advance(361000);assert.equal(f.worker.publicStatus().availableCheckoutSlots,3);
-  assert.equal(f.worker.publicStatus().nftPaymentsEnabled,true);assert.equal(f.worker.publicStatus().availableClaims,20);
+  assert.equal(f.worker.publicStatus().nftPaymentsEnabled,true);assert.equal(f.worker.publicStatus().availableClaims,3);
 });
 
 test("expired unpaid identity attempts are bounded per UTC day and across owner changes",async t=>{

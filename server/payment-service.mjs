@@ -4,7 +4,7 @@ import { dirname, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import { createPreviewInvoice } from "../src/checkout.ts";
 import { openInvoiceStore } from "./invoice-store.mjs";
-import { INITIATIVE_IDS, PAYMENT_POLICY } from "./policy.mjs";
+import { INITIATIVE_IDS, PAYMENT_POLICY, SUBSIDY_UNITS } from "./policy.mjs";
 import { publicDepositNode } from "./custody-vault.mjs";
 import { createHash } from "node:crypto";
 import { createHttpAdmission } from "./http-admission.mjs";
@@ -61,7 +61,7 @@ export function createPaymentService(store, allowedOrigin = "http://127.0.0.1:41
         return respond(200, {
           ...PAYMENT_POLICY,
           securityVersion: "2026-10-09-hardened-v1",
-          poolFunded: pool.fundedAvailableUnits >= 500_000,
+          poolFunded: pool.fundedAvailableUnits >= SUBSIDY_UNITS,
           availableClaims: pool.availableClaims,
           reservedTodayUsdc: (pool.reservedTodayUnits / 1_000_000).toFixed(2),
           custodyConfigured,

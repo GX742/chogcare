@@ -313,7 +313,7 @@ export default function App() {
       // The destination was hidden until this render, so native hash scrolling
       // alone can run too early when returning from checkout.
       const target = window.location.hash.slice(1);
-      if (["top", "causes", "how-it-works"].includes(target)) {
+      if (["top", "causes", "how-it-works", "leaderboard"].includes(target)) {
         document.getElementById(target)?.scrollIntoView({ block: "start", behavior: "instant" });
         if (returnedToLanding) document.getElementById(target)?.focus({ preventScroll: true });
       }
@@ -403,9 +403,9 @@ export default function App() {
               <div className="care-mechanic-art care-nft-art"><img src="/chog-holder-nft.png" alt="CHOG NFT with a blue hat and purple laser eyes" width="1000" height="1000" loading="lazy" /></div>
               <div className="care-mechanic-copy">
                 <div className="care-mechanic-label-row"><span className="care-mechanic-label">For NFT holders</span><span className="care-soon">Daily pool</span></div>
-                <h2 id="nft-mechanic-title" className="care-nft-title">$0.50<span>/ day</span></h2>
+                <h2 id="nft-mechanic-title" className="care-nft-title">$1<span>/ day</span></h2>
                 <p>Hold a CHOG NFT. Choose a cause.<br />The pool donates on your behalf.</p>
-                <span className="care-mechanic-note">Once per NFT, per UTC day. $10 daily pool.<br />Up to 20 claims, subject to available funds.</span>
+                <span className="care-mechanic-note">Three holders a day. $3 daily pool.<br />One donation per wallet and NFT.</span>
               </div>
             </article>
           </section>
@@ -455,10 +455,10 @@ export default function App() {
             <div className="lp-payment">
               <div className="lp-payment-tabs" role="tablist" aria-label="Donation method">{(["chog", "nft"] as const).map((item, index) => <button key={item} id={"tab-" + item} role="tab" aria-controls={"panel-" + item} aria-selected={mode === item} tabIndex={mode === item ? 0 : -1} onClick={() => chooseMode(item)} onKeyDown={event => {
                 if (["ArrowRight", "ArrowLeft", "Home", "End"].includes(event.key)) { event.preventDefault(); const next = event.key === "Home" ? "chog" : event.key === "End" ? "nft" : index === 0 ? "nft" : "chog"; document.getElementById("tab-" + chooseMode(next))?.focus(); }
-              }}>{item === "chog" ? <><img className="payment-tab-art payment-tab-coin" src="/chog-donation-coin.png" alt="" width="34" height="34"/> Give with CHOG</> : <><img className="payment-tab-art payment-tab-nft" src="/chog-holder-nft.png" alt="" width="32" height="32"/> NFT holder <small>$0.50</small></>}</button>)}</div>
+              }}>{item === "chog" ? <><img className="payment-tab-art payment-tab-coin" src="/chog-donation-coin.png" alt="" width="34" height="34"/> Give with CHOG</> : <><img className="payment-tab-art payment-tab-nft" src="/chog-holder-nft.png" alt="" width="32" height="32"/> NFT holder <small>$1</small></>}</button>)}</div>
               <CheckoutSizeTransition>
               <div id="panel-chog" role="tabpanel" aria-labelledby="tab-chog" hidden={mode !== "chog"}>
-                {mode === "chog" && <PaymentCheckout key={selectedId + "-chog-" + recoveryVersion} mode="chog" initiativeId={selectedId} initiativeName={selected.name} />}
+                {mode === "chog" && <PaymentCheckout key={selectedId + "-chog-" + recoveryVersion} mode="chog" initiativeId={selectedId} initiativeName={selected.name} onViewLeaderboard={()=>leaveStation("leaderboard")} />}
               </div>
               <div id="panel-nft" role="tabpanel" aria-labelledby="tab-nft" hidden={mode !== "nft"}>
                 {mode === "nft" && <PaymentCheckout key={selectedId + "-nft-" + recoveryVersion} mode="nft" initiativeId={selectedId} initiativeName={selected.name} />}
@@ -475,9 +475,9 @@ export default function App() {
         <section className="lp-section lp-faq" hidden={stationOpen} aria-labelledby="faq-heading">
           <div><h2 id="faq-heading">Before you donate.</h2></div>
           <div className="lp-faq-list">
-            <details><summary>Do I need a CHOG NFT to donate?<span>+</span></summary><p>No. Anyone can donate 300–1,000,000 CHOG when the processor is available. NFT holders can reserve a separate $0.50 pool donation when funded claims are open at checkout.</p></details>
+            <details><summary>Do I need a CHOG NFT to donate?<span>+</span></summary><p>No. Anyone can donate 300–1,000,000 CHOG when the processor is available. NFT holders can reserve a separate $1 pool donation when funded claims are open at checkout. Three holders can claim each day.</p></details>
             <details><summary>Do I need to connect my wallet?<span>+</span></summary><p>No connection to this website is required. Once payments are enabled, you will scan a payment QR or copy the dedicated deposit address and confirm a transfer inside your own wallet. Never share your private key or seed phrase.</p></details>
-            <details><summary>How does NFT verification work?<span>+</span></summary><p>Enter the wallet address holding your CHOG NFT. We find the NFT automatically. When the pool is ready, reserve $0.50 and send exactly 1 MON once to your single-use verification address on Monad. Use your NFT holder wallet, not an exchange. The 1 MON is a non-refundable donation held by ChogCare, separate from wallet gas. After verifying the transfer and ownership, the pool sends 0.50 USDC to the initiative on Optimism. Only pay an active checkout invoice.</p></details>
+            <details><summary>How does NFT verification work?<span>+</span></summary><p>Enter the wallet address holding your CHOG NFT. We find the NFT automatically. Reserve $1 and send exactly 1 MON once to your single-use verification address on Monad. The 1 MON is a non-refundable donation held by ChogCare, separate from wallet gas. After verifying your transfer and NFT, the pool sends 1 USDC to your cause on Optimism. One claim per wallet and NFT per UTC day, with three claims and $3 total daily. Only pay an active checkout invoice.</p></details>
             <details><summary>When is my donation complete?<span>+</span></summary><p>Received by the initiative means we verified its USDC transfer on the destination network. Final confirmation continues in the background; the receipt is not yet irreversible. Donation delivered means finality is confirmed. A CHOG deposit alone is not delivery. Keep the invoice to follow its status.</p></details>
             <details><summary>Who processes the funds?<span>+</span></summary><p>ChogCare controls each dedicated deposit address during processing. Nad.fun and Uniswap handle the exchanges; Relay handles the bridge. A failed or late transfer may require manual recovery. Save your invoice ID and never send a second payment to fix a pending one.</p></details>
           </div>

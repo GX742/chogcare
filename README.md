@@ -1,5 +1,11 @@
 # ChogCare
 
+## ChogCare Admin for Windows
+
+The local Windows app starts and monitors the payment worker, USB care station, Owncast and existing local gateway. It includes a read-only bridge estimate, sanitized activity log and private support inbox. Install from the locally built `work/admin-release/ChogCare-Admin-Setup-1.0.0.exe`, then open **ChogCare Admin** from the desktop shortcut. See [the app guide](docs/CHOGCARE-ADMIN.md).
+
+The phone dashboard is available at `/dashboard` after website deployment. It has no admin controls, passwords, wallet addresses, payment creation or support-ticket listing. Its unavailable or unconfirmed states are not presented as healthy services.
+
 ## Physical broadcast station (2026-10-11)
 
 The USB-connected NodeMCU/ST7789 station celebrates finalized CHOG donations with the donor's public nickname, amount and a softly pulsing LED. See [wiring, Arduino upload and Windows bridge instructions](firmware/README.md). The external LED uses **D0**; move the TFT reset wire to **D1** and leave its other SPI wires unchanged. The bridge only reads payment data and does not send funds. Run `npm run station -- --port COM4` only after verifying the actual NodeMCU port; close Arduino Serial Monitor first.
@@ -8,7 +14,7 @@ ChogCare is an owner-operated donation pilot with CHOG QR donations, CHOG NFT da
 
 ## Current checkout status (2026-10-11)
 
-**Current implementation: owner-unlocked local payment pilot.** The public frontend is hosted on Vercel; a narrow Tailscale Funnel proxy exposes only HLS video and the payment API. Run `npm run payments:start` personally and enter the existing vault password in its hidden terminal prompt. Website deployment does not start or update this local worker. Invoice issuance requires current network, custody and gas checks. Do not expose Vite, Owncast administration or payment storage.
+**Current implementation: owner-unlocked local payment pilot.** The public frontend is hosted on Vercel; a narrow Tailscale Funnel proxy exposes only HLS video and the payment API. Use **ChogCare Admin → Services → Unlock & start** to enter the existing vault password locally, or keep the existing `npm run payments:start` hidden-terminal workflow. Website deployment does not start or update this local worker. Invoice issuance requires current network, custody and gas checks. Do not expose Vite, Owncast administration or payment storage.
 
 CHOG donations support 300–1,000,000 CHOG, with a 10% NFT-pool contribution added on top. The worker validates exact payments and pinned destinations, then processes the conversion and delivery. The supported initiatives are Burundi, School Supplies & Crypto Education, The Solar Foundation, Vida Verde and Animal Ethics; their server-pinned delivery routes differ. Included destination receipts and finalized delivery are distinct states. Physical station celebrations require finalized CHOG delivery, not just an invoice or bridge response.
 

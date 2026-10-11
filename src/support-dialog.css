@@ -1,0 +1,40 @@
+.support-dialog{color:#f6eefe;background:#180f29;border:1px solid #675080;border-radius:28px;max-width:560px;width:calc(100% - 32px);padding:0;max-height:calc(100dvh - 32px);box-shadow:0 32px 100px #06020eb3;overflow:auto}
+.support-dialog::backdrop{background:#080411c7;backdrop-filter:blur(8px)}
+.support-content{padding:36px;position:relative}
+.support-close{position:absolute;right:18px;top:18px;background:#2b1d3d;border:1px solid #49345e;color:#eee0fa;border-radius:50%;width:40px;height:40px;display:grid;place-items:center;cursor:pointer;transition:background .2s cubic-bezier(.22,.68,0,1.02)}
+.support-close:hover{background:#4b2c6c}
+.support-icon{display:grid;place-items:center;width:52px;height:52px;border-radius:16px;background:#eee0fa;color:#49216e;margin-bottom:24px}
+.support-eyebrow{font-size:11px;font-weight:750;letter-spacing:.15em;color:#c6ade6;margin:0 0 10px}
+.support-content h2{font-size:34px;font-weight:750;letter-spacing:-.045em;line-height:1.15;margin:0;color:#fff3ed}
+.support-content h2 span{color:#f69ccf}
+.support-intro{font-size:16px;line-height:1.6;color:#d0bfdc;margin:18px 0 26px}
+.support-content form>label,.support-field-heading label{display:block;font-weight:650;font-size:14px;margin:20px 0 9px}
+.support-content label>span:not(.support-consent>span){color:#bdaacb;font-weight:400}
+.support-content form>input,.support-content textarea{width:100%;border:1px solid #624776;border-radius:12px;background:#110b1d;color:#fbf1ff;padding:13px 14px;font:inherit;font-size:16px;line-height:1.5;transition:border-color .2s cubic-bezier(.22,.68,0,1.02)}
+.support-content form>input:focus,.support-content textarea:focus{border-color:#d4adef;outline:2px solid #b878e044;outline-offset:2px}
+.support-content form>input::placeholder{color:#ac99bc}
+.support-content textarea{resize:vertical;min-height:140px}
+.support-field-heading{display:flex;align-items:baseline;justify-content:space-between;gap:12px}
+.support-field-heading>span{font-size:12px;color:#bdaacb}
+.support-content form>.support-consent{display:flex;gap:12px;align-items:flex-start;margin:22px 0;cursor:pointer}
+.support-consent input{width:19px;height:19px;accent-color:#b56af0;flex-shrink:0;margin:3px 0 0}
+.support-consent>span{display:grid;gap:5px;font-size:13px;line-height:1.5;color:#c8b6d7}
+.support-consent strong{font-size:14px;color:#f2e6fd}
+.support-privacy{display:flex;align-items:flex-start;gap:10px;font-size:13px;line-height:1.5;color:#cbbbda;margin:22px 0}
+.support-privacy svg{flex-shrink:0;color:#d4b2f6;margin-top:1px}
+.support-submit,.support-secondary{border:0;border-radius:999px;min-height:50px;padding:12px 20px;display:flex;align-items:center;justify-content:center;gap:12px;font:inherit;font-size:15px;font-weight:700;cursor:pointer;transition:background .25s cubic-bezier(.22,.68,0,1.02),transform .25s cubic-bezier(.22,.68,0,1.02)}
+.support-submit{width:100%;background:#eee0fa;color:#301146;margin-top:22px}
+.support-submit:not(:disabled):hover{background:#f8d4e9;transform:translateY(-1px)}
+.support-secondary{background:#2c1d40;color:#eee0fa;border:1px solid #6d4e8d;margin:20px 0;width:100%}
+.support-secondary:hover{background:#412553}
+.support-footnote{font-size:12px;color:#bdaacb;line-height:1.5;text-align:center;margin:14px 0 0}
+.support-error{background:#392034;border:1px solid #855671;color:#ffcee0;border-radius:12px;padding:12px 14px;font-size:14px;line-height:1.5;margin:18px 0 0;overflow-wrap:anywhere}
+.support-retry-note{font-size:13px;line-height:1.5;color:#dfc5f5}
+.support-confirmation{border-top:1px solid #4a345e;padding-top:24px}
+.support-confirmed{display:flex;align-items:center;gap:10px;color:#c4edda;font-weight:700}
+.support-confirmation>p{font-size:14px;line-height:1.6;color:#c8b6d7}
+.support-reference{display:block;font:700 28px "Manrope Variable",sans-serif;letter-spacing:.08em;color:#f6eefe;overflow-wrap:anywhere;user-select:all}
+.support-checkout-link{display:inline-flex;gap:8px;align-items:center;border:0;background:none;color:#d9b4f5;padding:6px 0;font:inherit;font-size:14px;font-weight:650;text-decoration:underline;text-underline-offset:4px;cursor:pointer;margin:8px 0 12px}
+.support-checkout-link:hover{color:#ffbce1}
+@media(max-width:520px){.support-content{padding:28px 22px}.support-content h2{font-size:30px}.support-intro{font-size:15px}.support-reference{font-size:25px}}
+@media(prefers-reduced-motion:reduce){.support-close,.support-submit,.support-secondary{transition:none}.support-submit:not(:disabled):hover{transform:none}.support-dialog::backdrop{backdrop-filter:none}}

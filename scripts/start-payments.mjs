@@ -1,6 +1,7 @@
 import { readFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import { createServer } from "node:net";
+import { pathToFileURL } from "node:url";
 import { unlockCustodyVault } from "../server/custody-vault.mjs";
 import { hiddenPassword } from "./terminal-password.mjs";
 import { createChogProcessor } from "../server/chog-processor.mjs";
@@ -10,18 +11,49 @@ import { createNftProcessor } from "../server/nft-processor.mjs";
 import { NFT_POOL_FUNDERS } from "../server/nft-pool-config.mjs";
 import { openPaymentIntegrity, PaymentIntegrityError } from "../server/payment-integrity.mjs";
 import { acquireOperatorLease } from "../server/operator-lease.mjs";
+import { createOperationsRuntime } from "../server/operations-runtime.mjs";
+import { openReadOnlyImpactSource } from "../server/ops-dashboard.mjs";
 
-// This owner-run process is the ONLY current way to enable the local CHOG pilot.
-// Keys remain in RAM; a closed terminal stops processing. No production claim.
-let processor, nftProcessor, api, store, timer, integrity, lease, stopping=false;
+// The CLI and the private desktop IPC bootstrap share exactly this startup.
+// Neither path bypasses the operator lease, integrity baseline or custody vault.
+export async function startPaymentWorker({ passwordProvider = hiddenPassword, onEvent = () => {}, registerStop = () => {}, serviceOptions, optionsFactory } = {}, dependencies = {}) {
+const acquireLease = dependencies.acquireOperatorLease ?? acquireOperatorLease;
+const netServer = dependencies.createServer ?? createServer;
+const openIntegrity = dependencies.openPaymentIntegrity ?? openPaymentIntegrity;
+const read = dependencies.readFile ?? readFile;
+const unlock = dependencies.unlockCustodyVault ?? unlockCustodyVault;
+const chogFactory = dependencies.createChogProcessor ?? createChogProcessor;
+const nftFactory = dependencies.createNftProcessor ?? createNftProcessor;
+const invoiceStore = dependencies.openInvoiceStore ?? openInvoiceStore;
+const paymentService = dependencies.createPaymentService ?? createPaymentService;
+let processor, nftProcessor, api, store, timer, integrity, lease, operations, impactSource, stopping = false, cleanupPromise;
+let finishStartup;
+const startupDone = new Promise(ok => { finishStartup = ok; });
+const emit = (code, level = "info") => { try { onEvent({ code, level }); } catch { /* UI observers never control payment safety. */ } };
+const assertActive = () => { if (stopping) throw Object.assign(new Error("Startup cancelled."), { code: "ADMIN_CANCELLED" }); };
+const cleanup = () => cleanupPromise ??= (async () => {
+  clearInterval(timer);
+  if (api) await new Promise(ok => api.close(ok));
+  try {
+    await Promise.all([processor?.close(), nftProcessor?.close()]);
+    store?.close();
+    if (integrity && (processor || nftProcessor)) {
+      try { integrity.checkpoint(); } catch { emit("integrity-locked", "error"); }
+    }
+  } finally { operations?.close(); impactSource?.close(); await lease?.close(); }
+  emit("stopped");
+})();
+const stop = async () => { stopping = true; clearInterval(timer); await startupDone; await cleanup(); };
+registerStop(stop);
 try {
   const publicOrigin=(process.env.CHOGCARE_PUBLIC_ORIGIN?.trim()||"https://chogcare.vercel.app");
   if(!["https://chogcare.vercel.app","https://chogcare.com","https://www.chogcare.com","http://127.0.0.1:4173"].includes(publicOrigin))throw new Error("Payment site origin is not approved.");
-  lease=await acquireOperatorLease();
+  lease=await acquireLease(); assertActive();
   // Fail before asking for a password if another process occupies the API port.
-  const probe=createServer();
+  const probe=netServer();
   await new Promise((ok,bad)=>{probe.once("error",bad);probe.listen(4174,"127.0.0.1",ok);});
   await new Promise(ok=>probe.close(ok));
+  assertActive();
   console.log("ChogCare LOCAL MAINNET PILOT: CHOG -> USDC on Optimism for Giveth projects; CHOG -> native SOL on Solana for Animal Ethics.");
   console.log("Existing invoices keep their original destination. Arrival and finality are tracked separately.");
   console.log("Donation amount: 300-1,000,000 CHOG. Each new invoice adds exactly 10% on top for the NFT community pool and shows the full total before QR.");
@@ -31,19 +63,25 @@ try {
   console.log("No independent production audit has been completed. Local single-operator pilot only.");
   // Compare before schema initialisation or key unlock. Enrolment is a separate,
   // explicit offline owner action, never an automatic baseline reset.
-  integrity=openPaymentIntegrity(resolve("work/payments/processor.sqlite"),resolve("work/payments/integrity/checkpoint.json"),[resolve("work/payments/preview.sqlite")]);
+  integrity=openIntegrity(resolve("work/payments/processor.sqlite"),resolve("work/payments/integrity/checkpoint.json"),[resolve("work/payments/preview.sqlite")]);
   const checkpoint=()=>integrity.checkpoint();
-  const vault=JSON.parse(await readFile(resolve("work/payments/custody/vault.json"),"utf8"));
-  let password=await hiddenPassword("Unlock dedicated custody backup (hidden): ");
-  const root=await unlockCustodyVault(vault,password);password="";
-  processor=createChogProcessor({filename:resolve("work/payments/processor.sqlite"),vault,root,checkpoint});
-  nftProcessor=createNftProcessor({filename:resolve("work/payments/processor.sqlite"),vault,root,checkpoint});
+  const vault=JSON.parse(await read(resolve("work/payments/custody/vault.json"),"utf8"));
+  assertActive();
+  // A GUI password is requested only now, over inherited one-use IPC, not via
+  // argv, environment, an HTTP endpoint, a file, or redirected terminal input.
+  let password;
+  let root;
+  try { password=await passwordProvider("Unlock dedicated custody backup (hidden): "); assertActive(); root=await unlock(vault,password); }
+  finally { password=""; }
+  assertActive();
+  processor=chogFactory({filename:resolve("work/payments/processor.sqlite"),vault,root,checkpoint});
+  nftProcessor=nftFactory({filename:resolve("work/payments/processor.sqlite"),vault,root,checkpoint});
   checkpoint();
   console.log(`OPERATOR GAS ADDRESS (Monad / MON only): ${processor.operatorAddress}`);
   console.log("Keep at least 6 MON here for one payment (5 MON child funding + operator gas margin).");
   console.log("Do not send donor CHOG to this operator address. Each invoice gets its own address.");
   console.log("Payable QR codes become available only while this process is healthy and gas-funded.");
-  store=openInvoiceStore(resolve("work/payments/preview.sqlite"));
+  store=invoiceStore(resolve("work/payments/preview.sqlite"));
   const combined={
     publicStatus(){const chog=processor.publicStatus(),nft=nftProcessor.publicStatus();return {...chog,...nft,supportedModes:["chog","nft"],...(integrity.locked?{paymentsEnabled:false,nftPaymentsEnabled:false,poolHealthy:false}:{}),integrityLocked:integrity.locked};},
     publicChogRate(){return processor.publicChogRate();},
@@ -61,24 +99,39 @@ try {
   };
   // Initialize the funding cursor before showing a treasury address or accepting requests.
   await nftProcessor.tick();
+  assertActive();
   checkpoint();
   console.log(`NFT POOL TREASURY (Optimism / chain 10): ${nftProcessor.treasuryAddress}`);
   console.log(`USDC funder allowlist: ${NFT_POOL_FUNDERS.join(", ")}`);
   console.log("Fund with native USDC (not USDC.e) for donations and at least 0.001 ETH for gas, both on Optimism.");
   console.log("The 1 MON verification donation stays in its dedicated Monad custody address. No automatic forwarding or refund.");
-  api=createPaymentService(store,publicOrigin,true,combined);
+  if (!optionsFactory && serviceOptions === undefined) {
+    impactSource = (dependencies.openReadOnlyImpactSource ?? openReadOnlyImpactSource)(resolve("work/payments/processor.sqlite"));
+    operations = (dependencies.createOperationsRuntime ?? createOperationsRuntime)({ workspacePath: process.cwd(), status: () => combined.publicStatus(), impact: () => impactSource.summary() });
+  }
+  api=paymentService(store,publicOrigin,true,combined,optionsFactory ? await optionsFactory({ combined, store }) : serviceOptions ?? operations.options);
+  assertActive();
   await new Promise((ok,bad)=>{api.once("error",bad);api.listen(4174,"127.0.0.1",ok);});
   const tick=async()=>{if(stopping || integrity.locked)return;try {await Promise.all([
-    processor.tick().catch(()=>console.log("CHOG network readiness check failed; retrying.")),
-    nftProcessor.tick().catch(()=>console.log("NFT pool readiness check failed; new NFT payments stay gated.")),
-  ]);}finally{try{checkpoint();}catch{console.error("Payment integrity locked. New QR codes and broadcasts disabled; preserve the database and checkpoint.");}}};
-  await tick();timer=setInterval(tick,1000);
+    processor.tick().catch(()=>{console.log("CHOG network readiness check failed; retrying.");emit("chog-network", "warning");}),
+    nftProcessor.tick().catch(()=>{console.log("NFT pool readiness check failed; new NFT payments stay gated.");emit("nft-network", "warning");}),
+  ]);}finally{try{checkpoint();}catch{console.error("Payment integrity locked. New QR codes and broadcasts disabled; preserve the database and checkpoint.");emit("integrity-locked", "error");}}};
+  await tick(); assertActive(); timer=setInterval(tick,1000);
   console.log("Payment API: http://127.0.0.1:4174. Keep this terminal running.");
-  const stop=async()=>{if(stopping)return;stopping=true;clearInterval(timer);await new Promise(ok=>api.close(ok));await Promise.all([processor.close(),nftProcessor.close()]);store.close();try{checkpoint();}catch{console.error("Checkpoint is locked; reconcile before restarting.");}await lease.close();process.exit(0);};
-  process.once("SIGINT",stop);process.once("SIGTERM",stop);
+  emit("ready");
+  return { close: stop };
 } catch(error) {
-  clearInterval(timer);api?.close();await Promise.all([processor?.close(),nftProcessor?.close()]);store?.close();
-  await lease?.close();
+  stopping = true;
+  await cleanup();
+  if (error?.code === "ADMIN_CANCELLED") return null;
+  emit(error instanceof PaymentIntegrityError ? "integrity-locked" : error?.code === "EADDRINUSE" ? "busy" : "startup-failed", "error");
+  throw error;
+} finally { finishStartup(); }
+}
+
+if (process.argv[1] && import.meta.url === pathToFileURL(resolve(process.argv[1])).href) {
+  startPaymentWorker({ registerStop(stop) { process.once("SIGINT", () => { void stop().catch(() => { process.exitCode=1; }); }); process.once("SIGTERM", () => { void stop().catch(() => { process.exitCode=1; }); }); } }).catch(error => {
   console.error(error instanceof PaymentIntegrityError?"Payment integrity check blocked startup. First installation: stop payments and run npm run payments:integrity:enroll ONCE. If a checkpoint already exists, do not delete or reset it; reconcile the database against chain history.":error.code==="EADDRINUSE"?"Payment API or operator lease is busy (4174 / 4175). Close the other payment/maintenance terminal before restarting.":"Payment startup failed. Check your backup/password and network. No new payments enabled.");
   process.exitCode=1;
+  });
 }

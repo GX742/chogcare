@@ -19,7 +19,7 @@ export default defineConfig(({ command, isPreview }) => {
     port: 4173, strictPort: true,
     fs: {
       strict: true,
-      deny: [".env", ".env.*", ".npmrc", ".yarnrc.yml", "**/.git/**", "**/work/**", "**/server/**", "**/scripts/**", "**/test/**", "**/contracts/**", "**/artifacts/**", "**/*.{sqlite,sqlite-wal,sqlite-shm,db,pem,key,pfx,p12,crt,cer,der}"],
+      deny: [".env", ".env.*", ".npmrc", ".yarnrc.yml", "**/.git/**", "**/work/**", "**/admin/**", "**/server/**", "**/scripts/**", "**/test/**", "**/contracts/**", "**/artifacts/**", "**/*.{sqlite,sqlite-wal,sqlite-shm,db,pem,key,pfx,p12,crt,cer,der}"],
     },
     proxy: { "/api/payments": "http://127.0.0.1:4174" },
   },

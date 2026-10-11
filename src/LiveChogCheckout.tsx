@@ -14,12 +14,13 @@ import { supportsChog } from "./chog-beneficiary";
 import { contributionForDonationUnits, NFT_POOL_CONTRIBUTION_PERCENT } from "./pool-contribution";
 import { activeInvoiceKeys, beginCreation, closeSavedInvoice, createPaymentRequest, initialCheckout, pendingCreation, rememberInvoice, validInvoiceId } from "./checkout-session";
 import "./checkout.css";
+import type { SupportContext } from "./support-model";
 
 export const activeInvoiceKey=activeInvoiceKeys.chog;
 const presetAmounts=["300","3000","30000"] as const;
 const integerFormatter=new Intl.NumberFormat("en-US",{maximumFractionDigits:0});
 const usdFormatter=new Intl.NumberFormat("en-US",{style:"currency",currency:"USD",minimumFractionDigits:2,maximumFractionDigits:2});
-export default function LiveChogCheckout({initiativeId,initiativeName,ready,destinationChainId=1,serviceAllowed=false,onViewLeaderboard}:{initiativeId:string;initiativeName:string;ready:boolean;destinationChainId?:1|10|792703809;serviceAllowed?:boolean;onViewLeaderboard?:()=>void}) {
+export default function LiveChogCheckout({initiativeId,initiativeName,ready,destinationChainId=1,serviceAllowed=false,onViewLeaderboard,onSupport}:{initiativeId:string;initiativeName:string;ready:boolean;destinationChainId?:1|10|792703809;serviceAllowed?:boolean;onViewLeaderboard?:()=>void;onSupport?:(context:SupportContext)=>void}) {
   const [saved] = useState(()=>initialCheckout("chog"));
   const [pending,setPending]=useState(saved.pending);
   const [amount,setAmount]=useState(saved.pending?.input.amount || "300"), [invoice,setInvoice]=useState<PayableInvoice|null>(null), [id,setId]=useState(saved.id);
@@ -119,6 +120,7 @@ export default function LiveChogCheckout({initiativeId,initiativeName,ready,dest
       {invoice.state==="expired"&&!invoice.depositHash&&<><p className="checkout-help">Already sent CHOG? Keep this invoice open. Do not pay again.</p><button className="button primary full checkout-submit" onClick={reset}>I haven't paid · start again <ArrowRight size={16}/></button></>}
     </div>:<p className="checkout-help">Restoring your payment status. Do not pay again.</p>}
     <p className="checkout-error" role="alert">{error}</p>
+    {onSupport && (error || invoice?.state === "manual-review" || invoice?.state === "expired") && <button className="support-checkout-link" type="button" onClick={() => onSupport({ mode: "chog", ...(validInvoiceId(id) ? { invoiceId: id } : {}), issue: invoice?.state === "manual-review" ? "invoice-review" : "checkout-error" })}>Contact support <ArrowRight size={15}/></button>}
     <details className="checkout-disclosure"><summary>{invoice?"Payment details":"Fees & payment details"}</summary><div>
       {received&&invoice&&<><p>Donation: {invoice.donationAmount??invoice.amount} CHOG. NFT pool contribution: {invoice.poolContributionAmount??"0"} CHOG. Total sent: {invoice.amount} CHOG.</p><p>{invoice.state==="confirming"?"The destination transfer is verified. Final confirmation continues in the background.":"The destination transfer is finalized."}</p><div className="checkout-receipts">{invoice.depositHash&&<a href={`https://monadscan.com/tx/${invoice.depositHash}`} target="_blank" rel="noreferrer">CHOG transfer ↗</a>}{invoice.bridgeHash&&<a href={`https://monadscan.com/tx/${invoice.bridgeHash}`} target="_blank" rel="noreferrer">Bridge transfer ↗</a>}{(invoice.destinationHash||invoice.observedDestinationHash)&&<a href={`${network.explorer}/tx/${invoice.destinationHash||invoice.observedDestinationHash}`} target="_blank" rel="noreferrer">Donation receipt ↗</a>}</div></>}
       <p>Your selected CHOG amount is allocated to the cause. A mandatory 10% contribution is added on top for the NFT community pool. Small pool contributions are combined before delivery.</p>

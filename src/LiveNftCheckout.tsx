@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { Copy, Heart } from "@phosphor-icons/react";
+import { ArrowRight, Copy, Heart } from "@phosphor-icons/react";
 import QRCode from "qrcode";
 import DonationShare from "./DonationShare";
 import DonationThanks from "./DonationThanks";
@@ -9,8 +9,9 @@ import { supportsNft } from "./chog-beneficiary";
 import { initiativeNames } from "./donation-share";
 import { validateNftInvoice, type NftInvoice } from "./nft-invoice";
 import { beginCreation, closeSavedInvoice, createPaymentRequest, initialCheckout, pendingCreation, rememberInvoice, validInvoiceId } from "./checkout-session";
+import type { SupportContext } from "./support-model";
 
-export default function LiveNftCheckout({initiativeId,ready,healthy,availableClaims,queueFull=false,serviceAllowed=false}:{initiativeId:string;ready:boolean;healthy:boolean;availableClaims:number|null;queueFull?:boolean;serviceAllowed?:boolean}) {
+export default function LiveNftCheckout({initiativeId,ready,healthy,availableClaims,queueFull=false,serviceAllowed=false,onSupport}:{initiativeId:string;ready:boolean;healthy:boolean;availableClaims:number|null;queueFull?:boolean;serviceAllowed?:boolean;onSupport?:(context:SupportContext)=>void}) {
   const [saved]=useState(()=>initialCheckout("nft")),[pending,setPending]=useState(saved.pending);
   const [holder,setHolder]=useState(saved.pending?.input.holderAddress || ""),[agreed,setAgreed]=useState(false);
   const [id,setId]=useState(saved.id),[invoice,setInvoice]=useState<NftInvoice|null>(null);
@@ -78,6 +79,7 @@ export default function LiveNftCheckout({initiativeId,ready,healthy,availableCla
       <p>Claim day: {invoice.claimDay} UTC. Reserved donation: ${invoice.subsidyUsdc}. {invoice.state==="confirming"?"The destination transfer is verified; final confirmation continues in the background.":""}</p><code className="checkout-invoice-id">{invoice.id}</code></div></details>
     </div>:<p className="checkout-help">Restoring your NFT invoice. Do not pay again.</p>}
     <p className="checkout-error" role="alert">{error}</p>
+    {onSupport && (error || invoice?.state === "manual-review" || invoice?.state === "expired") && <button className="support-checkout-link" type="button" onClick={() => onSupport({ mode: "nft", ...(validInvoiceId(id) ? { invoiceId: id } : {}), issue: invoice?.state === "manual-review" ? "invoice-review" : "checkout-error" })}>Contact support <ArrowRight size={15}/></button>}
     <details className="checkout-disclosure"><summary>How it works & daily limits</summary><div><p>No wallet connection. We verify your 1 MON transfer and NFT ownership on Monad. Smart-wallet transfers require a confirmed execution trace. A public address alone cannot claim a donation. Do not use exchange withdrawals or send twice.</p><p>New pool donations send $1 to your cause on your behalf. One per wallet and NFT per UTC day, with three recipients and $3 total daily. The reset is 00:00 UTC. Existing invoices retain their original reserved amount. ChogCare pays delivery gas separately.</p></div></details>
   </section>;
 }

@@ -11,9 +11,31 @@ import { createHttpAdmission } from "./http-admission.mjs";
 import { supportsChog, supportsNft, acceptsNewChog } from "../src/chog-beneficiary.ts";
 import { parseUnits } from "viem";
 import { buildDonorLeaderboard } from "./donor-leaderboard.mjs";
+import { createReadOnlyDashboard } from "./ops-dashboard.mjs";
+import { validateSupportInput } from "./support-store.mjs";
+import { validateEstimateInput } from "./ops-quotes.mjs";
 
-export function createPaymentService(store, allowedOrigin = "http://127.0.0.1:4173", custodyConfigured = false, processor = null) {
+export function createPaymentService(store, allowedOrigin = "http://127.0.0.1:4173", custodyConfigured = false, processor = null, options = {}) {
   const admission = createHttpAdmission(allowedOrigin);
+  const dashboard = options.dashboard ?? createReadOnlyDashboard({ status: () => processor?.publicStatus?.() ?? null });
+  const opsBuckets = new Map(), opsClock = options.clock ?? Date.now;
+  function opsAdmission(req, kind, session) {
+    const now = opsClock();
+    for (const [key, bucket] of opsBuckets) if (bucket.reset <= now) opsBuckets.delete(key);
+    const peer = req.socket.remoteAddress || "unknown";
+    const limits = kind === "support"
+      ? [["support:global", 30, 60_000], [`support:peer:${peer}`, 30, 60_000], [`support:session:${session ?? peer}`, 3, 600_000]]
+      : [["quote:global", 12, 60_000], [`quote:peer:${peer}`, 12, 60_000], [`quote:session:${session ?? peer}`, 6, 60_000]];
+    for (const [key, maximum, window] of limits) {
+      let bucket = opsBuckets.get(key);
+      if (!bucket) {
+        if (opsBuckets.size >= 2000) return 60;
+        bucket = { count: 0, reset: now + window }; opsBuckets.set(key, bucket);
+      }
+      if (++bucket.count > maximum) return Math.max(1, Math.ceil((bucket.reset - now) / 1000));
+    }
+    return 0;
+  }
   let preparing = 0;
   const preparingModes = new Set();
   const server = createServer({ maxHeaderSize: 8192, connectionsCheckingInterval: 1000 }, async (req, res) => {
@@ -65,23 +87,57 @@ export function createPaymentService(store, allowedOrigin = "http://127.0.0.1:41
       if (!req.url?.startsWith("/") || req.url.startsWith("//")) return respond(400, { error: "Invalid request target." });
       const url = new URL(req.url || "/", allowedOrigin);
       const session = admission.session(req, res);
-      const wait = admission.admit(req, req.method === "POST" ? "create" : "read", session);
+      const supportRequest = req.method === "POST" && url.pathname === "/api/payments/support";
+      const estimateRequest = req.method === "GET" && url.pathname === "/api/payments/bridge-estimate";
+      // Support/quote abuse must not consume the invoice-creation budget.
+      const wait = supportRequest || estimateRequest ? opsAdmission(req, supportRequest ? "support" : "quote", session) : admission.admit(req, req.method === "POST" ? "create" : "read", session);
       if (wait) { res.setHeader("Retry-After", wait); return respond(429, { code: "RATE_LIMITED", error: "Too many requests. Retry this same request shortly.", retryAfterSeconds: wait }); }
+      if (supportRequest) {
+        if (!options.supportStore) return respond(503, { error: "Support is temporarily unavailable. Please try again later." });
+        if (!session) return respond(403, { error: "Open the application before contacting support." });
+        let input;
+        try { input = validateSupportInput(await readJson(4096)); }
+        catch (error) { return respond(error.status ?? 400, { error: [400, 413, 415].includes(error.status) ? error.message : "Invalid support request." }); }
+        if (req.aborted || res.writableEnded || res.destroyed) return;
+        try {
+          // Dedicated support storage never changes a financial checkpoint.
+          const submitted = options.supportStore.submit({ requestId: input.requestId, subject: input.subject, message: input.message, ...(input.contact !== null ? { contact: input.contact } : {}), ...(input.invoiceId !== null ? { invoiceId: input.invoiceId } : {}) });
+          return respond(submitted.created ? 201 : 200, { ticket: { reference: submitted.ticket.reference, createdAt: submitted.ticket.createdAt } });
+        } catch (error) {
+          return respond(error.status === 409 ? 409 : 503, { error: error.status === 409 ? "This support request cannot be changed. Use a new request ID." : "Support is temporarily unavailable. Please try again later." });
+        }
+      }
+      if (req.method === "GET" && url.pathname === "/api/payments/dashboard") {
+        if (url.search) return respond(400, { error: "Dashboard parameters are not supported." });
+        if (!session) admission.session(req, res, true);
+        return respond(200, dashboard.snapshot());
+      }
+      if (estimateRequest) {
+        if (!options.quoteService) return respond(503, { error: "Bridge estimate is temporarily unavailable. No payment was created." });
+        let input;
+        try {
+          if ([...url.searchParams.keys()].length !== 2 || url.searchParams.getAll("amount").length !== 1 || url.searchParams.getAll("initiativeId").length !== 1) throw new Error();
+          input = validateEstimateInput({ amount: url.searchParams.get("amount"), initiativeId: url.searchParams.get("initiativeId") });
+        } catch { return respond(400, { error: "Choose a supported donation amount and initiative." }); }
+        try { return respond(200, await options.quoteService.quote(input)); }
+        catch { return respond(503, { error: "Bridge estimate is temporarily unavailable. No payment was created." }); }
+      }
       if (req.method === "GET" && url.pathname === "/api/payments/config") {
         if (!session) admission.session(req, res, true);
         const pool = store.poolSummary();
-        const status = processor?.publicStatus();
+        const status = options.operationsOnly ? { paymentMode: "offline", paymentsEnabled: false, nftPaymentsEnabled: false, integrityLocked: false } : processor?.publicStatus();
         return respond(200, {
           ...PAYMENT_POLICY,
           securityVersion: "2026-10-09-hardened-v1",
           poolFunded: pool.fundedAvailableUnits >= SUBSIDY_UNITS,
           availableClaims: pool.availableClaims,
           reservedTodayUsdc: (pool.reservedTodayUnits / 1_000_000).toFixed(2),
-          custodyConfigured,
+          custodyConfigured: options.operationsOnly ? false : custodyConfigured,
           ...status,
-          readiness: { custody: processor ? "unlocked-local-pilot" : custodyConfigured ? "locked" : "not-configured", processing: processor ? "connected" : "not-connected", pool: (status?.poolFunded ?? pool.availableClaims > 0) ? "funded" : "not-funded" },
+          readiness: { custody: options.operationsOnly ? "not-configured" : processor ? "unlocked-local-pilot" : custodyConfigured ? "locked" : "not-configured", processing: options.operationsOnly ? "not-connected" : processor ? "connected" : "not-connected", pool: (status?.poolFunded ?? pool.availableClaims > 0) ? "funded" : "not-funded" },
         });
       }
+      if (options.operationsOnly) return respond(503, { code: "PAYMENTS_OFFLINE", error: "The payment worker is offline. Keep your original invoice; do not pay again." });
       if (req.method === "GET" && url.pathname === "/api/payments/chog-rate") {
         if (!processor?.publicChogRate) return respond(503,{error:"CHOG quote is temporarily unavailable."});
         try { return respond(200,await processor.publicChogRate()); }

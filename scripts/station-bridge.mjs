@@ -98,7 +98,20 @@ export async function runStationBridge(args = process.argv.slice(2)) {
   let events = null, serial = null, timer = null, stopping = false, tickRunning = false, healthy = options.demo, outputBuffer = "";
   const demoPayload = options.demo ? stationDonation({ id: randomBytes(12).toString("hex"), nick: "DEMO", amount: "300" }) : null;
   let demoDone = false;
-  const close = () => { if (stopping) return; stopping = true; clearInterval(timer); serial?.stdin.end(); serial?.kill(); events?.close(); };
+  let closePromise, finishClose;
+  const finished = new Promise(ok => { finishClose = ok; });
+  const close = () => closePromise ??= (async () => {
+    stopping = true; clearInterval(timer);
+    // On Windows ChildProcess.kill is an abrupt TerminateProcess, not a
+    // graceful signal. EOF lets the native transport dispose the USB handle.
+    if (serial && serial.exitCode === null && serial.signalCode === null) {
+      const exited = new Promise(ok => { serial.once("exit", ok); serial.once("close", ok); serial.once("error", ok); });
+      serial.stdin.end();
+      await exited;
+    }
+    try { events?.close(); } catch { console.error("Station queue close failed. Preserve its database; payments were not changed."); process.exitCode = 1; }
+    finishClose();
+  })();
   const write = line => {
     if (Buffer.byteLength(line.trimEnd(), "utf8") > STATION_MAX_LINE_BYTES) throw new Error("Station wire payload exceeds the limit.");
     if (options.simulate) { if (JSON.parse(line).type === "donation") console.log(line.trimEnd()); return; }
@@ -148,8 +161,8 @@ export async function runStationBridge(args = process.argv.slice(2)) {
     };
     process.once("SIGINT", close); process.once("SIGTERM", close);
     await tick(); if (!stopping) timer = setInterval(tick, 1000);
-    return { close };
-  } catch (error) { close(); throw error; }
+    return { close, finished };
+  } catch (error) { await close(); throw error; }
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(resolve(process.argv[1])).href) {

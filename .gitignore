@@ -10,6 +10,8 @@ coverage/
 __pycache__/
 *.pyc
 *.tsbuildinfo
+admin/renderer-dist/
+admin/assets/
 *.sqlite
 *.sqlite-wal
 *.sqlite-shm

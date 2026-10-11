@@ -150,7 +150,11 @@ test("deployed CSP and referrer policy preserve private capability boundaries", 
   assert.match(headers.get("Content-Security-Policy"), /form-action 'none'/);
   assert.match(contentSecurityPolicy(), /img-src[^;]*https:\/\/gateway\.pinata\.cloud/);
   assert.doesNotMatch(headers.get("Content-Security-Policy"), /unsafe-inline|unsafe-eval|localhost|127\.0\.0\.1|https:\*/);
-  assert.deepEqual(config.rewrites, [{ source: "/api/payments/:path*", destination: `${publicBroadcastOrigin}/api/payments/:path*` }]);
+  assert.deepEqual(config.rewrites, [
+    { source: "/api/payments/:path*", destination: `${publicBroadcastOrigin}/api/payments/:path*` },
+    { source: "/dashboard", destination: "/index.html" },
+    { source: "/dashboard/", destination: "/index.html" },
+  ]);
 });
 test("public privacy copy distinguishes omission of wallet addresses from NFT anonymity", () => {
   const board = readFileSync(new URL("../src/Leaderboard.tsx", import.meta.url), "utf8"), donor = readFileSync(new URL("../src/DonorProfile.tsx", import.meta.url), "utf8");

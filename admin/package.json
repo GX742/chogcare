@@ -1,0 +1,28 @@
+{
+  "name": "chogcare-admin",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "main": "main.mjs",
+  "description": "ChogCare local service control and support inbox",
+  "author": "ChogCare",
+  "build": {
+    "appId": "com.chogcare.admin",
+    "productName": "ChogCare Admin",
+    "electronVersion": "44.7.0",
+    "electronDist": "../node_modules/electron/dist",
+    "asar": true,
+    "electronFuses": {
+      "runAsNode": true,
+      "enableCookieEncryption": true,
+      "enableNodeOptionsEnvironmentVariable": false,
+      "enableNodeCliInspectArguments": false,
+      "enableEmbeddedAsarIntegrityValidation": true,
+      "onlyLoadAppFromAsar": true
+    },
+    "directories": { "output": "../work/admin-release" },
+    "files": ["main.mjs", "preload.cjs", "security.mjs", "controller.mjs", "renderer-dist/**/*", "assets/**/*", "package.json"],
+    "win": { "target": [{ "target": "nsis", "arch": ["x64"] }], "icon": "assets/coin.png", "signExecutable": false },
+    "nsis": { "oneClick": false, "perMachine": false, "allowToChangeInstallationDirectory": true, "createDesktopShortcut": true, "createStartMenuShortcut": true, "shortcutName": "ChogCare Admin", "artifactName": "ChogCare-Admin-Setup-${version}.${ext}" }
+  }
+}

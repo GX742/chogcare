@@ -30,7 +30,7 @@ export function privateWebPath(rawUrl: string): boolean {
   path = path.replaceAll("\\", "/").toLowerCase();
   const segments = path.split("/").map(part => part.replace(/[ .]+$/g, ""));
   return segments.some(part =>
-    ["work", "server", "scripts", "test", "contracts", "artifacts", "docs", ".git", ".codex", ".agents", ".aws", ".ssh"].includes(part) ||
+    ["work", "admin", "server", "scripts", "test", "contracts", "artifacts", "docs", ".git", ".codex", ".agents", ".aws", ".ssh"].includes(part) ||
     part === ".env" || part.startsWith(".env.") || part === ".npmrc" || part === ".yarnrc.yml" ||
     /\.(?:(?:sqlite3?|db)(?:-(?:wal|shm|journal))?|pem|key|pfx|p12|crt|cer|der)$/.test(part) || part === "vault.json" ||
     // Windows alternate streams are never valid frontend assets.

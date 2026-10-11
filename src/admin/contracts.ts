@@ -1,0 +1,9 @@
+export type ServiceId = "payments" | "broadcast" | "gateway" | "station";
+export type Service = { id: ServiceId; state: "running" | "stopped" | "external" | "unknown" | "error"; managed: boolean; detail: string };
+export type Activity = { id: string; at: number; level: "info" | "warning" | "error"; service: string; message: string };
+export type Snapshot = { checkedAt: number; workspacePath: string; stationPort: string; services: Service[]; payments: null | { paymentsEnabled?: boolean; nftPaymentsEnabled?: boolean; availableClaims?: number; maxDailyClaims?: number; subsidyUsdc?: string; dailyPoolLimitUsdc?: string; integrityLocked?: boolean; poolHealthy?: boolean; poolGasReady?: boolean }; support: { open: number; total: number }; events: Activity[] };
+export type Settings = { workspacePath: string; stationPort: string; owncastPasswordSet: boolean };
+export type Estimate = { checkedAt: number; expiresAt: number; amountChog: string; poolContributionChog: string; totalChog: string; conversionMinimumUsdc: string; expectedCharityUsd: string; minimumCharityUsd: string; bridgeFeeUsd: string; bridgeFeePercent: string; estimatedSeconds: number | null; notice: string };
+export type Ticket = { id: string; reference: string; createdAt: number; status: "new" | "read" | "resolved"; subject: string; message: string; contact: string; invoiceId?: string | null };
+export type AdminApi = { snapshot(): Promise<Snapshot>; settings(): Promise<Settings>; action(input: Record<string, unknown>): Promise<unknown>; quote(input: { amount: string; initiativeId: string }): Promise<Estimate>; listSupport(input: { status?: string; limit?: number }): Promise<Ticket[]>; updateSupport(input: { id: string; status: string }): Promise<unknown>; open(target: "website" | "dashboard"): Promise<boolean> };
+declare global { interface Window { chogcareAdmin?: AdminApi } }

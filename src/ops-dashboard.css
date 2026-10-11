@@ -1,0 +1,66 @@
+.ops-dashboard{--ops-bg:#140d26;--ops-light:#eee0fa;--ops-ink:#30134e;--ops-pink:#f69ccf;font-family:"DM Sans Variable",sans-serif;min-height:100dvh;background:var(--ops-bg);color:#fff0e7;padding:0 24px 32px}
+.ops-dashboard h1,.ops-dashboard h2{font-family:"Manrope Variable",sans-serif}
+.ops-shell{max-width:960px;margin:0 auto}
+.ops-hero{position:relative;min-height:294px;padding:27px 0 26px;isolation:isolate;overflow:hidden}
+.ops-hero-art{position:absolute;z-index:-2;right:-24px;top:-72px;width:340px;height:370px;object-fit:cover;object-position:center 64%;opacity:.83;mask-image:linear-gradient(90deg,transparent,#000 20%);pointer-events:none}
+.ops-hero::after{content:"";position:absolute;inset:0 -24px;z-index:-1;background:linear-gradient(90deg,#140d26 2%,#140d26e0 26%,#140d2666 66%,#140d2610),linear-gradient(0deg,#140d26,transparent 18%);pointer-events:none}
+.ops-wordmark{display:inline-flex;align-items:center;gap:10px;text-decoration:none;color:#fff1e7;font-family:"Manrope Variable",sans-serif;font-size:26px;font-weight:800;letter-spacing:-.06em}
+.ops-wordmark img{width:47px;height:47px;object-fit:contain;filter:drop-shadow(0 3px 8px #08021166)}
+.ops-wordmark>span>span{color:#f69ccf}
+.ops-hero-copy{margin-top:34px;position:relative;max-width:300px}
+.ops-hero h1{font-size:45px;line-height:1.03;letter-spacing:-.055em;font-weight:800;margin:0;color:#fff1e5}
+.ops-hero h1 span{color:#f69ccf}
+.ops-hero-copy p{font-size:16px;font-weight:500;color:#f1ddeb;margin:17px 0 0}
+.ops-status-panel{background:var(--ops-light);color:var(--ops-ink);padding:24px 22px 17px;border-radius:22px;box-shadow:0 1px 0 #ffffff80 inset}
+.ops-section-title{display:flex;align-items:center;gap:13px}
+.ops-section-title h2{font-size:23px;line-height:1.2;letter-spacing:-.035em;font-weight:800;margin:0}
+.ops-title-icon{display:grid;place-items:center;width:45px;height:45px;background:#ddc6f5;border-radius:50%;flex-shrink:0;color:#4b2275}
+.ops-status-list{list-style:none;margin:17px 0 0;padding:0}
+.ops-status-list li{display:grid;grid-template-columns:26px minmax(0,1fr) auto;align-items:center;gap:12px;padding:17px 0;border-bottom:1px solid #d6bce8;font-size:15px;font-weight:700}
+.ops-status-list li:last-child{border-bottom:0}
+.ops-status{display:inline-flex;align-items:center;gap:7px;font-size:13px;font-weight:500;white-space:nowrap}
+.ops-status i{width:8px;height:8px;background:#9c84af;border-radius:50%;flex-shrink:0}
+.ops-status-ready i{background:#3d7d5d;box-shadow:0 0 0 3px #3d7d5d17}
+.ops-status-paused i{background:#9d601b}
+.ops-status-offline i{background:#a13d60}
+.ops-status-note{font-size:11px;line-height:1.6;color:#6e5186;margin:10px 0 0}
+.ops-metrics{display:grid;grid-template-columns:1fr 1fr;gap:12px;margin:14px 0}
+.ops-metric{min-width:0;background:var(--ops-light);border-radius:19px;padding:19px 18px;color:var(--ops-ink)}
+.ops-metric-icon{display:grid;place-items:center;width:39px;height:39px;border-radius:50%;background:#fac1e4;color:#a13478;margin:0 0 13px}
+.ops-metric h2{font-size:14px;letter-spacing:-.025em;font-weight:750;line-height:1.4;margin:0 0 12px}
+.ops-metric>strong{display:block;font-family:"Manrope Variable",sans-serif;font-weight:800;font-size:30px;letter-spacing:-.055em;line-height:1.15;overflow-wrap:anywhere;font-variant-numeric:tabular-nums}
+.ops-metric>strong small{font-size:17px;letter-spacing:-.02em;font-weight:550;color:#7a5690}
+.ops-metric>p{font-size:12px;line-height:1.5;color:#79588e;margin:9px 0 0}
+.ops-estimate{border:1px solid #593475;border-radius:22px;padding:22px;background:#201333;color:#f5e9ff;margin:0 0 19px}
+.ops-estimate .ops-section-title{gap:11px}
+.ops-estimate .ops-section-title h2{font-size:21px}
+.ops-estimate-cause{font-size:12px;line-height:1.5;color:#c6abd8;margin:11px 0 20px}
+.ops-estimate-controls{display:grid;grid-template-columns:1fr;gap:12px}
+.ops-amount{display:flex;align-items:center;gap:8px;border:1px solid #795092;border-radius:15px;padding:8px 12px;background:#150e23;position:relative;min-width:0}
+.ops-amount>img{object-fit:contain;width:35px;height:35px;flex-shrink:0}
+.ops-amount select{appearance:none;font:700 16px "DM Sans Variable",sans-serif;min-width:0;width:100%;padding:6px 23px 6px 2px;border:0;background:transparent;color:#f2dfff;cursor:pointer;outline-offset:5px}
+.ops-amount select option{background:#21142e;color:#f6e5fe}
+.ops-amount>svg{position:absolute;right:13px;pointer-events:none;color:#c69dda}
+.ops-estimate-button{border:0;background:#8335ed;color:#fff0fc;border-radius:999px;min-height:50px;padding:12px 16px;display:flex;align-items:center;justify-content:center;gap:9px;font:700 15px "DM Sans Variable",sans-serif;cursor:pointer;transition:background .25s cubic-bezier(.22,.68,0,1.02),transform .25s cubic-bezier(.22,.68,0,1.02)}
+.ops-estimate-button:not(:disabled):hover{background:#9c4ef4;transform:translateY(-1px)}
+.ops-estimate-hint{font-size:12px;color:#c7aedb;text-align:center;margin:13px 0 0}
+.ops-estimate-error{font-size:14px;line-height:1.6;color:#ffbfdc;margin:18px 0 0}
+.ops-quote{border-top:1px solid #57356a;margin-top:22px;padding-top:19px}
+.ops-quote-label{font-size:13px;color:#d8bee9;margin:0 0 7px}
+.ops-quote-amount{display:block;font:750 35px "Manrope Variable",sans-serif;letter-spacing:-.045em;color:#ffd0e9;overflow-wrap:anywhere}
+.ops-quote-expired .ops-quote-amount{color:#c8b2d9}
+.ops-quote dl{margin:19px 0 0}
+.ops-quote dl>div{display:flex;justify-content:space-between;gap:18px;padding:11px 0;border-bottom:1px solid #4b2b60;font-size:13px;line-height:1.5}
+.ops-quote dt{color:#cdb4de}
+.ops-quote dd{margin:0;text-align:right;font-weight:600;overflow-wrap:anywhere}
+.ops-quote dd>span{font-weight:400;color:#bfa4d0;white-space:nowrap}
+.ops-quote-note{font-size:12px;color:#bfa4d0;line-height:1.6;margin:16px 0 0}
+.ops-visit{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:12px 13px 12px 23px;border-radius:999px;background:var(--ops-light);color:var(--ops-ink);font:800 19px "Manrope Variable",sans-serif;letter-spacing:-.035em;text-decoration:none;min-height:70px;transition:background .25s cubic-bezier(.22,.68,0,1.02)}
+.ops-visit-arrow{display:grid;place-items:center;background:#ed83bd;color:#fff4fc;border-radius:50%;width:46px;height:46px;flex-shrink:0;transition:transform .25s cubic-bezier(.22,.68,0,1.02)}
+.ops-visit:hover{background:#f7d6ed}.ops-visit:hover .ops-visit-arrow{transform:translateX(2px)}
+.ops-footer{text-align:center;font-size:12px;color:#bca0d0;line-height:1.6;padding-top:20px}
+.ops-sr-only{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap;border:0}
+@media(min-width:600px){.ops-dashboard{padding:0 40px 36px}.ops-hero{min-height:370px;padding-top:35px}.ops-hero-art{right:-30px;top:-55px;width:550px;height:475px}.ops-hero::after{background:linear-gradient(90deg,#140d26 3%,#140d26ee 25%,#140d2644 65%,#140d2600),linear-gradient(0deg,#140d26,transparent 20%)}.ops-wordmark{font-size:31px}.ops-wordmark img{width:55px;height:55px}.ops-hero-copy{margin-top:50px;max-width:400px}.ops-hero h1{font-size:65px}.ops-hero-copy p{font-size:19px}.ops-status-panel{padding:28px 32px 20px}.ops-section-title h2{font-size:26px}.ops-status-list li{font-size:17px;padding:19px 0}.ops-status{font-size:15px}.ops-status-note{font-size:12px}.ops-metrics{gap:18px;margin:18px 0}.ops-metric{padding:25px 27px;display:grid;grid-template-columns:48px 1fr;column-gap:16px}.ops-metric-icon{grid-row:1 / 4;width:48px;height:48px;margin:0}.ops-metric h2{font-size:16px}.ops-metric>strong{font-size:36px}.ops-metric>p{font-size:13px}.ops-estimate{padding:27px 32px}.ops-estimate-controls{grid-template-columns:1fr 1fr;gap:20px}.ops-estimate-hint{text-align:right}.ops-estimate-cause{font-size:13px}.ops-visit{font-size:23px;padding-left:32px;min-height:80px}.ops-visit-arrow{width:54px;height:54px}.ops-footer{font-size:13px}}
+@media(min-width:900px){.ops-hero{min-height:410px}.ops-hero-art{width:650px;height:535px;top:-60px}.ops-hero h1{font-size:76px}.ops-hero-copy{margin-top:58px}}
+@media(max-width:360px){.ops-dashboard{padding-left:16px;padding-right:16px}.ops-status-panel{padding:21px 17px 15px}.ops-status-list li{gap:9px;font-size:14px}.ops-status{font-size:12px}.ops-metric{padding:17px 14px}.ops-metric h2{font-size:13px}.ops-section-title h2{font-size:21px}}
+@media(prefers-reduced-motion:reduce){.ops-estimate-button,.ops-visit,.ops-visit-arrow{transition:none}.ops-estimate-button:not(:disabled):hover,.ops-visit:hover .ops-visit-arrow{transform:none}}

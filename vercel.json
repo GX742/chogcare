@@ -4,7 +4,9 @@
     {
       "source": "/api/payments/:path*",
       "destination": "https://chogcare-stream.tail1f833b.ts.net/api/payments/:path*"
-    }
+    },
+    { "source": "/dashboard", "destination": "/index.html" },
+    { "source": "/dashboard/", "destination": "/index.html" }
   ],
   "headers": [
     {

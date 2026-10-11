@@ -131,20 +131,26 @@ const configuredTwitchChannel = import.meta.env.VITE_TWITCH_CHANNEL?.trim().toLo
 const twitchChannel = /^[a-z0-9_]{4,25}$/.test(configuredTwitchChannel) ? configuredTwitchChannel : null;
 
 function BroadcastPanel({ headingId }: { headingId: string }) {
+  const [playerLoaded, setPlayerLoaded] = useState(false);
+
   return <div className="care-stream">
     <section className="lp-broadcast-frame" aria-labelledby={headingId}>
       <div className="lp-broadcast-interior">
         {twitchChannel ? <>
           <h2 id={headingId} className="sr-only">ChogCare live broadcast</h2>
           <iframe
-            className="lp-broadcast-player"
+            className={`lp-broadcast-player${playerLoaded ? " is-ready" : ""}`}
             src={`https://player.twitch.tv/?channel=${encodeURIComponent(twitchChannel)}&parent=${encodeURIComponent(window.location.hostname)}&muted=true&autoplay=true`}
             title="ChogCare live broadcast"
-            loading="lazy"
+            loading="eager"
             referrerPolicy="strict-origin-when-cross-origin"
             allow="autoplay; encrypted-media; picture-in-picture; fullscreen"
             allowFullScreen
+            onLoad={() => setPlayerLoaded(true)}
           />
+          <span className={`lp-broadcast-loading${playerLoaded ? " is-hidden" : ""}`} aria-hidden="true">
+            <i />Loading live broadcast…
+          </span>
           <span className="lp-broadcast-live" aria-hidden="true"><i />Live</span>
         </> : <div className="lp-broadcast-placeholder">
           <Broadcast size={38} weight="light" aria-hidden="true" />

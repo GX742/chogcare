@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import type HlsType from "hls.js";
 import { ArrowLeft, ArrowRight, ArrowUpRight, Check, Copy, Broadcast, X, XLogo } from "@phosphor-icons/react";
 import PaymentCheckout from "./PaymentCheckout";
 import HeartField from "./HeartField";
@@ -131,15 +132,15 @@ const configuredTwitchChannel = import.meta.env.VITE_TWITCH_CHANNEL?.trim().toLo
 const twitchChannel = /^[a-z0-9_]{4,25}$/.test(configuredTwitchChannel) ? configuredTwitchChannel : null;
 const defaultOwncastUrl = "https://chogcare-stream.tail1f833b.ts.net";
 
-function owncastPlayerUrl() {
+function owncastStreamUrl() {
   const configuredUrl = import.meta.env.VITE_OWNCAST_URL?.trim() || defaultOwncastUrl;
   if (!configuredUrl) return null;
   try {
     const url = new URL(configuredUrl);
     const localDevelopment = url.protocol === "http:" && ["127.0.0.1", "localhost"].includes(url.hostname);
     if (url.protocol !== "https:" && !localDevelopment) return null;
-    url.pathname = "/embed/video";
-    url.search = "?autoplay=always&initiallyMuted=true&supportsSocialFollow=false";
+    url.pathname = "/hls/stream.m3u8";
+    url.search = "";
     url.hash = "";
     return url.toString();
   } catch {
@@ -147,32 +148,95 @@ function owncastPlayerUrl() {
   }
 }
 
+function NativeLivePlayer({ src, onReady }: { src: string; onReady: () => void }) {
+  const videoRef = useRef<HTMLVideoElement>(null);
+
+  useEffect(() => {
+    const video = videoRef.current;
+    if (!video) return;
+
+    const startPlayback = () => {
+      void video.play().catch(() => undefined);
+    };
+
+    if (video.canPlayType("application/vnd.apple.mpegurl")) {
+      video.src = src;
+      video.addEventListener("loadedmetadata", startPlayback);
+      return () => {
+        video.removeEventListener("loadedmetadata", startPlayback);
+        video.removeAttribute("src");
+        video.load();
+      };
+    }
+
+    let cancelled = false;
+    let hls: HlsType | null = null;
+
+    void import("hls.js").then(({ default: Hls }) => {
+      if (cancelled || !Hls.isSupported()) return;
+      hls = new Hls({
+        enableWorker: true,
+        lowLatencyMode: true,
+        backBufferLength: 30,
+      });
+      hls.loadSource(src);
+      hls.attachMedia(video);
+      hls.on(Hls.Events.MANIFEST_PARSED, startPlayback);
+      hls.on(Hls.Events.ERROR, (_event, data) => {
+        if (!data.fatal || !hls) return;
+        if (data.type === Hls.ErrorTypes.NETWORK_ERROR) hls.startLoad();
+        else if (data.type === Hls.ErrorTypes.MEDIA_ERROR) hls.recoverMediaError();
+        else hls.destroy();
+      });
+    });
+
+    return () => {
+      cancelled = true;
+      hls?.destroy();
+    };
+  }, [src]);
+
+  return <video
+    ref={videoRef}
+    className="lp-broadcast-player is-ready"
+    autoPlay
+    muted
+    playsInline
+    disablePictureInPicture
+    controls={false}
+    controlsList="nodownload noplaybackrate noremoteplayback"
+    tabIndex={-1}
+    aria-label="ChogCare live broadcast"
+    onPlaying={onReady}
+    onContextMenu={(event) => event.preventDefault()}
+  />;
+}
+
 function BroadcastPanel({ headingId }: { headingId: string }) {
   const [playerLoaded, setPlayerLoaded] = useState(false);
-  const owncastUrl = owncastPlayerUrl();
-  const playerUrl = owncastUrl ?? (twitchChannel
+  const owncastUrl = owncastStreamUrl();
+  const twitchUrl = twitchChannel
     ? `https://player.twitch.tv/?channel=${encodeURIComponent(twitchChannel)}&parent=${encodeURIComponent(window.location.hostname)}&muted=true&autoplay=true`
-    : null);
+    : null;
 
   return <div className="care-stream">
     <section className="lp-broadcast-frame" aria-labelledby={headingId}>
       <div className="lp-broadcast-interior">
-        {playerUrl ? <>
+        {owncastUrl || twitchUrl ? <>
           <h2 id={headingId} className="sr-only">ChogCare live broadcast</h2>
-          <iframe
-            className={`lp-broadcast-player${playerLoaded ? " is-ready" : ""}`}
-            src={playerUrl}
-            title="ChogCare live broadcast"
-            loading="eager"
-            referrerPolicy="strict-origin-when-cross-origin"
-            allow="autoplay; encrypted-media; picture-in-picture; fullscreen"
-            allowFullScreen
-            onLoad={() => setPlayerLoaded(true)}
-          />
+          {owncastUrl ? <NativeLivePlayer src={owncastUrl} onReady={() => setPlayerLoaded(true)} /> : <iframe
+              className={`lp-broadcast-player${playerLoaded ? " is-ready" : ""}`}
+              src={twitchUrl ?? undefined}
+              title="ChogCare live broadcast"
+              loading="eager"
+              referrerPolicy="strict-origin-when-cross-origin"
+              allow="autoplay; encrypted-media; picture-in-picture; fullscreen"
+              allowFullScreen
+              onLoad={() => setPlayerLoaded(true)}
+            />}
           <span className={`lp-broadcast-loading${playerLoaded ? " is-hidden" : ""}`} aria-hidden="true">
             <i />Loading live broadcast…
           </span>
-          <span className="lp-broadcast-live" aria-hidden="true"><i />Live</span>
         </> : <div className="lp-broadcast-placeholder">
           <Broadcast size={38} weight="light" aria-hidden="true" />
           <h2 id={headingId}>ChogCare broadcast</h2>

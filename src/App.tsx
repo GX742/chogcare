@@ -129,9 +129,10 @@ function Funding({ initiative }: { initiative: Initiative }) {
 
 const configuredTwitchChannel = import.meta.env.VITE_TWITCH_CHANNEL?.trim().toLowerCase() || "nerfwok";
 const twitchChannel = /^[a-z0-9_]{4,25}$/.test(configuredTwitchChannel) ? configuredTwitchChannel : null;
+const defaultOwncastUrl = "https://chogcare-stream.tail1f833b.ts.net";
 
 function owncastPlayerUrl() {
-  const configuredUrl = import.meta.env.VITE_OWNCAST_URL?.trim();
+  const configuredUrl = import.meta.env.VITE_OWNCAST_URL?.trim() || defaultOwncastUrl;
   if (!configuredUrl) return null;
   try {
     const url = new URL(configuredUrl);

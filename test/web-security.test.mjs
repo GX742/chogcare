@@ -6,6 +6,10 @@ import { createPaymentService } from "../server/payment-service.mjs";
 import { openInvoiceStore } from "../server/invoice-store.mjs";
 import { createServer } from "vite";
 import { request } from "node:http";
+import { readFileSync } from "node:fs";
+import { mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { basename, dirname, join, resolve } from "node:path";
 
 test("private URL guard covers encoded Windows paths, raw imports and backup files", () => {
   for (const path of [
@@ -20,9 +24,18 @@ test("private URL guard covers encoded Windows paths, raw imports and backup fil
 });
 
 test("Vite refuses private files before static serving and raw imports", async t => {
-  const vite = await createServer({ server: { port: 0, strictPort: false, hmr: false }, logLevel: "silent" });
+  // An isolated optimizer cache cannot invalidate the user's running dev site.
+  const temporaryRoot = resolve(tmpdir());
+  const cacheDir = await mkdtemp(join(temporaryRoot, "chogcare-vite-test-"));
+  let vite;
+  t.after(async () => {
+    await vite?.close();
+    assert.equal(dirname(resolve(cacheDir)), temporaryRoot);
+    assert.ok(basename(cacheDir).startsWith("chogcare-vite-test-"));
+    await rm(cacheDir, { recursive: true, force: true });
+  });
+  vite = await createServer({ cacheDir, server: { port: 0, strictPort: false, hmr: false }, logLevel: "silent" });
   await vite.listen();
-  t.after(() => vite.close());
   const base = `http://127.0.0.1:${vite.httpServer.address().port}`;
   for (const path of ["/server/payment-service.mjs", "/server/payment-service.mjs?raw", "/%77ork/payments/custody/vault.json", "/work/payments/preview.sqlite", "/@fs/" + process.cwd().replaceAll("\\", "/") + "/work/payments/custody/vault.json?raw"]) {
     // HEAD only: never retrieve the user's actual encrypted backup or database.
@@ -52,11 +65,24 @@ test("production HTML policy excludes inline scripts, eval, arbitrary images and
   const policy = contentSecurityPolicy();
   assert.match(policy, /script-src 'self';/);
   assert.match(policy, /style-src 'self';/);
-  assert.match(policy, /connect-src 'self';/);
+  assert.match(policy, /connect-src 'self' https:\/\/chogcare-stream\.tail1f833b\.ts\.net http:\/\/127\.0\.0\.1:8080 http:\/\/localhost:8080;/);
   assert.match(policy, /frame-src https:\/\/player\.twitch\.tv https:\/\/stream\.chogcare\.com/);
   assert.doesNotMatch(policy, /unsafe-inline|unsafe-eval|nonce-|ws:|https:\*/);
   assert.match(policy, /form-action 'none'/);
   assert.throws(()=>contentSecurityPolicy("bad'nonce"));
+});
+
+test("live media is limited to the protected relay, local Owncast and MSE/worker blobs", () => {
+  const deployed = JSON.parse(readFileSync(new URL("../vercel.json", import.meta.url), "utf8"));
+  const vercelPolicy = deployed.headers.flatMap(rule => rule.headers).find(header => header.key === "Content-Security-Policy").value;
+  for (const policy of [contentSecurityPolicy(), vercelPolicy]) {
+    assert.match(policy, /(?:^|; )media-src blob: https:\/\/chogcare-stream\.tail1f833b\.ts\.net(?: http:\/\/127\.0\.0\.1:8080 http:\/\/localhost:8080)?;/);
+    assert.match(policy, /(?:^|; )worker-src 'self' blob:;/);
+    assert.match(policy, /(?:^|; )connect-src 'self' https:\/\/chogcare-stream\.tail1f833b\.ts\.net(?: http:\/\/127\.0\.0\.1:8080 http:\/\/localhost:8080)?;/);
+    assert.match(policy, /(?:^|; )script-src 'self';/);
+    assert.doesNotMatch(policy, /unsafe-inline|unsafe-eval|https:\*|connect-src[^;]*\*/);
+  }
+  assert.doesNotMatch(vercelPolicy, /127\.0\.0\.1|localhost|media-src[^;]*http:/);
 });
 
 test("payment API rejects rebinding, CSRF, extra fields, media tricks and rate-limit bypass", async t => {

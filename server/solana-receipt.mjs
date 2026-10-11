@@ -9,12 +9,13 @@ export function createSolanaReceiptVerifier(rpcUrl="https://api.mainnet-beta.sol
   let requestId=0;
   const rpc=async(method,params=[])=>{
     if(!["getGenesisHash","getTransaction"].includes(method))throw new Error("Unsupported Solana RPC method.");
-    const response=await fetcher(rpcUrl,{method:"POST",redirect:"error",signal:AbortSignal.timeout(15_000),headers:{"content-type":"application/json"},body:JSON.stringify({jsonrpc:"2.0",id:++requestId,method,params})});
+    const id=++requestId;
+    const response=await fetcher(rpcUrl,{method:"POST",redirect:"error",signal:AbortSignal.timeout(15_000),headers:{"content-type":"application/json"},body:JSON.stringify({jsonrpc:"2.0",id,method,params})});
     let bytes=0;const chunks=[];
     for await(const chunk of response.body){bytes+=chunk.length;if(bytes>524288)throw new Error("Oversized Solana RPC response.");chunks.push(chunk);}
     if(!response.ok)throw new Error("Solana RPC unavailable.");
     const json=JSON.parse(Buffer.concat(chunks).toString("utf8"));
-    if(json?.jsonrpc!=="2.0"||json.id!==requestId||json.error)throw new Error("Invalid Solana RPC response.");
+    if(json?.jsonrpc!=="2.0"||json.id!==id||json.error)throw new Error("Invalid Solana RPC response.");
     return json.result;
   };
   return {

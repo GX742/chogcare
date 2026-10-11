@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import { once } from "node:events";
 import { openInvoiceStore } from "../server/invoice-store.mjs";
 import { createPaymentService } from "../server/payment-service.mjs";
+import { parseUnits } from "viem";
 
 test("leaderboard ranks exact CHOG units and exposes no invoice or wallet identity",()=>{
   const store=openInvoiceStore(":memory:");
@@ -14,12 +15,31 @@ test("leaderboard ranks exact CHOG units and exposes no invoice or wallet identi
   store.close();
 });
 
+test("HTTP leaderboard aggregates all published donations before ranking and leaks no donor identity",async()=>{
+  const store=openInvoiceStore(":memory:"), contexts=new Map();
+  for(let index=1;index<=50;index++){
+    const invoiceId=index.toString(16).padStart(64,"0");
+    store.publishDonorProfile({invoiceId,nickname:index===50?"Updated GX":"GX",initiativeId:"school-supplies",amount:"300",amountUnits:parseUnits("300",18).toString(),avatarTokenId:null,publishedAt:index});
+    contexts.set(invoiceId,{sender:"0x1111111111111111111111111111111111111111",state:"delivered",amount:"300",initiativeId:"school-supplies"});
+  }
+  assert.equal(store.leaderboardRecords().length,50);
+  const service=createPaymentService(store,"http://127.0.0.1:4173",true,{leaderboardDonation:id=>contexts.get(id)});
+  service.listen(0,"127.0.0.1");await once(service,"listening");
+  try{
+    const response=await fetch(`http://127.0.0.1:${service.address().port}/api/payments/leaderboard`), body=await response.json();
+    assert.equal(response.status,200);
+    assert.deepEqual(body.entries.map(entry=>[entry.rank,entry.nickname,entry.amount]),[[1,"Updated GX","15000"]]);
+    assert.doesNotMatch(JSON.stringify(body),/invoice|sender|wallet|0x/i);
+  }finally{service.close();await once(service,"close");store.close();}
+});
+
 test("verified confirming donations appear as finalizing without exposing payment identity",async()=>{
   const invoiceId="c".repeat(64),store=openInvoiceStore(":memory:");
   let state="confirming";
   const processor={
     profileNfts:async id=>{assert.equal(id,invoiceId);return{state,initiativeId:"school-supplies",amount:"300",nfts:[]};},
     get:id=>id===invoiceId?{state}:null,
+    leaderboardDonation:id=>id===invoiceId?{sender:"0x1111111111111111111111111111111111111111",state,initiativeId:"school-supplies",amount:"300"}:null,
     checkpoint:async()=>{},
   };
   const service=createPaymentService(store,"http://127.0.0.1:4173",true,processor);

@@ -8,7 +8,7 @@ import CancelCheckout from "./CancelCheckout";
 import { supportsNft } from "./chog-beneficiary";
 import { initiativeNames } from "./donation-share";
 import { validateNftInvoice, type NftInvoice } from "./nft-invoice";
-import { beginCreation, closeSavedInvoice, createPaymentRequest, initialCheckout, pendingCreation, rememberInvoice } from "./checkout-session";
+import { beginCreation, closeSavedInvoice, createPaymentRequest, initialCheckout, pendingCreation, rememberInvoice, validInvoiceId } from "./checkout-session";
 
 export default function LiveNftCheckout({initiativeId,ready,healthy,availableClaims,queueFull=false,serviceAllowed=false}:{initiativeId:string;ready:boolean;healthy:boolean;availableClaims:number|null;queueFull?:boolean;serviceAllowed?:boolean}) {
   const [saved]=useState(()=>initialCheckout("nft")),[pending,setPending]=useState(saved.pending);
@@ -22,7 +22,7 @@ export default function LiveNftCheckout({initiativeId,ready,healthy,availableCla
     let disposed=false;let timer:ReturnType<typeof setTimeout>;const abort=new AbortController();
     const poll=async()=>{
       try {
-        if(!/^[a-f0-9]{64}$/.test(id))throw new Error("Invalid saved invoice. Contact the operator before paying.");
+        if(!validInvoiceId(id))throw new Error("Invalid saved invoice. Contact the operator before paying.");
         const r=await fetch(`/api/payments/invoices/${id}`,{signal:AbortSignal.any([abort.signal,AbortSignal.timeout(12000)])});
         if(!r.ok)throw new Error("Status unavailable. Keep this invoice and do not pay again.");
         const x=validateNftInvoice(await r.json());

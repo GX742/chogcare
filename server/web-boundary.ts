@@ -1,14 +1,17 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
 
 export function contentSecurityPolicy(developmentNonce?: string): string {
-  if (developmentNonce && !/^[A-Za-z0-9+/=]{24,64}$/.test(developmentNonce)) throw new Error("Invalid development CSP nonce.");
+  if (developmentNonce && developmentNonce.match(/^[A-Za-z0-9+/=]{24,64}$/)?.[0] !== developmentNonce) throw new Error("Invalid development CSP nonce.");
   const nonce = developmentNonce ? ` 'nonce-${developmentNonce}'` : "";
   return [
     "default-src 'none'", "base-uri 'none'", "object-src 'none'", "frame-ancestors 'none'", "frame-src https://player.twitch.tv https://stream.chogcare.com http://127.0.0.1:8080 http://localhost:8080",
     `script-src 'self'${nonce}`, "script-src-attr 'none'", `style-src 'self'${nonce}`, "style-src-attr 'none'",
-    "img-src 'self' data: https://giveth.mypinata.cloud https://www.animal-ethics.org https://media-refresh.heifer.org",
-    "font-src 'self'", `connect-src 'self'${developmentNonce ? " ws://127.0.0.1:* ws://localhost:*" : ""}`,
-    "form-action 'none'", "worker-src 'none'", "media-src 'none'", "manifest-src 'self'",
+    "img-src 'self' data: https://giveth.mypinata.cloud https://gateway.pinata.cloud https://www.animal-ethics.org https://media-refresh.heifer.org",
+    // This local-only boundary supports the existing relay and local Owncast.
+    // MSE and the hls.js worker use blob URLs. Never allow arbitrary hosts;
+    // the deployed Vercel policy does not include these loopback exceptions.
+    "font-src 'self'", `connect-src 'self' https://chogcare-stream.tail1f833b.ts.net http://127.0.0.1:8080 http://localhost:8080${developmentNonce ? " ws://127.0.0.1:* ws://localhost:*" : ""}`,
+    "form-action 'none'", "worker-src 'self' blob:", "media-src blob: https://chogcare-stream.tail1f833b.ts.net http://127.0.0.1:8080 http://localhost:8080", "manifest-src 'self'",
   ].join("; ");
 }
 
@@ -29,7 +32,7 @@ export function privateWebPath(rawUrl: string): boolean {
   return segments.some(part =>
     ["work", "server", "scripts", "test", "contracts", "artifacts", "docs", ".git", ".codex", ".agents", ".aws", ".ssh"].includes(part) ||
     part === ".env" || part.startsWith(".env.") || part === ".npmrc" || part === ".yarnrc.yml" ||
-    /\.(?:sqlite(?:-wal|-shm)?|db|pem|key|pfx|p12)$/.test(part) || part === "vault.json" ||
+    /\.(?:(?:sqlite3?|db)(?:-(?:wal|shm|journal))?|pem|key|pfx|p12|crt|cer|der)$/.test(part) || part === "vault.json" ||
     // Windows alternate streams are never valid frontend assets.
     (part.includes(":") && !/^[a-z]:$/.test(part)));
 }

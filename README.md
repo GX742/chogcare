@@ -1,12 +1,20 @@
 # ChogCare
 
-Local MVP for turning CHOG on Monad into USDC donations to Giveth initiative wallets on Ethereum.
+## Physical broadcast station (2026-10-11)
 
-## Current checkout status (2026-10-08)
+The USB-connected NodeMCU/ST7789 station celebrates finalized CHOG donations with the donor's public nickname, amount and a softly pulsing LED. See [wiring, Arduino upload and Windows bridge instructions](firmware/README.md). The external LED uses **D0**; move the TFT reset wire to **D1** and leave its other SPI wires unchanged. The bridge only reads payment data and does not send funds. Run `npm run station -- --port COM4` only after verifying the actual NodeMCU port; close Arduino Serial Monitor first.
 
-**Current implementation: owner-unlocked local CHOG payment pilot.** Run `npm run payments:start` personally and enter the existing vault password in its hidden terminal prompt. The process prints a public MON gas-funding address. Real invoice issuance requires a healthy worker and at least 6 MON operator balance. It allocates individual deposit addresses, watches CHOG, executes Nad.fun → Uniswap → Relay, and reports success only after finalized Ethereum USDC delivery. The checkout shows the actual delivered amount and explorer links. Only Burundi / 300–10,000 CHOG is enabled. NFT pool payments remain disabled.
+ChogCare is an owner-operated donation pilot with CHOG QR donations, CHOG NFT daily grants, a public care board and a physical live-broadcast station.
 
-Read [the current operator runbook](docs/PAYMENTS-LOCAL-PILOT.md) for startup, limits, storage and recovery restrictions. `npm run payments:route:check` verifies fresh quotes without loading keys. `npm run payments:status` is read-only. This code is not a completed external audit or a demonstrated mainnet payment; owner unlocking, gas funding and the first controlled real payment remain necessary. The agent has not decrypted the user's vault or sent a real transaction.
+## Current checkout status (2026-10-11)
+
+**Current implementation: owner-unlocked local payment pilot.** The public frontend is hosted on Vercel; a narrow Tailscale Funnel proxy exposes only HLS video and the payment API. Run `npm run payments:start` personally and enter the existing vault password in its hidden terminal prompt. Website deployment does not start or update this local worker. Invoice issuance requires current network, custody and gas checks. Do not expose Vite, Owncast administration or payment storage.
+
+CHOG donations support 300–1,000,000 CHOG, with a 10% NFT-pool contribution added on top. The worker validates exact payments and pinned destinations, then processes the conversion and delivery. The supported initiatives are Burundi, School Supplies & Crypto Education, The Solar Foundation, Vida Verde and Animal Ethics; their server-pinned delivery routes differ. Included destination receipts and finalized delivery are distinct states. Physical station celebrations require finalized CHOG delivery, not just an invoice or bridge response.
+
+The NFT grant requires verified ownership of the configured CHOG collection and an exact, non-refundable 1 MON verification donation. New grants are $1, up to three recipients and $3 total per UTC day. Eligibility is enforced both per wallet and per collection/token ID/day; transferring the same NFT cannot reset its daily claim. No wallet connection is used. Public addresses do not prove ownership before reservation, so temporary slot blocking remains possible. See [NFT pool operations](docs/NFT-POOL-OPERATIONS.md).
+
+Read [the current operator runbook](docs/PAYMENTS-LOCAL-PILOT.md) and [the latest internal security review](docs/SECURITY-AUDIT-2026-10-11.md). `npm run payments:route:check` verifies fresh quotes without loading keys; `npm run payments:status` is read-only. The audit uses disposable keys, temporary databases and mocked chain responses, not the user's custody keys or real transfers. Passing tests are not an independent audit or a production safety guarantee.
 
 ### Earlier preview milestone (historical; superseded for CHOG by the pilot above)
 
@@ -24,9 +32,9 @@ Owner-confirmed policy: Chog Genesis ERC-721 on Monad at `0xc96d31f8626c6d03fae5
 
 The read-only validators check NFT verification, genuine CHOG Transfer events and exact Ethereum USDC funding/payout receipts against canonical finalized blocks. The internal payout outbox binds a verified NFT proof to its daily reservation, checks a signed exact 0.50-USDC transfer, and commits the signed bytes, nonce and budget submission atomically before broadcasting. Timeout recovery only rebroadcasts those identical bytes. These modules are tested but **not connected to live deposits or a running signer**. Atomic real-invoice issuance, abuse-resistant reservation expiry, indexing and swap/bridge settlement remain required.
 
-## Security review (2026-10-08)
+## Security reviews
 
-See `docs/SECURITY-AUDIT-2026-10-08.md` for findings, fixed issues and launch blockers. This is an internal review, not an independent audit or security guarantee. The old wallet send function is hard-disabled: its historical LI.FI metadata parser is not a safe custody-signing policy.
+See [the latest review](docs/SECURITY-AUDIT-2026-10-11.md), with earlier dated reviews retained as historical snapshots. This is an internal review, not an independent audit or security guarantee. The old wallet send function is hard-disabled: its historical LI.FI metadata parser is not a safe custody-signing policy.
 
 Private application files are blocked before Vite static/raw-file handlers and by `server.fs.deny`. Payment storage on this machine has Windows ACLs restricted to the current account, SYSTEM and Administrators. `npm run payments:storage:protect` reapplies that local ACL policy; it does not protect against a compromised current account. Do not expose Vite, place secrets in `public/`, or use this workstation as a production signer.
 

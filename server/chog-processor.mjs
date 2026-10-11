@@ -1,5 +1,6 @@
 import { randomBytes } from "node:crypto";
 import { DatabaseSync } from "node:sqlite";
+import { verifiedLeaderboardDonation } from "./donor-leaderboard.mjs";
 import { createPublicClient, http, erc20Abi, encodeFunctionData, parseUnits, formatUnits, decodeEventLog, parseAbi } from "viem";
 import { monad, mainnet, optimism } from "viem/chains";
 import { deliveryNetwork, NEW_DONATION_CHAIN_ID, SOLANA_CHAIN_ID } from "../src/delivery-network.ts";
@@ -30,6 +31,29 @@ const approve=(token,spender,amount)=>({to:token,value:0n,data:encodeFunctionDat
 const profileNftAbi=parseAbi(["function tokensOfOwner(address) view returns (uint256[])","function tokenURI(uint256) view returns (string)"]);
 const ipfsUri=/^ipfs:\/\/([a-z0-9]{46,90})(\/[a-zA-Z0-9._/-]{1,180})?$/;
 const ipfsGateway=uri=>{const match=ipfsUri.exec(uri);if(!match||match[2]?.split("/").includes(".."))return null;return `https://gateway.pinata.cloud/ipfs/${match[1]}${match[2]??""}`;};
+const NFT_METADATA_MAX_BYTES=65_536, NFT_METADATA_CACHE_LIMIT=128, NFT_PROFILE_REQUEST_LIMIT=8;
+
+// External metadata is display-only. Never follow a gateway redirect into the
+// owner's LAN or buffer an unbounded/chunked response in the custody process.
+export async function fetchProfileMetadata(uri, fetcher=fetch) {
+  const url=ipfsGateway(uri);
+  if(!url)return null;
+  const response=await fetcher(url,{redirect:"error",headers:{Accept:"application/json"},signal:AbortSignal.timeout(7000)});
+  const declared=response.headers.get("content-length");
+  if(!response.ok||!response.body||declared!==null&&(!/^\d+$/.test(declared)||Number(declared)>NFT_METADATA_MAX_BYTES)){
+    await response.body?.cancel().catch(()=>{});
+    throw new Error("NFT metadata response rejected.");
+  }
+  let bytes=0;const chunks=[];
+  for await(const chunk of response.body){
+    bytes+=chunk.byteLength;
+    if(bytes>NFT_METADATA_MAX_BYTES)throw new Error("NFT metadata exceeds the display limit.");
+    chunks.push(Buffer.from(chunk));
+  }
+  const metadata=JSON.parse(Buffer.concat(chunks,bytes).toString("utf8"));
+  if(!metadata||typeof metadata!=="object"||Array.isArray(metadata))throw new Error("Invalid NFT metadata.");
+  return metadata;
+}
 
 // Local single-operator pilot. The root is provided ONLY by the owner's hidden
 // terminal prompt, never via HTTP/env/browser. No arbitrary signing HTTP method.
@@ -57,7 +81,7 @@ export function createChogProcessor({ filename, vault, root, checkpoint=()=>{}, 
   const allocator=createAddressAllocator(db,vault), journal=sourceJournal(db);
   let running=false, closed=false, healthyAt=0, gasBalance=0n, expiredCursor="";
   let rateCache=null,rateRequest=null,poolPendingUsdc=0n;
-  const nftMetadataCache=new Map();
+  const nftMetadataCache=new Map(),nftMetadataRequests=new Map(),nftProfileRequests=new Map();
   // Only finalized/canonical source receipts are cached, in RAM. Restart always
   // re-verifies them. Pending receipts and Ethereum observations are never cached.
   const sourceConfirmed=new Map();
@@ -318,32 +342,42 @@ export function createChogProcessor({ filename, vault, root, checkpoint=()=>{}, 
     try{return await rateRequest;}finally{rateRequest=null;}
   }
   async function profileNfts(id){
-    const x=load(id);
-    if(!x || !["confirming","delivered"].includes(x.state) || !x.depositProof?.sender || !same(x.depositProof.txHash,x.depositHash))throw new Error("A received CHOG donation is required.");
-    const tokenIds=await source.readContract({address:PAYMENT_POLICY.nftCollection,abi:profileNftAbi,functionName:"tokensOfOwner",args:[x.depositProof.sender]});
-    const unique=[...new Set(tokenIds.map(String))].slice(0,24);
-    const nfts=await Promise.all(unique.map(async tokenId=>{
-      if(nftMetadataCache.has(tokenId))return nftMetadataCache.get(tokenId);
-      let result={tokenId,name:`CHOG #${tokenId}`,image:null};
-      try{
-        const metadataUri=await source.readContract({address:PAYMENT_POLICY.nftCollection,abi:profileNftAbi,functionName:"tokenURI",args:[BigInt(tokenId)]});
-        const metadataUrl=ipfsGateway(metadataUri);
-        if(metadataUrl){
-          const response=await fetch(metadataUrl,{headers:{Accept:"application/json"},signal:AbortSignal.timeout(7000)});
-          const length=Number(response.headers.get("content-length")??0);
-          if(response.ok && length<=65536){
-            const text=await response.text();
-            if(text.length<=65536){const metadata=JSON.parse(text),image=ipfsGateway(metadata?.image);result={tokenId,name:typeof metadata?.name==="string"&&metadata.name.length<=80?metadata.name:`CHOG #${tokenId}`,image};}
-          }
-        }
-      }catch{/* Ownership is still shown with a local collection fallback. */}
-      nftMetadataCache.set(tokenId,result);return result;
-    }));
-    return {invoiceId:x.id,state:x.state,initiativeId:x.initiativeId,amount:x.donationAmount??x.amount,nfts};
+    if(closed||typeof id!=="string"||!/^[a-f0-9]{64}$/.test(id))throw new Error("A received CHOG donation is required.");
+    if(nftProfileRequests.has(id))return nftProfileRequests.get(id);
+    if(nftProfileRequests.size>=NFT_PROFILE_REQUEST_LIMIT)throw new Error("NFT profile lookup is busy. Try again shortly.");
+    const request=(async()=>{
+      const x=load(id),donation=verifiedLeaderboardDonation(x,id);
+      if(!donation)throw new Error("A received CHOG donation is required.");
+      const tokenIds=await source.readContract({address:PAYMENT_POLICY.nftCollection,abi:profileNftAbi,functionName:"tokensOfOwner",args:[donation.sender]});
+      if(!Array.isArray(tokenIds)||tokenIds.length>1969||tokenIds.some(token=>typeof token!=="bigint"||token<0n||token>=2n**256n))throw new Error("Invalid NFT lookup response.");
+      const unique=[...new Set(tokenIds.map(String))].slice(0,24);
+      const nfts=await Promise.all(unique.map(async tokenId=>{
+        const cached=nftMetadataCache.get(tokenId);
+        if(cached&&cached.expiresAt>Date.now())return cached.result;
+        nftMetadataCache.delete(tokenId);
+        if(nftMetadataRequests.has(tokenId))return nftMetadataRequests.get(tokenId);
+        const metadataRequest=(async()=>{
+          let result={tokenId,name:`CHOG #${tokenId}`,image:null},valid=false;
+          try{
+            const metadataUri=await source.readContract({address:PAYMENT_POLICY.nftCollection,abi:profileNftAbi,functionName:"tokenURI",args:[BigInt(tokenId)]});
+            const metadata=await fetchProfileMetadata(metadataUri,dependencies.metadataFetch??fetch);
+            if(metadata){result={tokenId,name:typeof metadata.name==="string"&&metadata.name.length<=80?metadata.name:`CHOG #${tokenId}`,image:ipfsGateway(metadata.image)};valid=true;}
+          }catch{/* Ownership is still shown with a local collection fallback. */}
+          if(nftMetadataCache.size>=NFT_METADATA_CACHE_LIMIT)nftMetadataCache.delete(nftMetadataCache.keys().next().value);
+          nftMetadataCache.set(tokenId,{result,expiresAt:Date.now()+(valid?600_000:30_000)});return result;
+        })();
+        nftMetadataRequests.set(tokenId,metadataRequest);
+        try{return await metadataRequest;}finally{nftMetadataRequests.delete(tokenId);}
+      }));
+      return {invoiceId:x.id,state:x.state,initiativeId:x.initiativeId,amount:x.donationAmount??x.amount,nfts};
+    })();
+    nftProfileRequests.set(id,request);
+    try{return await request;}finally{nftProfileRequests.delete(id);}
   }
   return {
     publicChogRate,
     profileNfts,
+    leaderboardDonation(id){return closed||!/^[a-f0-9]{64}$/.test(id??"")?null:verifiedLeaderboardDonation(load(id),id);},
     publicStatus(){return {paymentsEnabled:!closed&&Date.now()-healthyAt<60_000&&gasBalance>=OPERATOR_READY_BALANCE,paymentMode:"local-pilot",workerVersion:"2026-10-11-pending-profile-v6",destinationChainId:newDestinationChainId,supportedModes:["chog"],supportedInitiatives:[...CHOG_INITIATIVES],poolContributionPercent:10,poolContributionMode:"added-on-top",poolContributionBatchMinimumUsdc:"5.00",poolContributionPendingUsdc:formatUnits(poolPendingUsdc,6)};},
     canRetryUnissuedChog(id){return !closed && /^[a-f0-9]{64}$/.test(id) && !load(id) && !db.prepare("SELECT 1 FROM deposit_addresses WHERE invoice_id=?").get(id);},
     async issue(input, requestId) {

@@ -138,7 +138,9 @@
 .care-station-grid { display: grid; grid-template-columns: minmax(0, 1.4fr) minmax(340px, .9fr); gap: 30px; align-items: start; }
 .care-stream-column { min-width: 0; }
 .care-stream { position: relative; width: min(100%, 430px); aspect-ratio: 3 / 4; margin-inline: auto; }
-.care-station .care-stream { width: min(100%, 540px); }
+/* Fill more of checkout's existing stream column without narrowing the form.
+   The landing preview and portrait framing/crop remain unchanged. */
+.care-station .care-stream { width: min(100%, 720px); }
 .care-stream .lp-broadcast-frame { border-radius: 24px; }
 .care-stream .lp-broadcast-interior { border-radius: 22.5px; }
 .care-stream .lp-broadcast-player { object-position: center 60%; }

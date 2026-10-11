@@ -1,4 +1,38 @@
-# CHOG payment pilot — operator runbook
+# ChogCare payment pilot operator runbook
+
+## Current operation on 11 October 2026
+
+This is an owner-operated custody pilot, not independently audited unattended production software. Vercel serves the frontend; the local worker must be running separately. Website deployment does not start or refresh that worker. Vite is optional for local development, not required for the deployed frontend.
+
+From the project folder, start the existing worker personally:
+
+```powershell
+npm run payments:start
+```
+
+Enter the **existing** vault password only at its hidden prompt and leave the terminal open. Do not recreate the vault, delete databases, restore older storage, reset integrity enrollment or create a replacement invoice to bypass a timeout. Identify and stop only your previous payment terminal if its port is occupied. `INTEGRITY_HOLD` requires reconciliation, not reenrollment.
+
+Verify readiness without a password:
+
+```powershell
+Invoke-RestMethod 'https://chogcare.vercel.app/api/payments/config' | ConvertTo-Json -Depth 6
+```
+
+CHOG issuance requires `paymentsEnabled`, an unlocked custody state, network/gas readiness and no integrity lock. NFT issuance additionally needs `nftPaymentsEnabled`, `poolHealthy`, `poolGasReady`, available funded claims and a checkout slot. Do not pay again when a worker is offline or a transaction is uncertain.
+
+Current CHOG donations support 300–1,000,000 CHOG with 10% added on top for the NFT pool: 300 to the initiative means 330 total. The board and physical thank-you display show the donation excluding that addition. Supported initiatives are Burundi, School Supplies & Crypto Education, The Solar Foundation, Vida Verde and Animal Ethics. Current new USDC routes use Optimism; Animal Ethics has its pinned native SOL route. Historical invoices retain their original route and amount. Included receipts are not finalized delivery; the physical station requires finalized CHOG delivery and a healthy worker.
+
+New NFT grants are **$1 each, three recipients maximum and $3 total per UTC day**, with both wallet/day and collection/token-ID/day eligibility. Transferring the same NFT does not reset its daily claim. Existing $0.50 invoices remain unchanged. Verification requires exactly 1 MON, a non-refundable donation held in its separate custody address. See [NFT pool operations](NFT-POOL-OPERATIONS.md) for funding and gas details.
+
+The owner chose no wallet connection/signature. Someone knowing a public holder/token pair can temporarily reserve its checkout slot; rate limits and short holds do not authenticate ownership. The public board omits wallet addresses, but an NFT avatar and public receipts can permit onchain owner correlation.
+
+Keep custody storage private and back up the vault, databases and integrity checkpoint consistently. The HTTP worker and unlocked signer still share one process/account; malware running as the owner remains a critical risk. Do not expose Vite, Owncast administration or local service ports. No automatic refund or sweeping implementation is available. Retry only original committed transaction bytes; ambiguous, late or incorrect payments need invoice-specific reconciliation.
+
+Use full `npm run security:check` and read [the latest security review](SECURITY-AUDIT-2026-10-11.md). Automated checks are synthetic, not proof of real settlement or an independent audit.
+
+## Historical operator details from 8 October 2026
+
+The remainder is retained as a dated implementation snapshot. Its old recipient restrictions, disabled NFT mode, grant amounts, limits and deployment statements are superseded by the current section above.
 
 Updated 2026-10-08. This is an owner-operated local mainnet pilot, **not independently audited production software**. The implementation can issue real deposit addresses and sign real transactions after the owner unlocks it. No real payment was sent during automated verification. Do not present the mock-chain tests as a completed mainnet donation.
 

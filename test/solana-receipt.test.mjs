@@ -26,3 +26,25 @@ test("Solana verifier rejects wrong network, recipient, failed transaction and i
   await assert.rejects(createSolanaReceiptVerifier("https://rpc.example",fetcher({received:10n})).inspectNativeTransfer(signature,recipient,11n));
   assert.equal(await createSolanaReceiptVerifier("https://rpc.example",fetcher({missing:true})).inspectNativeTransfer(signature,recipient,1n),null);
 });
+
+test("parallel Solana requests bind each response to its own ID, including out-of-order completion",async()=>{
+  const pending=[];
+  const verifier=createSolanaReceiptVerifier("https://rpc.example",(_url,init)=>new Promise(resolve=>{
+    pending.push({request:JSON.parse(init.body),resolve});
+  }));
+  const network=verifier.ready(),first=verifier.inspectNativeTransfer(signature,recipient,1n),second=verifier.inspectNativeTransfer(signature,recipient,1n);
+  assert.deepEqual(pending.map(item=>item.request.id),[1,2,3]);
+  pending[2].resolve(response(null,3));pending[1].resolve(response(null,2));pending[0].resolve(response(SOLANA_MAINNET_GENESIS,1));
+  assert.deepEqual(await Promise.all([network,first,second]),[true,null,null]);
+});
+
+test("Solana verifier never accepts a different concurrent request's response ID",async()=>{
+  const pending=[];
+  const verifier=createSolanaReceiptVerifier("https://rpc.example",(_url,init)=>new Promise(resolve=>{
+    pending.push({request:JSON.parse(init.body),resolve});
+  }));
+  const first=verifier.ready(),second=verifier.ready();
+  const rejected=assert.rejects(first,/Invalid Solana RPC response/);
+  pending[0].resolve(response(SOLANA_MAINNET_GENESIS,2));pending[1].resolve(response(SOLANA_MAINNET_GENESIS,2));
+  await rejected;assert.equal(await second,true);
+});

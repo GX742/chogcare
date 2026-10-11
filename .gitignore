@@ -7,6 +7,8 @@ work/
 .env.local
 coverage/
 *.log
+__pycache__/
+*.pyc
 *.tsbuildinfo
 *.sqlite
 *.sqlite-wal

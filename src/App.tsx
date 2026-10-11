@@ -8,6 +8,8 @@ import { checkoutChanged, checkoutSelection, rememberMode } from "./checkout-ses
 import CheckoutRecovery from "./CheckoutRecovery";
 import CheckoutSizeTransition from "./CheckoutSizeTransition";
 import Leaderboard from "./Leaderboard";
+import { createLiveResumeSync, createLiveRetryBudget, liveHlsConfig, livePlaybackStrategy, liveSegmentSeconds, recoverLiveNetwork, DEFAULT_LIVE_SEGMENT_SECONDS } from "./live-player";
+import { broadcastStreamUrl } from "./broadcast-source";
 
 import "./station-redesign.css";
 
@@ -131,69 +133,111 @@ function Funding({ initiative }: { initiative: Initiative }) {
 
 const configuredTwitchChannel = import.meta.env.VITE_TWITCH_CHANNEL?.trim().toLowerCase() || "nerfwok";
 const twitchChannel = /^[a-z0-9_]{4,25}$/.test(configuredTwitchChannel) ? configuredTwitchChannel : null;
-const defaultOwncastUrl = "https://chogcare-stream.tail1f833b.ts.net";
-
 function owncastStreamUrl() {
-  const configuredUrl = import.meta.env.VITE_OWNCAST_URL?.trim() || defaultOwncastUrl;
-  if (!configuredUrl) return null;
-  try {
-    const url = new URL(configuredUrl);
-    const localDevelopment = url.protocol === "http:" && ["127.0.0.1", "localhost"].includes(url.hostname);
-    if (url.protocol !== "https:" && !localDevelopment) return null;
-    url.pathname = "/hls/stream.m3u8";
-    url.search = "";
-    url.hash = "";
-    return url.toString();
-  } catch {
-    return null;
-  }
+  return broadcastStreamUrl(import.meta.env.VITE_OWNCAST_URL?.trim(), window.location.origin);
 }
 
-function NativeLivePlayer({ src, onReady }: { src: string; onReady: () => void }) {
+function NativeLivePlayer({ src, onReady, onWaiting }: { src: string; onReady: () => void; onWaiting: () => void }) {
   const videoRef = useRef<HTMLVideoElement>(null);
+  const callbacks = useRef({ onReady, onWaiting });
+
+  useEffect(() => { callbacks.current = { onReady, onWaiting }; }, [onReady, onWaiting]);
 
   useEffect(() => {
     const video = videoRef.current;
     if (!video) return;
-
+    let cancelled = false, wasHidden = document.hidden, segmentSeconds = DEFAULT_LIVE_SEGMENT_SECONDS;
+    let hls: HlsType | null = null, retryTimer: ReturnType<typeof setTimeout> | null = null;
+    let lastRecovery: (() => void) | null = null, recoveryHeld = false;
+    const nativeHlsCapable = Boolean(video.canPlayType("application/vnd.apple.mpegurl"));
+    let nativeActive = false, mseAttached = false;
+    const retryBudget = createLiveRetryBudget();
+    const resumeSync = createLiveResumeSync({ media: video, segmentSeconds: () => segmentSeconds, liveSyncPosition: () => hls?.liveSyncPosition ?? null });
+    const waiting = () => { if (!cancelled) callbacks.current.onWaiting(); };
     const startPlayback = () => {
-      void video.play().catch(() => undefined);
+      if (!cancelled) void video.play().catch(waiting);
+    };
+    const recover = (operation: () => void) => {
+      if (cancelled || retryTimer !== null) return;
+      waiting();
+      lastRecovery = operation;
+      const delay = retryBudget.nextDelay();
+      if (delay === null) { recoveryHeld = true; hls?.stopLoad(); return; }
+      recoveryHeld = false;
+      retryTimer = setTimeout(() => {
+        retryTimer = null;
+        if (cancelled) return;
+        try { operation(); } catch { recover(operation); }
+      }, delay);
+    };
+    const resume = () => {
+      if (cancelled || document.hidden) return;
+      // A user returning after the retry window may try again, but cannot
+      // bypass the bounded fatal-recovery budget by switching tabs repeatedly.
+      if (recoveryHeld && lastRecovery) { recover(lastRecovery); return; }
+      if (retryTimer === null) hls?.startLoad();
+      resumeSync.request();
+      startPlayback();
+    };
+    const metadata = () => { resumeSync.request(); startPlayback(); };
+    const canPlay = () => { resumeSync.update(); };
+    const visibility = () => {
+      if (document.hidden) { wasHidden = true; return; }
+      if (wasHidden) { wasHidden = false; resume(); }
+    };
+    const pageShow = (event: PageTransitionEvent) => { if (event.persisted) resume(); };
+    const nativeError = () => {
+      if (nativeActive) recover(() => { video.load(); startPlayback(); });
+    };
+    const startNative = () => {
+      if (cancelled || !nativeHlsCapable || mseAttached || nativeActive) return;
+      hls?.destroy(); hls = null;
+      nativeActive = true;
+      video.src = src;
     };
 
-    if (video.canPlayType("application/vnd.apple.mpegurl")) {
-      video.src = src;
-      video.addEventListener("loadedmetadata", startPlayback);
-      return () => {
-        video.removeEventListener("loadedmetadata", startPlayback);
-        video.removeAttribute("src");
-        video.load();
-      };
-    }
-
-    let cancelled = false;
-    let hls: HlsType | null = null;
+    waiting();
+    video.addEventListener("loadedmetadata", metadata);
+    video.addEventListener("canplay", canPlay);
+    video.addEventListener("error", nativeError);
+    document.addEventListener("visibilitychange", visibility);
+    window.addEventListener("pageshow", pageShow);
 
     void import("hls.js").then(({ default: Hls }) => {
-      if (cancelled || !Hls.isSupported()) return;
-      hls = new Hls({
-        enableWorker: true,
-        lowLatencyMode: true,
-        backBufferLength: 30,
-      });
-      hls.loadSource(src);
-      hls.attachMedia(video);
-      hls.on(Hls.Events.MANIFEST_PARSED, startPlayback);
-      hls.on(Hls.Events.ERROR, (_event, data) => {
-        if (!data.fatal || !hls) return;
-        if (data.type === Hls.ErrorTypes.NETWORK_ERROR) hls.startLoad();
-        else if (data.type === Hls.ErrorTypes.MEDIA_ERROR) hls.recoverMediaError();
-        else hls.destroy();
-      });
-    });
+        if (cancelled) return;
+        const strategy = livePlaybackStrategy(Hls.isSupported(), nativeHlsCapable);
+        if (strategy !== "hls") { if (strategy === "native") startNative(); return; }
+        hls = new Hls(liveHlsConfig());
+        hls.on(Hls.Events.MANIFEST_PARSED, startPlayback);
+        hls.on(Hls.Events.LEVEL_UPDATED, (_event, data) => {
+          segmentSeconds = liveSegmentSeconds(data.details.targetduration);
+          if (!document.hidden) resumeSync.update();
+        });
+        hls.on(Hls.Events.ERROR, (_event, data) => {
+          if (!data.fatal || !hls || cancelled) return;
+          if (data.type === Hls.ErrorTypes.NETWORK_ERROR) recover(() => { if (hls) recoverLiveNetwork(hls, src, data.details); });
+          else if (data.type === Hls.ErrorTypes.MEDIA_ERROR) recover(() => { hls?.recoverMediaError(); });
+          else { waiting(); hls.destroy(); hls = null; }
+        });
+        mseAttached = true;
+        hls.attachMedia(video);
+        hls.loadSource(src);
+      }).catch(() => { waiting(); startNative(); });
 
     return () => {
       cancelled = true;
+      if (retryTimer !== null) clearTimeout(retryTimer);
+      retryBudget.dispose();
+      resumeSync.dispose();
+      video.removeEventListener("loadedmetadata", metadata);
+      video.removeEventListener("canplay", canPlay);
+      video.removeEventListener("error", nativeError);
+      document.removeEventListener("visibilitychange", visibility);
+      window.removeEventListener("pageshow", pageShow);
       hls?.destroy();
+      video.pause();
+      video.removeAttribute("src");
+      video.load();
     };
   }, [src]);
 
@@ -210,6 +254,9 @@ function NativeLivePlayer({ src, onReady }: { src: string; onReady: () => void }
       tabIndex={-1}
       aria-label="ChogCare live broadcast"
       onPlaying={onReady}
+      onWaiting={onWaiting}
+      onStalled={onWaiting}
+      onError={onWaiting}
       onContextMenu={(event) => event.preventDefault()}
     />
   </>;
@@ -227,7 +274,7 @@ function BroadcastPanel({ headingId }: { headingId: string }) {
       <div className="lp-broadcast-interior">
         {owncastUrl || twitchUrl ? <>
           <h2 id={headingId} className="sr-only">ChogCare live broadcast</h2>
-          {owncastUrl ? <NativeLivePlayer src={owncastUrl} onReady={() => setPlayerLoaded(true)} /> : <iframe
+          {owncastUrl ? <NativeLivePlayer src={owncastUrl} onReady={() => setPlayerLoaded(true)} onWaiting={() => setPlayerLoaded(false)} /> : <iframe
               className={`lp-broadcast-player${playerLoaded ? " is-ready" : ""}`}
               src={twitchUrl ?? undefined}
               title="ChogCare live broadcast"
@@ -394,7 +441,7 @@ export default function App() {
               <div className="care-mechanic-art care-coin-art"><img src="/chog-donation-coin.png" alt="Purple CHOG coin" width="1324" height="1188" loading="lazy" /></div>
               <div className="care-mechanic-copy">
                 <span className="care-mechanic-label">Give with CHOG</span>
-                <h2 id="token-mechanic-title"><span>CHOG</span><ArrowRight size={24} aria-hidden="true" /><span className="care-charity-word" lang="ru">Благотворительность</span></h2>
+                <h2 id="token-mechanic-title"><span>CHOG</span><ArrowRight size={24} aria-hidden="true" /><span className="care-charity-word">Charity</span></h2>
                 <p>You send CHOG.<br />We deliver your donation to the charity.</p>
                 <span className="care-mechanic-note">Your cause amount stays intact. 10% is added for the NFT community pool.</span>
               </div>

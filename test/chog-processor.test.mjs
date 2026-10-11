@@ -6,7 +6,7 @@ import { join } from "node:path";
 import { createHash } from "node:crypto";
 import { HDNodeWallet, Transaction } from "ethers";
 import { encodeEventTopics, encodeAbiParameters, encodeFunctionData, parseAbi, parseUnits, erc20Abi, keccak256 } from "viem";
-import { createChogProcessor } from "../server/chog-processor.mjs";
+import { createChogProcessor, fetchProfileMetadata } from "../server/chog-processor.mjs";
 import { DEPOSIT_BASE_PATH } from "../server/custody-vault.mjs";
 import { CHOG, MONAD_USDC, ETHEREUM_USDC, GIVETH_PROJECT_RECIPIENT, NAD_DEX_ROUTER } from "../src/route.ts";
 import { RELAY_DEPOSITORY } from "../server/relay-route.mjs";
@@ -27,7 +27,7 @@ function event(token,to,value,hash,number) {
   return {address:token,transactionHash:hash,blockHash:h(number),blockNumber:number,logIndex:0,removed:false,
     topics:encodeEventTopics({abi:erc20Abi,eventName:"Transfer",args:{from:donor,to}}),data:encodeAbiParameters([{type:"uint256"}],[value])};
 }
-async function harness(t, destinationChainId=1, expensiveBridge=false, initiativeId="burundi", newChain=destinationChainId) {
+async function harness(t, destinationChainId=1, expensiveBridge=false, initiativeId="burundi", newChain=destinationChainId, extraDependencies={}) {
   const dir=await mkdtemp(join(tmpdir(),"chog-processor-test-"));
   const root=HDNodeWallet.createRandom("",DEPOSIT_BASE_PATH), xpub=root.neuter().extendedKey;
   const vault={version:1,basePath:DEPOSIT_BASE_PATH,xpub,keyId:createHash("sha256").update(xpub).digest("hex")};
@@ -62,7 +62,7 @@ async function harness(t, destinationChainId=1, expensiveBridge=false, initiativ
     saleQuote:async()=>({router:NAD_DEX_ROUTER,minMon:String(19n*10n**18n)}),
     usdcQuote:async()=>({fee:500,minUsdc:"980000"}),
     bridgeQuote:async(_payer,_amount,_minimum,chain)=>({requestId:h(8000),orderId:h(8001),minOutput:chain===SOLANA_CHAIN_ID?"8400000":expensiveBridge?"800000":"870000",expectedOutput:chain===SOLANA_CHAIN_ID?"8800000":"880000",minimumOutputUsdMicros:expensiveBridge?"800000":"870000",destinationChainId:chain,estimatedSeconds:2,to:RELAY_DEPOSITORY,data:encodeFunctionData({abi:parseAbi(["function depositErc20(address depositor,address token,uint256 amount,bytes32 id)"]),functionName:"depositErc20",args:[_payer,MONAD_USDC,_amount,h(8001)]}),value:"0",validUntil:Date.now()+60_000}),
-    relayJson:async()=>{const bridgeHash=broadcasts.at(-1)?.hash;if(relayGate)await relayGate;if(relayOffline)throw new Error("Relay unavailable");return {status:readyDelivery?"success":"pending",originChainId:143,destinationChainId,inTxHashes:[bridgeHash],txHashes:[solanaRoute?solanaSignature:h(9000)]};}};
+    relayJson:async()=>{const bridgeHash=broadcasts.at(-1)?.hash;if(relayGate)await relayGate;if(relayOffline)throw new Error("Relay unavailable");return {status:readyDelivery?"success":"pending",originChainId:143,destinationChainId,inTxHashes:[bridgeHash],txHashes:[solanaRoute?solanaSignature:h(9000)]};},...extraDependencies};
   const settings={filename:join(dir,"processor.sqlite"),vault,root,newDestinationChainId:newChain};
   let processor=createChogProcessor(settings,dependencies);
   t.after(async()=>{await processor.close();await rm(dir,{recursive:true,force:true});});
@@ -87,10 +87,84 @@ async function harness(t, destinationChainId=1, expensiveBridge=false, initiativ
   };
 }
 
+const metadataUri=`ipfs://${"a".repeat(46)}/1130.json`;
+test("NFT metadata requests pin the IPFS gateway and prohibit redirects into local services",async()=>{
+  let calls=0;
+  const metadata=await fetchProfileMetadata(metadataUri,async(url,options)=>{
+    calls++;assert.equal(url,`https://gateway.pinata.cloud/ipfs/${"a".repeat(46)}/1130.json`);
+    assert.equal(options.redirect,"error");assert.equal(options.headers.Accept,"application/json");assert.ok(options.signal instanceof AbortSignal);
+    return new Response(JSON.stringify({name:"CHOG #1130",image:`ipfs://${"b".repeat(46)}/coin.png`}));
+  });
+  assert.equal(metadata.name,"CHOG #1130");
+  for(const uri of ["http://127.0.0.1:4174/api/payments/config","https://evil.example/nft.json",`ipfs://${"a".repeat(46)}/../private`])assert.equal(await fetchProfileMetadata(uri,()=>{calls++;throw new Error("Not allowed");}),null);
+  assert.equal(calls,1);
+});
+
+test("NFT metadata stops chunked/lying Content-Length responses at the byte limit",async()=>{
+  for(const declared of [null,"1"]){
+    let reads=0,cancelled=false;
+    const stream=new ReadableStream({pull(controller){reads++;controller.enqueue(new Uint8Array(16_384));},cancel(){cancelled=true;}});
+    const headers=declared===null?{}:{"Content-Length":declared};
+    await assert.rejects(fetchProfileMetadata(metadataUri,async()=>new Response(stream,{headers})),/display limit/);
+    assert.ok(reads<=7,"the full oversized body must never be downloaded");assert.equal(cancelled,true);
+  }
+});
+
+test("NFT metadata rejects an oversized declared body before reading it",async()=>{
+  let cancelled=false;
+  const response=new Response(new ReadableStream({cancel(){cancelled=true;}}),{headers:{"Content-Length":"65537"}});
+  await assert.rejects(fetchProfileMetadata(metadataUri,async()=>response),/response rejected/);
+  assert.equal(cancelled,true);
+  await assert.rejects(fetchProfileMetadata(metadataUri,async()=>new Response("[]")),/Invalid NFT metadata/);
+});
+
+test("overlapping donor profile lookups are coalesced without retaining stale ownership",async t=>{
+  let release;const gate=new Promise(resolve=>{release=resolve;});let fetches=0,ownershipReads=0;
+  const f=await harness(t,10,false,"school-supplies",10,{metadataFetch:async()=>{fetches++;await gate;return new Response(JSON.stringify({name:"CHOG #1130",image:`ipfs://${"b".repeat(46)}/coin.png`}));}});
+  const invoice=await f.issue();f.deposit(invoice);await f.advance();f.delivery();await f.advance();
+  f.source.readContract=async({functionName})=>functionName==="tokensOfOwner"?(ownershipReads++,[1130n]):metadataUri;
+  const first=f.processor.profileNfts(invoice.id),second=f.processor.profileNfts(invoice.id);
+  await new Promise(resolve=>setImmediate(resolve));release();
+  const [one,two]=await Promise.all([first,second]);assert.deepEqual(one,two);assert.equal(fetches,1);assert.equal(ownershipReads,1);
+  await f.processor.profileNfts(invoice.id);assert.equal(fetches,1);assert.equal(ownershipReads,2,"ownership is not cached across separate profile requests");
+  f.source.readContract=async()=>["1130"];
+  await assert.rejects(f.processor.profileNfts(invoice.id),/Invalid NFT lookup/);
+});
+
+test("donor NFT metadata cache is bounded instead of growing with every public profile",async t=>{
+  let fetches=0,current=0n;
+  const f=await harness(t,10,false,"school-supplies",10,{metadataFetch:async()=>{fetches++;return new Response(JSON.stringify({name:"CHOG"}));}});
+  const invoice=await f.issue();f.deposit(invoice);await f.advance();f.delivery();await f.advance();
+  f.source.readContract=async({functionName})=>functionName==="tokensOfOwner"?[current]:metadataUri;
+  for(current=0n;current<140n;current++)await f.processor.profileNfts(invoice.id);
+  assert.equal(fetches,140);current=0n;await f.processor.profileNfts(invoice.id);
+  assert.equal(fetches,141,"the oldest entry is evicted after the bounded cache fills");
+});
+
 test("expensive bridge is rejected before issuing a QR or sending funds",async t=>{
   const f=await harness(t,10,true);
   await assert.rejects(f.issue(),/Bridge cost exceeds/);
   assert.equal(f.broadcasts.length,0);
+});
+
+test("private leaderboard context reads the verified sender without changing or exposing payment data",async t=>{
+  const f=await harness(t,10,false,"school-supplies"),invoice=await f.issue();
+  assert.equal(f.processor.leaderboardDonation(invoice.id),null);
+  f.deposit(invoice);await f.advance();f.unfinalized();f.delivery();await f.advance(1);
+  assert.equal(f.processor.get(invoice.id).state,"confirming");
+  const broadcasts=f.broadcasts.length,reads=f.receiptReads;
+  assert.deepEqual(f.processor.leaderboardDonation(invoice.id),{sender:donor,state:"confirming",amount:"300",initiativeId:"school-supplies"});
+  assert.equal(f.broadcasts.length,broadcasts);
+  assert.equal(f.receiptReads,reads,"Private identity lookup must not call the network");
+  const publicInvoice=f.processor.get(invoice.id);
+  assert.equal(publicInvoice.depositProof,undefined);
+  assert.equal(publicInvoice.sender,undefined);
+  assert.doesNotMatch(JSON.stringify(publicInvoice),new RegExp(donor,"i"));
+  f.finalize();await f.advance(1);
+  assert.equal(f.processor.leaderboardDonation(invoice.id).state,"delivered");
+  await f.restart();
+  assert.equal(f.processor.leaderboardDonation(invoice.id).sender,donor);
+  assert.equal(f.processor.leaderboardDonation("invalid"),null);
 });
 
 for(const initiativeId of ["school-supplies","solar-foundation","vida-verde"])test(`${initiativeId} pins OP despite ETH default and survives restart`,async t=>{

@@ -12,7 +12,7 @@ export const checkoutChanged = "chogcare:checkout-changed";
 export type CreationInput = { mode: CheckoutMode; amount: string; holderAddress: string; initiativeId: string; tokenId?: string };
 export type PendingCreation = { key: string; input: CreationInput };
 type SessionStore = Pick<Storage, "getItem" | "setItem" | "removeItem">;
-export function validInvoiceId(id: unknown): id is string { return typeof id === "string" && /^[a-f0-9]{64}$/.test(id); }
+export function validInvoiceId(id: unknown): id is string { return typeof id === "string" && id.length === 64 && /^[a-f0-9]{64}$/.test(id); }
 export function assertUnpaidCheckout(id: string, invoice: { id: string; state: string; depositHash?: string | null; destinationHash?: string | null; observedDestinationHash?: string | null }) {
   if (!validInvoiceId(id) || invoice.id !== id || invoice.state !== "awaiting-payment" || invoice.depositHash || invoice.destinationHash || invoice.observedDestinationHash) throw new Error("This payment may be processing. Keep it open; do not pay again.");
 }
@@ -31,7 +31,7 @@ export function pendingCreation(mode: CheckoutMode, storage = currentStore()): P
   if (!raw) return null;
   let value: PendingCreation;
   try { value = JSON.parse(raw); } catch { throw new Error("Saved payment request needs recovery. Do not start another payment."); }
-  if (!value || !uuid.test(value.key) || !value.input || value.input.mode !== mode || !(mode === "chog" ? supportsChog(value.input.initiativeId) : supportsNft(value.input.initiativeId)) ||
+  if (!value || typeof value.key !== "string" || value.key.length !== 36 || !uuid.test(value.key) || !value.input || value.input.mode !== mode || !(mode === "chog" ? supportsChog(value.input.initiativeId) : supportsNft(value.input.initiativeId)) ||
     typeof value.input.amount !== "string" || typeof value.input.holderAddress !== "string" ||
     (value.input.tokenId !== undefined && typeof value.input.tokenId !== "string")) throw new Error("Saved payment request is invalid. Contact the operator before paying.");
   return value;

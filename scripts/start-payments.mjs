@@ -48,6 +48,7 @@ try {
     publicStatus(){const chog=processor.publicStatus(),nft=nftProcessor.publicStatus();return {...chog,...nft,supportedModes:["chog","nft"],...(integrity.locked?{paymentsEnabled:false,nftPaymentsEnabled:false,poolHealthy:false}:{}),integrityLocked:integrity.locked};},
     publicChogRate(){return processor.publicChogRate();},
     profileNfts(id){return processor.profileNfts(id);},
+    leaderboardDonation(id){return stopping||integrity.locked?null:processor.leaderboardDonation(id);},
     async issue(input,requestId){
       if(stopping || integrity.locked)throw new PaymentIntegrityError();
       try {return await (input.mode==="nft"?nftProcessor.issue(input,requestId):processor.issue(input,requestId));}

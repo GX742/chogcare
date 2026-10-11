@@ -10,6 +10,7 @@ import { createHash } from "node:crypto";
 import { createHttpAdmission } from "./http-admission.mjs";
 import { supportsChog, supportsNft, acceptsNewChog } from "../src/chog-beneficiary.ts";
 import { parseUnits } from "viem";
+import { buildDonorLeaderboard } from "./donor-leaderboard.mjs";
 
 export function createPaymentService(store, allowedOrigin = "http://127.0.0.1:4173", custodyConfigured = false, processor = null) {
   const admission = createHttpAdmission(allowedOrigin);
@@ -25,6 +26,18 @@ export function createPaymentService(store, allowedOrigin = "http://127.0.0.1:41
       if (res.writableEnded || res.destroyed) return;
       res.writeHead(status, { "Content-Type": "application/json; charset=utf-8" });
       res.end(JSON.stringify(body));
+    };
+    const profileIntegrityHeld = () => processor?.publicStatus?.()?.integrityLocked === true;
+    const profileIntegrityHold = () => respond(503, { code: "INTEGRITY_HOLD", error: "Payments and donor profiles are paused for a storage integrity check. Keep this invoice; do not pay again." });
+    const replyWithProfile = async (status, profile) => {
+      if (profileIntegrityHeld()) return profileIntegrityHold();
+      try {
+        // Publishing is a durable write, even though it never moves money. A
+        // failed checkpoint must not be reported as a successful publication.
+        await processor?.checkpoint?.();
+        if (profileIntegrityHeld()) return profileIntegrityHold();
+      } catch { return profileIntegrityHold(); }
+      return respond(status, { profile });
     };
     const creationDefinitelyNotStarted = () => {
       const key = req.headers["idempotency-key"];
@@ -75,31 +88,36 @@ export function createPaymentService(store, allowedOrigin = "http://127.0.0.1:41
         catch { return respond(503,{error:"CHOG quote is temporarily unavailable."}); }
       }
       if (req.method === "GET" && url.pathname === "/api/payments/leaderboard") {
-        const entries=store.leaderboardRecords(40).map(entry=>({entry,invoice:processor?.get(entry.invoiceId)})).filter(item=>["confirming","delivered"].includes(item.invoice?.state)).slice(0,20).map((item,index)=>({rank:index+1,nickname:item.entry.nickname,initiativeId:item.entry.initiativeId,amount:item.entry.amount,avatarTokenId:item.entry.avatarTokenId,avatarName:item.entry.avatarName,avatarImage:item.entry.avatarImage,publishedAt:item.entry.publishedAt,status:item.invoice.state}));
+        if (profileIntegrityHeld()) return profileIntegrityHold();
+        const entries=buildDonorLeaderboard(store.leaderboardRecords(),processor?.leaderboardDonation? id=>processor.leaderboardDonation(id):null);
         return respond(200,{entries});
       }
       const profileMatch=url.pathname.match(/^\/api\/payments\/invoices\/([a-f0-9]{64})\/profile$/);
       if(req.method==="GET"&&profileMatch){
+        if (profileIntegrityHeld()) return profileIntegrityHold();
         if(!processor?.profileNfts)return respond(503,{error:"Donor profiles are temporarily unavailable."});
         const existing=store.findDonorProfile(profileMatch[1]);
         if(existing)return respond(200,{published:true,profile:existing,nfts:[]});
-        try{const context=await processor.profileNfts(profileMatch[1]);return respond(200,{published:false,profile:null,nfts:context.nfts});}
-        catch{return respond(409,{error:"Your profile unlocks after the donation is verified on the destination network."});}
+        try{const context=await processor.profileNfts(profileMatch[1]);if(profileIntegrityHeld())return profileIntegrityHold();return respond(200,{published:false,profile:null,nfts:context.nfts});}
+        catch{if(profileIntegrityHeld())return profileIntegrityHold();return respond(409,{error:"Your profile unlocks after the donation is verified on the destination network."});}
       }
       if(req.method==="POST"&&url.pathname==="/api/payments/leaderboard"){
+        if (profileIntegrityHeld()) return profileIntegrityHold();
         if(!processor?.profileNfts)return respond(503,{error:"Donor profiles are temporarily unavailable."});
         let input;try{input=await readJson(1024);}catch(error){return respond(error.status??400,{error:error.message});}
         if(!input||typeof input!=="object"||Array.isArray(input)||Object.keys(input).some(key=>!["invoiceId","nickname","avatarTokenId"].includes(key))||typeof input.invoiceId!=="string"||!/^[a-f0-9]{64}$/.test(input.invoiceId)||typeof input.nickname!=="string"||(input.avatarTokenId!==null&&typeof input.avatarTokenId!=="string"))return respond(400,{error:"Invalid leaderboard profile."});
         const nickname=input.nickname.normalize("NFKC").trim().replace(/\s+/g," ");
         if([...nickname].length<2||[...nickname].length>24||!/^[-_.\p{L}\p{N} ]+$/u.test(nickname))return respond(400,{error:"Use 2 to 24 letters, numbers, spaces, dots, dashes or underscores."});
-        const current=store.findDonorProfile(input.invoiceId);if(current)return respond(200,{profile:current});
+        if (profileIntegrityHeld()) return profileIntegrityHold();
+        const current=store.findDonorProfile(input.invoiceId);if(current)return await replyWithProfile(200,current);
         try{
           const context=await processor.profileNfts(input.invoiceId);
+          if (profileIntegrityHeld()) return profileIntegrityHold();
           const avatar=input.avatarTokenId===null?null:context.nfts.find(item=>item.tokenId===input.avatarTokenId);
           if(input.avatarTokenId!==null&&!avatar)return respond(400,{error:"Choose an NFT verified in the donating wallet."});
           const profile=store.publishDonorProfile({invoiceId:input.invoiceId,nickname,initiativeId:context.initiativeId,amount:context.amount,amountUnits:parseUnits(context.amount,18).toString(),avatarTokenId:avatar?.tokenId??null,avatarName:avatar?.name??null,avatarImage:avatar?.image??null,publishedAt:Date.now()});
-          await processor.checkpoint?.();return respond(201,{profile});
-        }catch(error){const recovered=store.findDonorProfile(input.invoiceId);if(recovered)return respond(200,{profile:recovered});return respond(409,{error:"Profile can be published only after a verified CHOG donation reaches the destination network."});}
+          return await replyWithProfile(201,profile);
+        }catch(error){if(profileIntegrityHeld())return profileIntegrityHold();const recovered=store.findDonorProfile(input.invoiceId);if(recovered)return await replyWithProfile(200,recovered);return respond(409,{error:"Profile can be published only after a verified CHOG donation reaches the destination network."});}
       }
       if (req.method === "GET" && /^\/api\/payments\/invoices\/[a-f0-9]{64}$/.test(url.pathname)) {
         if (processor?.publicStatus().integrityLocked) return respond(503, { code: "INTEGRITY_HOLD", error: "Payments are paused for a storage integrity check. Keep this invoice; do not pay again." });
@@ -111,6 +129,9 @@ export function createPaymentService(store, allowedOrigin = "http://127.0.0.1:41
         return respond(503, { code: "PAYMENTS_NOT_READY", error: "The payment worker is offline. Keep any existing invoice; do not pay again.", ...(creationDefinitelyNotStarted() ? { creationNotStarted: true } : {}), custodyConfigured, dailyPoolLimitUsdc: PAYMENT_POLICY.dailyPoolLimitUsdc });
       }
       if (req.method === "POST" && ["/api/payments/previews", "/api/payments/invoices"].includes(url.pathname)) {
+        // Previews use the same integrity-protected companion store. A hold
+        // prohibits these writes too, not only the allocation of payable QR codes.
+        if (profileIntegrityHeld()) return profileIntegrityHold();
         if (!/^application\/json(?:\s*;\s*charset=utf-8)?$/i.test(req.headers["content-type"] || "") || req.headers["content-encoding"]) return rejectBeforeCreation(415, "Use uncompressed UTF-8 JSON.");
         if (Number(req.headers["content-length"] || 0) > 4096) return rejectBeforeCreation(413, "Request is too large.");
         const chunks = [];
@@ -196,6 +217,7 @@ export function createPaymentService(store, allowedOrigin = "http://127.0.0.1:41
             return pending();
           } finally { preparing--; preparingModes.delete(input.mode); }
         }
+        if (profileIntegrityHeld()) return profileIntegrityHold();
         store.savePreview(invoice);
         await processor?.checkpoint?.();
         return respond(201, invoice);

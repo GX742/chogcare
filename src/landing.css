@@ -35,9 +35,8 @@
 .lp-broadcast-placeholder p { margin-top: 10px; font-size: 11px; color: #ad96be; }
 .lp-broadcast-player { position: absolute; inset: 0; z-index: 1; width: 100%; height: 100%; border: 0; opacity: 0; background: #050308; color-scheme: dark; object-fit: cover; object-position: center; pointer-events: none; user-select: none; transition: opacity .25s ease; }
 .lp-broadcast-player.is-ready { opacity: 1; }
-.lp-broadcast-fullscreen { position: absolute; top: 14px; right: 14px; z-index: 3; display: grid; width: 38px; height: 38px; padding: 0; place-items: center; border: 1px solid #ffffff38; border-radius: 9px; background: #0e0915bf; color: #fff; cursor: pointer; backdrop-filter: blur(10px); box-shadow: 0 8px 22px #0007; transition: background .18s ease, border-color .18s ease, transform .18s ease; }
-.lp-broadcast-fullscreen:hover { background: #251730e6; border-color: #ffffff70; transform: scale(1.04); }
-.lp-broadcast-fullscreen:focus-visible { outline: 2px solid #fff; outline-offset: 3px; }
+.lp-broadcast-live { position: absolute; top: 14px; left: 14px; z-index: 3; display: inline-flex; align-items: center; gap: 7px; min-height: 30px; padding: 0 11px; border: 1px solid #ffffff29; border-radius: 9px; background: #170e20d9; color: #fff5fd; font-size: 10px; font-weight: 800; letter-spacing: .08em; pointer-events: none; backdrop-filter: blur(10px); box-shadow: 0 8px 22px #09041166, inset 0 1px 0 #ffffff17; }
+.lp-broadcast-live i { width: 7px; height: 7px; border-radius: 50%; background: #ff4fa3; box-shadow: 0 0 0 3px #ff4fa324; }
 .lp-broadcast-loading { position: absolute; inset: 0; z-index: 2; display: flex; align-items: center; justify-content: center; gap: 10px; color: #bfaed0; background: #050308; font-size: 12px; letter-spacing: .02em; opacity: 1; transition: opacity .2s ease, visibility .2s ease; pointer-events: none; }
 .lp-broadcast-loading.is-hidden { opacity: 0; visibility: hidden; }
 .lp-broadcast-loading i { width: 14px; height: 14px; border: 2px solid #6e5a80; border-top-color: #d851bb; border-radius: 50%; animation: lpBroadcastLoading .8s linear infinite; }

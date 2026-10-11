@@ -127,7 +127,7 @@ function Funding({ initiative }: { initiative: Initiative }) {
   </div>;
 }
 
-const configuredTwitchChannel = import.meta.env.VITE_TWITCH_CHANNEL?.trim().toLowerCase() ?? "";
+const configuredTwitchChannel = import.meta.env.VITE_TWITCH_CHANNEL?.trim().toLowerCase() || "nerfwok";
 const twitchChannel = /^[a-z0-9_]{4,25}$/.test(configuredTwitchChannel) ? configuredTwitchChannel : null;
 
 function BroadcastPanel({ headingId }: { headingId: string }) {

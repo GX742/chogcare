@@ -344,7 +344,7 @@ export function createChogProcessor({ filename, vault, root, checkpoint=()=>{}, 
   return {
     publicChogRate,
     profileNfts,
-    publicStatus(){return {paymentsEnabled:!closed&&Date.now()-healthyAt<60_000&&gasBalance>=OPERATOR_READY_BALANCE,paymentMode:"local-pilot",workerVersion:"2026-10-11-donor-profile-v5",destinationChainId:newDestinationChainId,supportedModes:["chog"],supportedInitiatives:[...CHOG_INITIATIVES],poolContributionPercent:10,poolContributionMode:"added-on-top",poolContributionBatchMinimumUsdc:"5.00",poolContributionPendingUsdc:formatUnits(poolPendingUsdc,6)};},
+    publicStatus(){return {paymentsEnabled:!closed&&Date.now()-healthyAt<60_000&&gasBalance>=OPERATOR_READY_BALANCE,paymentMode:"local-pilot",workerVersion:"2026-10-11-pending-profile-v6",destinationChainId:newDestinationChainId,supportedModes:["chog"],supportedInitiatives:[...CHOG_INITIATIVES],poolContributionPercent:10,poolContributionMode:"added-on-top",poolContributionBatchMinimumUsdc:"5.00",poolContributionPendingUsdc:formatUnits(poolPendingUsdc,6)};},
     canRetryUnissuedChog(id){return !closed && /^[a-f0-9]{64}$/.test(id) && !load(id) && !db.prepare("SELECT 1 FROM deposit_addresses WHERE invoice_id=?").get(id);},
     async issue(input, requestId) {
       if(requestId!==undefined && !/^[a-f0-9]{64}$/.test(requestId))throw new Error("Invalid internal request ID.");

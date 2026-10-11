@@ -7,7 +7,7 @@ import { createAddressAllocator } from "./address-allocator.mjs";
 import { verifyChogDeposit, finalizedReceipt, inspectReceipt, AwaitingFinalityError, NonCanonicalReceiptError } from "./chain-receipts.mjs";
 import { bridgeQuote, relayJson, RELAY_DEPOSITORY } from "./relay-route.mjs";
 import { saleQuote, usdcQuote } from "./source-quotes.mjs";
-import { minimumBridgeDelivery, assertBridgeDelivery, assertCrossAssetBridgeDelivery } from "./bridge-cost-policy.mjs";
+import { CHOG_DONATION_MAX_BRIDGE_LOSS_BPS, minimumBridgeDelivery, assertBridgeDelivery, assertCrossAssetBridgeDelivery } from "./bridge-cost-policy.mjs";
 import { chogBeneficiary, acceptsNewChog, initiativeChain, CHOG_INITIATIVES, NFT_POOL_TREASURY } from "../src/chog-beneficiary.ts";
 import { contributionForDonationUnits, splitSettlementUnits } from "../src/pool-contribution.ts";
 import { sourceJournal } from "./source-journal.mjs";
@@ -335,7 +335,7 @@ export function createChogProcessor({ filename, vault, root, checkpoint=()=>{}, 
       const allocation=contributionForDonationUnits(donationUnits),units=allocation.totalUnits;
       const sale=await quoteSale(source,units), swap=await quoteSwap(source,BigInt(sale.minMon));
       const sourceSplit=splitSettlementUnits(BigInt(swap.minUsdc));
-      const requiredDelivery=minimumBridgeDelivery(sourceSplit.causeUnits);
+      const requiredDelivery=minimumBridgeDelivery(sourceSplit.causeUnits,CHOG_DONATION_MAX_BRIDGE_LOSS_BPS);
       const estimate=await quoteBridge(root.address,sourceSplit.causeUnits,invoiceChain===SOLANA_CHAIN_ID?1n:200_000n,invoiceChain,input.initiativeId);
       if(invoiceChain===SOLANA_CHAIN_ID)assertCrossAssetBridgeDelivery(estimate,requiredDelivery);else assertBridgeDelivery(estimate,requiredDelivery);
       if(db.prepare("SELECT COUNT(*) AS n FROM chog_invoices WHERE state IN ('awaiting-payment','processing','bridging','confirming')").get().n>=3)throw new Error("Three payments are already active. Please wait.");

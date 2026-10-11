@@ -1,13 +1,15 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { minimumBridgeDelivery, assertBridgeDelivery, assertCrossAssetBridgeDelivery } from "../server/bridge-cost-policy.mjs";
+import { CHOG_DONATION_MAX_BRIDGE_LOSS_BPS, minimumBridgeDelivery, assertBridgeDelivery, assertCrossAssetBridgeDelivery } from "../server/bridge-cost-policy.mjs";
 import { recipientCandidates } from "../server/recipient-candidates.mjs";
 test("bridge ceiling preserves at least 96% of quoted USDC input",()=>{
   assert.equal(minimumBridgeDelivery(500000n),480000n);
   assert.equal(minimumBridgeDelivery(500001n),480001n);
+  assert.equal(minimumBridgeDelivery(500000n,CHOG_DONATION_MAX_BRIDGE_LOSS_BPS),470000n);
   assert.equal(minimumBridgeDelivery(100000n),200000n);
   assert.throws(()=>minimumBridgeDelivery(0n));
   assert.throws(()=>minimumBridgeDelivery(500000));
+  assert.throws(()=>minimumBridgeDelivery(500000n,1001n));
 });
 test("reject costly and malformed bridge outputs",()=>{
   for(const minOutput of ["477087","283994","-1","NaN","480000.0",undefined])assert.throws(()=>assertBridgeDelivery({minOutput},480000n));

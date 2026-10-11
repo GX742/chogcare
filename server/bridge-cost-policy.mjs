@@ -1,8 +1,9 @@
 // Applies to NEW invoices only. This bounds bridge loss in USDC, not the
 // CHOG market price, sale slippage, network gas or recipient conversion fees.
-export function minimumBridgeDelivery(inputUnits) {
-  if (typeof inputUnits !== "bigint" || inputUnits <= 0n) throw new Error("Invalid bridge input.");
-  const floor = (inputUnits * 9600n + 9999n) / 10000n;
+export const CHOG_DONATION_MAX_BRIDGE_LOSS_BPS = 600n;
+export function minimumBridgeDelivery(inputUnits, maximumLossBps = 400n) {
+  if (typeof inputUnits !== "bigint" || inputUnits <= 0n || typeof maximumLossBps !== "bigint" || maximumLossBps < 0n || maximumLossBps > 1000n) throw new Error("Invalid bridge input.");
+  const floor = (inputUnits * (10000n - maximumLossBps) + 9999n) / 10000n;
   return floor > 200_000n ? floor : 200_000n;
 }
 export function assertBridgeDelivery(quote, requiredUnits) {

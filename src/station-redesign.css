@@ -135,9 +135,10 @@
 .care-station-toolbar > span { color: #b1a1c7; font-size: 12px; }
 .care-station-grid { display: grid; grid-template-columns: minmax(0, 1.4fr) minmax(340px, .9fr); gap: 30px; align-items: start; }
 .care-stream-column { min-width: 0; }
-.care-stream { position: relative; width: min(100%, 430px); aspect-ratio: 9 / 16; margin-inline: auto; }
+.care-stream { position: relative; width: min(100%, 430px); aspect-ratio: 45 / 52; margin-inline: auto; }
 .care-stream .lp-broadcast-frame { border-radius: 24px; }
 .care-stream .lp-broadcast-interior { border-radius: 22.5px; }
+.care-stream .lp-broadcast-player { object-position: center 71.4286%; }
 .care-stream .lp-corner-chog { width: clamp(76px, 7vw, 100px); height: auto; right: 8px; bottom: -12px; }
 .care-stream-caption { display: flex; align-items: center; gap: 10px; padding: 26px 0 18px; font-size: 13px; color: #cfbfdf; }
 .care-stream-caption > span:last-child { margin-left: auto; font-size: 11px; color: #b4a4c8; }

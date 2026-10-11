@@ -135,7 +135,7 @@
 .care-station-toolbar > span { color: #b1a1c7; font-size: 12px; }
 .care-station-grid { display: grid; grid-template-columns: minmax(0, 1.12fr) minmax(0, 1fr); gap: 30px; align-items: start; }
 .care-stream-column { min-width: 0; }
-.care-stream { position: relative; width: 100%; aspect-ratio: 1; }
+.care-stream { position: relative; width: 100%; aspect-ratio: 16 / 9; }
 .care-stream .lp-broadcast-frame { border-radius: 24px; }
 .care-stream .lp-broadcast-interior { border-radius: 22.5px; }
 .care-stream .lp-corner-chog { width: clamp(76px, 7vw, 100px); height: auto; right: 8px; bottom: -12px; }

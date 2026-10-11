@@ -4,7 +4,7 @@ export function contentSecurityPolicy(developmentNonce?: string): string {
   if (developmentNonce && !/^[A-Za-z0-9+/=]{24,64}$/.test(developmentNonce)) throw new Error("Invalid development CSP nonce.");
   const nonce = developmentNonce ? ` 'nonce-${developmentNonce}'` : "";
   return [
-    "default-src 'none'", "base-uri 'none'", "object-src 'none'", "frame-ancestors 'none'", "frame-src 'none'",
+    "default-src 'none'", "base-uri 'none'", "object-src 'none'", "frame-ancestors 'none'", "frame-src https://player.twitch.tv",
     `script-src 'self'${nonce}`, "script-src-attr 'none'", `style-src 'self'${nonce}`, "style-src-attr 'none'",
     "img-src 'self' data: https://giveth.mypinata.cloud https://www.animal-ethics.org https://media-refresh.heifer.org",
     "font-src 'self'", `connect-src 'self'${developmentNonce ? " ws://127.0.0.1:* ws://localhost:*" : ""}`,

@@ -127,14 +127,31 @@ function Funding({ initiative }: { initiative: Initiative }) {
   </div>;
 }
 
+const configuredTwitchChannel = import.meta.env.VITE_TWITCH_CHANNEL?.trim().toLowerCase() ?? "";
+const twitchChannel = /^[a-z0-9_]{4,25}$/.test(configuredTwitchChannel) ? configuredTwitchChannel : null;
+
 function BroadcastPanel({ headingId }: { headingId: string }) {
   return <div className="care-stream">
     <section className="lp-broadcast-frame" aria-labelledby={headingId}>
-      <div className="lp-broadcast-interior"><div className="lp-broadcast-placeholder">
-        <Broadcast size={38} weight="light" aria-hidden="true" />
-        <h2 id={headingId}>ChogCare broadcast</h2>
-        <p>Coming soon</p>
-      </div></div>
+      <div className="lp-broadcast-interior">
+        {twitchChannel ? <>
+          <h2 id={headingId} className="sr-only">ChogCare live broadcast</h2>
+          <iframe
+            className="lp-broadcast-player"
+            src={`https://player.twitch.tv/?channel=${encodeURIComponent(twitchChannel)}&parent=${encodeURIComponent(window.location.hostname)}&muted=true&autoplay=true`}
+            title="ChogCare live broadcast"
+            loading="lazy"
+            referrerPolicy="strict-origin-when-cross-origin"
+            allow="autoplay; encrypted-media; picture-in-picture; fullscreen"
+            allowFullScreen
+          />
+          <span className="lp-broadcast-live" aria-hidden="true"><i />Live</span>
+        </> : <div className="lp-broadcast-placeholder">
+          <Broadcast size={38} weight="light" aria-hidden="true" />
+          <h2 id={headingId}>ChogCare broadcast</h2>
+          <p>Coming soon</p>
+        </div>}
+      </div>
     </section>
   </div>;
 }
@@ -266,7 +283,7 @@ export default function App() {
       <main id="main" className="lp-main">
         <div hidden={stationOpen} className={returnedToLanding ? "care-landing-return" : undefined}>
           <section className="care-intro" aria-labelledby="hero-heading">
-            <div className="care-intro-broadcast"><BroadcastPanel headingId="intro-broadcast-heading" /></div>
+            <div className="care-intro-broadcast">{!stationOpen && <BroadcastPanel headingId="intro-broadcast-heading" />}</div>
             <div className="care-intro-copy">
               <h1 id="hero-heading">Donate with $CHOG.</h1>
               <p>Choose a charity and send CHOG by QR. ChogCare converts your donation to USDC and delivers it to the initiative.</p>
@@ -334,7 +351,7 @@ export default function App() {
           {resumeNotice && <p className="care-resume-note" role="status">Your existing payment stays with {selected.name} and its original payment method. Resume it before starting another payment.</p>}
           <div className="care-station-grid">
             <div className="care-stream-column">
-              <BroadcastPanel headingId="broadcast-heading" />
+              {stationOpen && <BroadcastPanel headingId="broadcast-heading" />}
             </div>
             <div className="care-checkout-column">
               <div className="care-selected"><img src={selected.image} alt={selected.imageAlt} width="76" height="76" /><div><span>{selected.category} · {selected.location}</span><h2>{selected.name}</h2><button className="lp-text-button" onClick={() => setOpenInitiative(selected)}>About this initiative <ArrowUpRight size={14} /></button></div></div>

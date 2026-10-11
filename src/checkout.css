@@ -218,10 +218,12 @@
 .donor-avatar-grid button { position:relative; min-width:0; padding:7px; border:1px solid #bda4ee25; border-radius:10px; color:#baadca; background:#171121; text-align:left; }
 .donor-avatar-grid button.selected { border-color:#be87ff; color:#fff; box-shadow:0 0 0 2px #9a5bea22; }
 .donor-avatar-grid img { display:block; width:100%; aspect-ratio:1; object-fit:cover; border-radius:7px; background:#24182f; }
+.donor-avatar-grid img.donor-nft-image { background:#24182f url('/chog-holder-nft.png') center/cover no-repeat; }
 .donor-avatar-grid span { display:block; overflow:hidden; margin-top:7px; font-size:10px; text-overflow:ellipsis; white-space:nowrap; }
 .donor-avatar-grid svg { position:absolute; top:12px; right:12px; padding:3px; box-sizing:content-box; border-radius:50%; color:#171121; background:#b9ebd8; }
 .donor-publish { width:100%; margin-top:14px; }
 .donor-publish:disabled { opacity:.6; }
+.donor-publish.is-saved { border-color:#7fcdb2; color:#c7f3e3; background:#204d3e; }
 .donor-profile-stage > small { display:block; margin-top:12px; color:#94869f; font-size:10px; line-height:1.55; }
 .donor-profile-error { margin-top:12px; color:#f3b7ca; font-size:11px; line-height:1.5; }
 .donor-profile-done { display:flex; align-items:center; gap:16px; border-color:#8ddbc141; background:linear-gradient(110deg,#14251f,#131020 72%); }

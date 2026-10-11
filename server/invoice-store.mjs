@@ -10,6 +10,17 @@ export function openInvoiceStore(filename) {
       id TEXT PRIMARY KEY,
       document TEXT NOT NULL,
       created_at INTEGER NOT NULL
+    );
+    CREATE TABLE IF NOT EXISTS donor_profiles (
+      invoice_id TEXT PRIMARY KEY,
+      nickname TEXT NOT NULL,
+      initiative_id TEXT NOT NULL,
+      amount TEXT NOT NULL,
+      amount_sort TEXT NOT NULL,
+      avatar_token_id TEXT,
+      avatar_name TEXT,
+      avatar_image TEXT,
+      published_at INTEGER NOT NULL
     );`);
   const poolLedger = createPoolLedger(db);
   const proofs = createNftProofLedger(db);
@@ -29,6 +40,19 @@ export function openInvoiceStore(filename) {
     findPreview(id) {
       const row = db.prepare("SELECT document FROM preview_invoices WHERE id = ? AND created_at >= ?").get(id, Date.now() - 86_400_000);
       return row ? JSON.parse(row.document) : null;
+    },
+    findDonorProfile(invoiceId) {
+      const row=db.prepare("SELECT nickname,initiative_id,amount,avatar_token_id,avatar_name,avatar_image,published_at FROM donor_profiles WHERE invoice_id=?").get(invoiceId);
+      return row?{nickname:row.nickname,initiativeId:row.initiative_id,amount:row.amount,avatarTokenId:row.avatar_token_id,avatarName:row.avatar_name,avatarImage:row.avatar_image,publishedAt:row.published_at}:null;
+    },
+    publishDonorProfile(profile) {
+      const amountSort=String(BigInt(profile.amountUnits)).padStart(32,"0");
+      db.prepare("INSERT INTO donor_profiles VALUES (?,?,?,?,?,?,?,?,?)").run(profile.invoiceId,profile.nickname,profile.initiativeId,profile.amount,amountSort,profile.avatarTokenId??null,profile.avatarName??null,profile.avatarImage??null,profile.publishedAt);
+      return this.findDonorProfile(profile.invoiceId);
+    },
+    leaderboard(limit=20) {
+      const rows=db.prepare("SELECT nickname,initiative_id,amount,avatar_token_id,avatar_name,avatar_image,published_at FROM donor_profiles ORDER BY amount_sort DESC,published_at ASC LIMIT ?").all(limit);
+      return rows.map((row,index)=>({rank:index+1,nickname:row.nickname,initiativeId:row.initiative_id,amount:row.amount,avatarTokenId:row.avatar_token_id,avatarName:row.avatar_name,avatarImage:row.avatar_image,publishedAt:row.published_at}));
     },
     // Internal primitive only, not exposed by HTTP. Recording proof is NOT a payout.
     recordNftProof(proof, now = Date.now()) {

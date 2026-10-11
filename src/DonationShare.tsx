@@ -4,7 +4,7 @@ import { donationShare } from "./donation-share";
 
 export default function DonationShare(props:{state:string;mode:"chog"|"nft";amount:string;initiativeId:string}) {
   const [copied,setCopied]=useState(false),[error,setError]=useState("");
-  const share=donationShare(props,import.meta.env.VITE_PUBLIC_SITE_URL??"");
+  const share=donationShare(props,import.meta.env.VITE_PUBLIC_SITE_URL??(typeof window!=="undefined"?window.location.origin:""));
   if(!share)return null;
   return <div className="donation-share">
     <div className="donation-share-actions">

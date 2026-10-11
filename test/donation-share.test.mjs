@@ -12,8 +12,9 @@ test("NFT share attributes the $0.50 donation to the pool, not the holder's paym
   const share=donationShare({...input,mode:"nft",amount:"0.50"});
   assert.match(share.text,/\$0.50 from the ChogCare pool/);assert.doesNotMatch(share.text,/I donated|1 MON/);
 });
-test("no share for pending, failed or unknown initiative; unsafe and local URLs never escape",()=>{
-  for(const state of ["confirming","processing","paying","expired","manual-review"])assert.equal(donationShare({...input,state}),null);
+test("share is available after receipt observation; failed or unfinished states remain private",()=>{
+  assert.match(donationShare({...input,state:"confirming"}).text,/final confirmation in progress/);
+  for(const state of ["processing","paying","expired","manual-review"])assert.equal(donationShare({...input,state}),null);
   assert.equal(donationShare({...input,initiativeId:"unknown"}),null);
-  for(const configured of ["http://127.0.0.1:4173","https://127.0.0.1","https://localhost","javascript:alert(1)","https://user:secret@example.com"])assert.equal(donationShare(input,configured).site,"https://chogcare.example/");
+  for(const configured of ["http://127.0.0.1:4173","https://127.0.0.1","https://localhost","javascript:alert(1)","https://user:secret@example.com"])assert.equal(donationShare(input,configured).site,"https://chogcare.vercel.app/");
 });

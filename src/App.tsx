@@ -7,6 +7,7 @@ import { GIVETH_PROJECT_URL } from "./route";
 import { checkoutChanged, checkoutSelection, rememberMode } from "./checkout-session";
 import CheckoutRecovery from "./CheckoutRecovery";
 import CheckoutSizeTransition from "./CheckoutSizeTransition";
+import Leaderboard from "./Leaderboard";
 
 import "./station-redesign.css";
 
@@ -370,7 +371,7 @@ export default function App() {
         <div className="care-header-inner">
         <Brand onHome={() => leaveStation("top")} />
         <nav aria-label="Main navigation">
-          <a href="#causes" onClick={event => { event.preventDefault(); leaveStation("causes"); }}>The causes</a><a href="#how-it-works" onClick={event => { event.preventDefault(); leaveStation("how-it-works"); }}>How it works</a><a href="#causes" onClick={event => { event.preventDefault(); leaveStation("causes"); }} className="lp-nav-donate">Choose a cause <ArrowUpRight size={15} /></a>
+          <a href="#causes" onClick={event => { event.preventDefault(); leaveStation("causes"); }}>The causes</a><a href="#how-it-works" onClick={event => { event.preventDefault(); leaveStation("how-it-works"); }}>How it works</a><a href="#leaderboard" onClick={event => { event.preventDefault(); leaveStation("leaderboard"); }}>Leaderboard</a><a href="#causes" onClick={event => { event.preventDefault(); leaveStation("causes"); }} className="lp-nav-donate">Choose a cause <ArrowUpRight size={15} /></a>
         </nav>
         <div className="creator"><img src="/gx-avatar.png" alt="" width="36" height="36" /><span><small>CREATED BY</small>GX</span><a className="creator-x" href="https://x.com/GxOlympus" target="_blank" rel="noopener noreferrer" aria-label="GX on X (opens in a new tab)"><XLogo size={21} weight="bold" /></a></div>
         </div>
@@ -468,6 +469,8 @@ export default function App() {
             </div>
           </div>
         </section>
+
+        {!stationOpen&&<Leaderboard/>}
 
         <section className="lp-section lp-faq" hidden={stationOpen} aria-labelledby="faq-heading">
           <div><h2 id="faq-heading">Before you donate.</h2></div>

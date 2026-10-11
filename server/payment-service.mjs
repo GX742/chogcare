@@ -9,6 +9,7 @@ import { publicDepositNode } from "./custody-vault.mjs";
 import { createHash } from "node:crypto";
 import { createHttpAdmission } from "./http-admission.mjs";
 import { supportsChog, supportsNft, acceptsNewChog } from "../src/chog-beneficiary.ts";
+import { parseUnits } from "viem";
 
 export function createPaymentService(store, allowedOrigin = "http://127.0.0.1:4173", custodyConfigured = false, processor = null) {
   const admission = createHttpAdmission(allowedOrigin);
@@ -33,6 +34,14 @@ export function createPaymentService(store, allowedOrigin = "http://127.0.0.1:41
       catch { return false; }
     };
     const rejectBeforeCreation = (status, error, code) => respond(status, { error, ...(code ? { code } : {}), ...(creationDefinitelyNotStarted() ? { creationNotStarted: true } : {}) });
+      const readJson = async (limit=4096) => {
+        if (!/^application\/json(?:\s*;\s*charset=utf-8)?$/i.test(req.headers["content-type"] || "") || req.headers["content-encoding"]) throw Object.assign(new Error("Use uncompressed UTF-8 JSON."),{status:415});
+        if (Number(req.headers["content-length"] || 0) > limit) throw Object.assign(new Error("Request is too large."),{status:413});
+        const chunks=[];let bytes=0;
+        const deadline=setTimeout(()=>{respond(408,{error:"Request body timed out."});req.destroy();},5000);deadline.unref();
+        try{for await(const chunk of req){bytes+=chunk.length;if(bytes>limit)throw Object.assign(new Error("Request is too large."),{status:413});chunks.push(chunk);}}finally{clearTimeout(deadline);}
+        try{return JSON.parse(new TextDecoder("utf-8",{fatal:true}).decode(Buffer.concat(chunks)));}catch{throw Object.assign(new Error("Invalid JSON."),{status:400});}
+      };
     try {
       const localPort = req.socket.localPort;
       const allowedHosts = new Set([new URL(allowedOrigin).host, `127.0.0.1:${localPort}`]);
@@ -64,6 +73,32 @@ export function createPaymentService(store, allowedOrigin = "http://127.0.0.1:41
         if (!processor?.publicChogRate) return respond(503,{error:"CHOG quote is temporarily unavailable."});
         try { return respond(200,await processor.publicChogRate()); }
         catch { return respond(503,{error:"CHOG quote is temporarily unavailable."}); }
+      }
+      if (req.method === "GET" && url.pathname === "/api/payments/leaderboard") {
+        return respond(200,{entries:store.leaderboard(20)});
+      }
+      const profileMatch=url.pathname.match(/^\/api\/payments\/invoices\/([a-f0-9]{64})\/profile$/);
+      if(req.method==="GET"&&profileMatch){
+        if(!processor?.profileNfts)return respond(503,{error:"Donor profiles are temporarily unavailable."});
+        const existing=store.findDonorProfile(profileMatch[1]);
+        if(existing)return respond(200,{published:true,profile:existing,nfts:[]});
+        try{const context=await processor.profileNfts(profileMatch[1]);return respond(200,{published:false,profile:null,nfts:context.nfts});}
+        catch{return respond(409,{error:"Your profile unlocks after the donation reaches final confirmation."});}
+      }
+      if(req.method==="POST"&&url.pathname==="/api/payments/leaderboard"){
+        if(!processor?.profileNfts)return respond(503,{error:"Donor profiles are temporarily unavailable."});
+        let input;try{input=await readJson(1024);}catch(error){return respond(error.status??400,{error:error.message});}
+        if(!input||typeof input!=="object"||Array.isArray(input)||Object.keys(input).some(key=>!["invoiceId","nickname","avatarTokenId"].includes(key))||typeof input.invoiceId!=="string"||!/^[a-f0-9]{64}$/.test(input.invoiceId)||typeof input.nickname!=="string"||(input.avatarTokenId!==null&&typeof input.avatarTokenId!=="string"))return respond(400,{error:"Invalid leaderboard profile."});
+        const nickname=input.nickname.normalize("NFKC").trim().replace(/\s+/g," ");
+        if([...nickname].length<2||[...nickname].length>24||!/^[-_.\p{L}\p{N} ]+$/u.test(nickname))return respond(400,{error:"Use 2 to 24 letters, numbers, spaces, dots, dashes or underscores."});
+        const current=store.findDonorProfile(input.invoiceId);if(current)return respond(200,{profile:current});
+        try{
+          const context=await processor.profileNfts(input.invoiceId);
+          const avatar=input.avatarTokenId===null?null:context.nfts.find(item=>item.tokenId===input.avatarTokenId);
+          if(input.avatarTokenId!==null&&!avatar)return respond(400,{error:"Choose an NFT verified in the donating wallet."});
+          const profile=store.publishDonorProfile({invoiceId:input.invoiceId,nickname,initiativeId:context.initiativeId,amount:context.amount,amountUnits:parseUnits(context.amount,18).toString(),avatarTokenId:avatar?.tokenId??null,avatarName:avatar?.name??null,avatarImage:avatar?.image??null,publishedAt:Date.now()});
+          await processor.checkpoint?.();return respond(201,{profile});
+        }catch(error){const recovered=store.findDonorProfile(input.invoiceId);if(recovered)return respond(200,{profile:recovered});return respond(409,{error:"Profile can be published only after a finalized CHOG donation."});}
       }
       if (req.method === "GET" && /^\/api\/payments\/invoices\/[a-f0-9]{64}$/.test(url.pathname)) {
         if (processor?.publicStatus().integrityLocked) return respond(503, { code: "INTEGRITY_HOLD", error: "Payments are paused for a storage integrity check. Keep this invoice; do not pay again." });

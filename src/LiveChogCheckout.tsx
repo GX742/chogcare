@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { ArrowRight, Check, CheckCircle, Copy, QrCode } from "@phosphor-icons/react";
 import QRCode from "qrcode";
 import DonationShare from "./DonationShare";
+import DonorProfile from "./DonorProfile";
 import CancelCheckout from "./CancelCheckout";
 import { formatUnits, parseUnits } from "viem";
 import { validatePayableInvoice, type PayableInvoice } from "./payable-invoice";
@@ -97,7 +98,7 @@ export default function LiveChogCheckout({initiativeId,initiativeName,ready,dest
       <button type="submit" className="button primary full checkout-submit" disabled={!serviceAllowed||busy||(!ready&&!pending)||!!saved.error||!supportsChog(initiativeId)}>{busy?"Checking route…":pending?"Retry saved request":!supportsChog(initiativeId)?"Payments coming soon":!ready?"Payments unavailable":"Get payment QR"}{busy?<span className="checkout-loading-ring" aria-hidden="true"/>:<ArrowRight size={18}/>}</button>
       <p className="checkout-safety-line">ChogCare holds funds during processing. Use your own wallet, not an exchange.</p>
     </form> : invoice ? <div className="checkout-invoice">
-      {invoice.state==="delivered"&&<div className="checkout-success" role="status"><CheckCircle size={48} weight="light"/><span>Donation delivered</span><h3>Thank you for caring.</h3><strong>{invoice.donationAmount??invoice.amount} <small>CHOG</small></strong><p>Your cause donation was delivered. The disclosed pool contribution is tracked separately.</p></div>}
+      {invoice.state==="delivered"&&<div className="checkout-success" role="status"><div className="checkout-success-mark"><CheckCircle size={54} weight="fill"/></div><span>DELIVERED ONCHAIN</span><h3>You moved care forward.</h3><strong>{invoice.donationAmount??invoice.amount} <small>CHOG</small></strong><div className="checkout-success-route"><span>Monad</span><i/><span>{network.name}</span></div><p>{initiativeName} received the donation. The 10% community-pool contribution is tracked separately.</p></div>}
       <div className="checkout-total"><div><h3 ref={heading} tabIndex={-1}>{invoice.state==="expired"?"Payment expired":"Total payment"}</h3><span>{invoice.donationAmount??invoice.amount} CHOG to {initiativeName} · {invoice.poolContributionAmount??"0"} CHOG to the NFT pool</span></div><strong>{invoice.amount}<small> CHOG</small></strong></div>
       {canPay && <><p className="checkout-scan-caption">Send the exact CHOG amount once. This is a single-use address, not the token contract.</p><div className="checkout-payment-details">
         <figure className="checkout-qr">{qr&&<img src={qr} width="256" height="256" alt="CHOG transfer request on Monad"/>}<figcaption>MONAD · CHOG ONLY</figcaption></figure>
@@ -113,7 +114,8 @@ export default function LiveChogCheckout({initiativeId,initiativeName,ready,dest
       {invoice.destinationHash&&<a className="field-link" href={`${network.explorer}/tx/${invoice.destinationHash}`} target="_blank" rel="noreferrer">Donation receipt ↗</a>}
       {!invoice.destinationHash&&invoice.observedDestinationHash&&<a className="field-link" href={`${network.explorer}/tx/${invoice.observedDestinationHash}`} target="_blank" rel="noreferrer">Receipt · awaiting finality ↗</a>}
       </div></details>}
-      {invoice.state==="delivered"&&<><DonationShare state={invoice.state} mode="chog" amount={invoice.donationAmount??invoice.amount} initiativeId={invoice.initiativeId}/><button className="checkout-reference" onClick={reset}>Make another donation <ArrowRight size={16}/></button></>}
+      {["confirming","delivered"].includes(invoice.state)&&<DonationShare state={invoice.state} mode="chog" amount={invoice.donationAmount??invoice.amount} initiativeId={invoice.initiativeId}/>}
+      {invoice.state==="delivered"&&<><DonorProfile invoiceId={invoice.id}/><button className="checkout-reference" onClick={reset}>Make another donation <ArrowRight size={16}/></button></>}
       {invoice.state==="expired"&&!invoice.depositHash&&<><p className="checkout-help">Already sent CHOG? Keep this invoice open. Do not pay again.</p><button className="button primary full checkout-submit" onClick={reset}>I haven't paid · start again <ArrowRight size={16}/></button></>}
     </div>:<p className="checkout-help">Restoring your payment status. Do not pay again.</p>}
     <p className="checkout-error" role="alert">{error}</p>

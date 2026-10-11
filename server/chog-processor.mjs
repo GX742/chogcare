@@ -1,6 +1,6 @@
 import { randomBytes } from "node:crypto";
 import { DatabaseSync } from "node:sqlite";
-import { createPublicClient, http, erc20Abi, encodeFunctionData, parseUnits, formatUnits, decodeEventLog } from "viem";
+import { createPublicClient, http, erc20Abi, encodeFunctionData, parseUnits, formatUnits, decodeEventLog, parseAbi } from "viem";
 import { monad, mainnet, optimism } from "viem/chains";
 import { deliveryNetwork, NEW_DONATION_CHAIN_ID, SOLANA_CHAIN_ID } from "../src/delivery-network.ts";
 import { createAddressAllocator } from "./address-allocator.mjs";
@@ -19,6 +19,7 @@ import { createSolanaReceiptVerifier } from "./solana-receipt.mjs";
 import { validatePoolBatchCall } from "./pool-batch-policy.mjs";
 import { NFT_CONTRIBUTION_SOURCE_PATH, NFT_POOL_BATCH_MIN_USDC, NFT_POOL_SOURCE_GAS_GRANT, NFT_TREASURY_PATH } from "./nft-pool-config.mjs";
 import { CHOG, MONAD_USDC, UNISWAP_ROUTER, WMON, GIVETH_PROJECT_RECIPIENT, sellAbi, swapRouterAbi } from "../src/route.ts";
+import { PAYMENT_POLICY } from "./policy.mjs";
 
 const GAS_GRANT = parseUnits("5",18);
 const OPERATOR_READY_BALANCE = parseUnits("6",18); // Include gas for funding the child.
@@ -26,6 +27,9 @@ const same=(a,b)=>typeof a==="string"&&typeof b==="string"&&a.toLowerCase()===b.
 const hashPattern=/^0x[0-9a-f]{64}$/i;
 const solanaSignaturePattern=/^[1-9A-HJ-NP-Za-km-z]{64,88}$/;
 const approve=(token,spender,amount)=>({to:token,value:0n,data:encodeFunctionData({abi:erc20Abi,functionName:"approve",args:[spender,amount]})});
+const profileNftAbi=parseAbi(["function tokensOfOwner(address) view returns (uint256[])","function tokenURI(uint256) view returns (string)"]);
+const ipfsUri=/^ipfs:\/\/([a-z0-9]{46,90})(\/[a-zA-Z0-9._/-]{1,180})?$/;
+const ipfsGateway=uri=>{const match=ipfsUri.exec(uri);if(!match||match[2]?.split("/").includes(".."))return null;return `https://gateway.pinata.cloud/ipfs/${match[1]}${match[2]??""}`;};
 
 // Local single-operator pilot. The root is provided ONLY by the owner's hidden
 // terminal prompt, never via HTTP/env/browser. No arbitrary signing HTTP method.
@@ -53,6 +57,7 @@ export function createChogProcessor({ filename, vault, root, checkpoint=()=>{}, 
   const allocator=createAddressAllocator(db,vault), journal=sourceJournal(db);
   let running=false, closed=false, healthyAt=0, gasBalance=0n, expiredCursor="";
   let rateCache=null,rateRequest=null,poolPendingUsdc=0n;
+  const nftMetadataCache=new Map();
   // Only finalized/canonical source receipts are cached, in RAM. Restart always
   // re-verifies them. Pending receipts and Ethereum observations are never cached.
   const sourceConfirmed=new Map();
@@ -312,9 +317,34 @@ export function createChogProcessor({ filename, vault, root, checkpoint=()=>{}, 
     })();
     try{return await rateRequest;}finally{rateRequest=null;}
   }
+  async function profileNfts(id){
+    const x=load(id);
+    if(!x || x.state!=="delivered" || !x.depositProof?.sender || !same(x.depositProof.txHash,x.depositHash))throw new Error("A finalized CHOG donation is required.");
+    const tokenIds=await source.readContract({address:PAYMENT_POLICY.nftCollection,abi:profileNftAbi,functionName:"tokensOfOwner",args:[x.depositProof.sender]});
+    const unique=[...new Set(tokenIds.map(String))].slice(0,24);
+    const nfts=await Promise.all(unique.map(async tokenId=>{
+      if(nftMetadataCache.has(tokenId))return nftMetadataCache.get(tokenId);
+      let result={tokenId,name:`CHOG #${tokenId}`,image:null};
+      try{
+        const metadataUri=await source.readContract({address:PAYMENT_POLICY.nftCollection,abi:profileNftAbi,functionName:"tokenURI",args:[BigInt(tokenId)]});
+        const metadataUrl=ipfsGateway(metadataUri);
+        if(metadataUrl){
+          const response=await fetch(metadataUrl,{headers:{Accept:"application/json"},signal:AbortSignal.timeout(7000)});
+          const length=Number(response.headers.get("content-length")??0);
+          if(response.ok && length<=65536){
+            const text=await response.text();
+            if(text.length<=65536){const metadata=JSON.parse(text),image=ipfsGateway(metadata?.image);result={tokenId,name:typeof metadata?.name==="string"&&metadata.name.length<=80?metadata.name:`CHOG #${tokenId}`,image};}
+          }
+        }
+      }catch{/* Ownership is still shown with a local collection fallback. */}
+      nftMetadataCache.set(tokenId,result);return result;
+    }));
+    return {invoiceId:x.id,initiativeId:x.initiativeId,amount:x.donationAmount??x.amount,nfts};
+  }
   return {
     publicChogRate,
-    publicStatus(){return {paymentsEnabled:!closed&&Date.now()-healthyAt<60_000&&gasBalance>=OPERATOR_READY_BALANCE,paymentMode:"local-pilot",workerVersion:"2026-10-10-pool-contribution-v4",destinationChainId:newDestinationChainId,supportedModes:["chog"],supportedInitiatives:[...CHOG_INITIATIVES],poolContributionPercent:10,poolContributionMode:"added-on-top",poolContributionBatchMinimumUsdc:"5.00",poolContributionPendingUsdc:formatUnits(poolPendingUsdc,6)};},
+    profileNfts,
+    publicStatus(){return {paymentsEnabled:!closed&&Date.now()-healthyAt<60_000&&gasBalance>=OPERATOR_READY_BALANCE,paymentMode:"local-pilot",workerVersion:"2026-10-11-donor-profile-v5",destinationChainId:newDestinationChainId,supportedModes:["chog"],supportedInitiatives:[...CHOG_INITIATIVES],poolContributionPercent:10,poolContributionMode:"added-on-top",poolContributionBatchMinimumUsdc:"5.00",poolContributionPendingUsdc:formatUnits(poolPendingUsdc,6)};},
     canRetryUnissuedChog(id){return !closed && /^[a-f0-9]{64}$/.test(id) && !load(id) && !db.prepare("SELECT 1 FROM deposit_addresses WHERE invoice_id=?").get(id);},
     async issue(input, requestId) {
       if(requestId!==undefined && !/^[a-f0-9]{64}$/.test(requestId))throw new Error("Invalid internal request ID.");

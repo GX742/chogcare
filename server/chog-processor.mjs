@@ -319,7 +319,7 @@ export function createChogProcessor({ filename, vault, root, checkpoint=()=>{}, 
   }
   async function profileNfts(id){
     const x=load(id);
-    if(!x || x.state!=="delivered" || !x.depositProof?.sender || !same(x.depositProof.txHash,x.depositHash))throw new Error("A finalized CHOG donation is required.");
+    if(!x || !["confirming","delivered"].includes(x.state) || !x.depositProof?.sender || !same(x.depositProof.txHash,x.depositHash))throw new Error("A received CHOG donation is required.");
     const tokenIds=await source.readContract({address:PAYMENT_POLICY.nftCollection,abi:profileNftAbi,functionName:"tokensOfOwner",args:[x.depositProof.sender]});
     const unique=[...new Set(tokenIds.map(String))].slice(0,24);
     const nfts=await Promise.all(unique.map(async tokenId=>{
@@ -339,7 +339,7 @@ export function createChogProcessor({ filename, vault, root, checkpoint=()=>{}, 
       }catch{/* Ownership is still shown with a local collection fallback. */}
       nftMetadataCache.set(tokenId,result);return result;
     }));
-    return {invoiceId:x.id,initiativeId:x.initiativeId,amount:x.donationAmount??x.amount,nfts};
+    return {invoiceId:x.id,state:x.state,initiativeId:x.initiativeId,amount:x.donationAmount??x.amount,nfts};
   }
   return {
     publicChogRate,

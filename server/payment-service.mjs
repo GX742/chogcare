@@ -94,6 +94,7 @@ export function createPaymentService(store, allowedOrigin = "http://127.0.0.1:41
         const current=store.findDonorProfile(input.invoiceId);if(current)return respond(200,{profile:current});
         try{
           const context=await processor.profileNfts(input.invoiceId);
+          if(context.state!=="delivered")return respond(409,{error:"Your profile is ready. Publishing unlocks after final confirmation."});
           const avatar=input.avatarTokenId===null?null:context.nfts.find(item=>item.tokenId===input.avatarTokenId);
           if(input.avatarTokenId!==null&&!avatar)return respond(400,{error:"Choose an NFT verified in the donating wallet."});
           const profile=store.publishDonorProfile({invoiceId:input.invoiceId,nickname,initiativeId:context.initiativeId,amount:context.amount,amountUnits:parseUnits(context.amount,18).toString(),avatarTokenId:avatar?.tokenId??null,avatarName:avatar?.name??null,avatarImage:avatar?.image??null,publishedAt:Date.now()});

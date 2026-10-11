@@ -34,7 +34,6 @@ export default function LiveChogCheckout({initiativeId,initiativeName,ready,dest
   },[]);
   const estimatedUsd=(value:string)=>{if(rateUsdMicros===null||!/^\d{1,7}(\.\d{0,18})?$/.test(value))return null;try{const units=parseUnits(value,18),micros=units*rateUsdMicros/(300n*10n**18n);return usdFormatter.format(Number(micros)/1_000_000);}catch{return null;}};
   const allocation=(value:string)=>{try{const result=contributionForDonationUnits(parseUnits(value,18));return {donation:value,contribution:formatUnits(result.contributionUnits,18),total:formatUnits(result.totalUnits,18)};}catch{return null;}};
-  useEffect(()=>{if(invoice?.state==="delivered"){try{closeSavedInvoice("chog");}catch{setError("Could not save your receipt. Keep this checkout open.");}}},[invoice?.state,invoice?.id]);
   const network=deliveryNetwork(invoice ? invoice.destinationChainId : destinationChainId);
   useEffect(()=>{if(invoice)heading.current?.focus({preventScroll:true});},[invoice?.id]);
   useEffect(()=>{
@@ -115,7 +114,8 @@ export default function LiveChogCheckout({initiativeId,initiativeName,ready,dest
       {!invoice.destinationHash&&invoice.observedDestinationHash&&<a className="field-link" href={`${network.explorer}/tx/${invoice.observedDestinationHash}`} target="_blank" rel="noreferrer">Receipt · awaiting finality ↗</a>}
       </div></details>}
       {["confirming","delivered"].includes(invoice.state)&&<DonationShare state={invoice.state} mode="chog" amount={invoice.donationAmount??invoice.amount} initiativeId={invoice.initiativeId}/>}
-      {invoice.state==="delivered"&&<><DonorProfile invoiceId={invoice.id}/><button className="checkout-reference" onClick={reset}>Make another donation <ArrowRight size={16}/></button></>}
+      {["confirming","delivered"].includes(invoice.state)&&<DonorProfile invoiceId={invoice.id} finalized={invoice.state==="delivered"} onComplete={()=>{try{closeSavedInvoice("chog");}catch{setError("Could not save profile completion. Keep this checkout open.");}}}/>}
+      {invoice.state==="delivered"&&<button className="checkout-reference" onClick={reset}>Make another donation <ArrowRight size={16}/></button>}
       {invoice.state==="expired"&&!invoice.depositHash&&<><p className="checkout-help">Already sent CHOG? Keep this invoice open. Do not pay again.</p><button className="button primary full checkout-submit" onClick={reset}>I haven't paid · start again <ArrowRight size={16}/></button></>}
     </div>:<p className="checkout-help">Restoring your payment status. Do not pay again.</p>}
     <p className="checkout-error" role="alert">{error}</p>

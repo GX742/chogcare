@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import type HlsType from "hls.js";
-import { ArrowLeft, ArrowRight, ArrowUpRight, Check, Copy, Broadcast, X, XLogo } from "@phosphor-icons/react";
+import { ArrowLeft, ArrowRight, ArrowUpRight, Check, Copy, Broadcast, CornersOut, X, XLogo } from "@phosphor-icons/react";
 import PaymentCheckout from "./PaymentCheckout";
 import HeartField from "./HeartField";
 import { GIVETH_PROJECT_URL } from "./route";
@@ -151,6 +151,25 @@ function owncastStreamUrl() {
 function NativeLivePlayer({ src, onReady }: { src: string; onReady: () => void }) {
   const videoRef = useRef<HTMLVideoElement>(null);
 
+  const toggleFullscreen = () => {
+    const video = videoRef.current;
+    const player = video?.parentElement;
+    if (!video || !player) return;
+
+    if (document.fullscreenElement) {
+      void document.exitFullscreen();
+      return;
+    }
+
+    if (player.requestFullscreen) {
+      void player.requestFullscreen();
+      return;
+    }
+
+    const safariPlayer = player as HTMLElement & { webkitRequestFullscreen?: () => void };
+    safariPlayer.webkitRequestFullscreen?.();
+  };
+
   useEffect(() => {
     const video = videoRef.current;
     if (!video) return;
@@ -196,20 +215,25 @@ function NativeLivePlayer({ src, onReady }: { src: string; onReady: () => void }
     };
   }, [src]);
 
-  return <video
-    ref={videoRef}
-    className="lp-broadcast-player is-ready"
-    autoPlay
-    muted
-    playsInline
-    disablePictureInPicture
-    controls={false}
-    controlsList="nodownload noplaybackrate noremoteplayback"
-    tabIndex={-1}
-    aria-label="ChogCare live broadcast"
-    onPlaying={onReady}
-    onContextMenu={(event) => event.preventDefault()}
-  />;
+  return <>
+    <video
+      ref={videoRef}
+      className="lp-broadcast-player is-ready"
+      autoPlay
+      muted
+      playsInline
+      disablePictureInPicture
+      controls={false}
+      controlsList="nodownload noplaybackrate noremoteplayback"
+      tabIndex={-1}
+      aria-label="ChogCare live broadcast"
+      onPlaying={onReady}
+      onContextMenu={(event) => event.preventDefault()}
+    />
+    <button className="lp-broadcast-fullscreen" type="button" onClick={toggleFullscreen} aria-label="Open broadcast fullscreen">
+      <CornersOut size={19} weight="bold" aria-hidden="true" />
+    </button>
+  </>;
 }
 
 function BroadcastPanel({ headingId }: { headingId: string }) {

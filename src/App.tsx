@@ -130,17 +130,37 @@ function Funding({ initiative }: { initiative: Initiative }) {
 const configuredTwitchChannel = import.meta.env.VITE_TWITCH_CHANNEL?.trim().toLowerCase() || "nerfwok";
 const twitchChannel = /^[a-z0-9_]{4,25}$/.test(configuredTwitchChannel) ? configuredTwitchChannel : null;
 
+function owncastPlayerUrl() {
+  const configuredUrl = import.meta.env.VITE_OWNCAST_URL?.trim();
+  if (!configuredUrl) return null;
+  try {
+    const url = new URL(configuredUrl);
+    const localDevelopment = url.protocol === "http:" && ["127.0.0.1", "localhost"].includes(url.hostname);
+    if (url.protocol !== "https:" && !localDevelopment) return null;
+    url.pathname = "/embed/video";
+    url.search = "?autoplay=always&initiallyMuted=true&supportsSocialFollow=false";
+    url.hash = "";
+    return url.toString();
+  } catch {
+    return null;
+  }
+}
+
 function BroadcastPanel({ headingId }: { headingId: string }) {
   const [playerLoaded, setPlayerLoaded] = useState(false);
+  const owncastUrl = owncastPlayerUrl();
+  const playerUrl = owncastUrl ?? (twitchChannel
+    ? `https://player.twitch.tv/?channel=${encodeURIComponent(twitchChannel)}&parent=${encodeURIComponent(window.location.hostname)}&muted=true&autoplay=true`
+    : null);
 
   return <div className="care-stream">
     <section className="lp-broadcast-frame" aria-labelledby={headingId}>
       <div className="lp-broadcast-interior">
-        {twitchChannel ? <>
+        {playerUrl ? <>
           <h2 id={headingId} className="sr-only">ChogCare live broadcast</h2>
           <iframe
             className={`lp-broadcast-player${playerLoaded ? " is-ready" : ""}`}
-            src={`https://player.twitch.tv/?channel=${encodeURIComponent(twitchChannel)}&parent=${encodeURIComponent(window.location.hostname)}&muted=true&autoplay=true`}
+            src={playerUrl}
             title="ChogCare live broadcast"
             loading="eager"
             referrerPolicy="strict-origin-when-cross-origin"

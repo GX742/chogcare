@@ -53,7 +53,7 @@ test("production HTML policy excludes inline scripts, eval, arbitrary images and
   assert.match(policy, /script-src 'self';/);
   assert.match(policy, /style-src 'self';/);
   assert.match(policy, /connect-src 'self';/);
-  assert.match(policy, /frame-src https:\/\/player\.twitch\.tv;/);
+  assert.match(policy, /frame-src https:\/\/player\.twitch\.tv https:\/\/stream\.chogcare\.com/);
   assert.doesNotMatch(policy, /unsafe-inline|unsafe-eval|nonce-|ws:|https:\*/);
   assert.match(policy, /form-action 'none'/);
   assert.throws(()=>contentSecurityPolicy("bad'nonce"));

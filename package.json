@@ -1,0 +1,58 @@
+{
+  "name": "chogcare",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite --host 127.0.0.1",
+    "payments:dev": "node server/payment-service.mjs",
+    "payments:start": "node scripts/start-payments.mjs",
+    "payments": "node scripts/start-payments.mjs",
+    "payments:route:check": "node scripts/check-payment-route.mjs",
+    "payments:routes:research": "node scripts/check-recipient-routes.mjs",
+    "payments:nft:check": "node scripts/check-nft-pool.mjs",
+    "payments:status": "node scripts/payment-status.mjs",
+    "payments:vault:setup": "node scripts/setup-payment-vault.mjs",
+    "payments:vault:check": "node scripts/setup-payment-vault.mjs --check",
+    "payments:storage:protect": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/protect-payment-storage.ps1",
+    "payments:integrity:enroll": "node scripts/payment-integrity.mjs --enroll",
+    "payments:integrity:check": "node scripts/payment-integrity.mjs --check",
+    "payments:backup": "node scripts/payment-integrity.mjs --backup",
+    "payments:test": "node --test test/checkout.test.mjs test/payment-service.test.mjs test/nft-proof.test.mjs test/payment-custody.test.mjs test/pool-ledger.test.mjs test/chain-receipts.test.mjs test/payout-outbox.test.mjs test/web-security.test.mjs test/chog-processor.test.mjs test/relay-route.test.mjs test/source-journal.test.mjs",
+    "security:check": "npm run build && npm test && npm audit --audit-level=low",
+    "build": "tsc -b && vite build",
+    "preview": "vite preview --host 127.0.0.1",
+    "contracts:compile": "node scripts/compile-contracts.mjs",
+    "contracts:test": "node --test test/*.test.mjs",
+    "test": "npm run contracts:compile && npm run contracts:test"
+  },
+  "dependencies": {
+    "@fontsource-variable/dm-sans": "5.3.0",
+    "@fontsource-variable/manrope": "5.3.0",
+    "@gsap/react": "^2.1.2",
+    "@openzeppelin/contracts": "5.4.0",
+    "@phosphor-icons/react": "2.1.10",
+    "@tanstack/react-query": "5.90.5",
+    "ethers": "^6.15.0",
+    "gsap": "^3.15.0",
+    "qrcode": "^1.5.4",
+    "react": "19.3.0",
+    "react-dom": "19.3.0",
+    "viem": "2.57.3",
+    "wagmi": "3.7.7"
+  },
+  "devDependencies": {
+    "@types/qrcode": "^1.5.6",
+    "@types/react": "19.2.2",
+    "@types/react-dom": "19.2.2",
+    "@vitejs/plugin-react": "6.1.2",
+    "hardhat": "3.18.1",
+    "solc": "0.8.37",
+    "typescript": "7.0.2",
+    "vite": "8.3.3"
+  },
+  "overrides": {
+    "ws": "8.21.0",
+    "tmp": "0.2.7"
+  }
+}

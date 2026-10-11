@@ -1,0 +1,68 @@
+{
+  "requestId": "0x17914642722633b4795453f076c6e7071ac9354f762538bd34498711d2c46420",
+  "protocol": {
+    "v2": {
+      "orderId": "0xdf4615546ece80bfcb398a9893075da577db6c939b731c207ae35532fb17b750",
+      "hubType": "onchain",
+      "orderData": {
+        "version": "v1",
+        "solverChainId": "base",
+        "solver": "0xf70da97812cb96acdf810712aa562db8dfa3dbef",
+        "salt": "0x0796282d7f1e40aee04a79169d73ff0f4d70cafc57af11ac949ad6e434d6327b",
+        "inputs": [
+          {
+            "payment": {
+              "chainId": "monad",
+              "currency": "0x754704bc059f8c67012fed69bc8a327a5aafb603",
+              "amount": "1000000",
+              "weight": "1"
+            },
+            "refunds": [
+              {
+                "chainId": "monad",
+                "recipient": "0x1111111111111111111111111111111111111111",
+                "currency": "0x754704bc059f8c67012fed69bc8a327a5aafb603",
+                "minimumAmount": "0",
+                "deadline": 1792069072,
+                "extraData": "0x000000000000000000000000b92fe925dc43a0ecde6c8b1a2709c170ec4fff4f"
+              },
+              {
+                "chainId": "optimism",
+                "recipient": "0x1de498918d04B8Bf162210103CDd547f73387B2E",
+                "currency": "0x0b2c639c533813f4aa9d7837caf62653d097ff85",
+                "minimumAmount": "0",
+                "deadline": 1792069072,
+                "extraData": "0x000000000000000000000000b92fe925dc43a0ecde6c8b1a2709c170ec4fff4f"
+              }
+            ]
+          }
+        ],
+        "output": {
+          "chainId": "optimism",
+          "payments": [
+            {
+              "recipient": "0x1de498918d04B8Bf162210103CDd547f73387B2E",
+              "currency": "0x0b2c639c533813f4aa9d7837caf62653d097ff85",
+              "minimumAmount": "969186",
+              "expectedAmount": "978975"
+            }
+          ],
+          "calls": [],
+          "deadline": 1792069072,
+          "extraData": "0x000000000000000000000000b92fe925dc43a0ecde6c8b1a2709c170ec4fff4f"
+        },
+        "fees": []
+      },
+      "orderSignature": "0x7d7ae1744548ac30fa3398160a6e52c09d2ffdb84808f21c9307a8b41a643ac348cf0328130d403652d02d69e7ea8f7da9909e617760bffd2739638925e28ca11b",
+      "paymentDetails": {
+        "chainId": "monad",
+        "depository": "0x4cd00e387622c35bddb9b4c962c136462338bc31",
+        "currency": "0x754704bc059f8c67012fed69bc8a327a5aafb603",
+        "amount": "1000000"
+      }
+    }
+  },
+  "details": {
+    "timeEstimate": 2
+  }
+}

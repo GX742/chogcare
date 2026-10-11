@@ -1,0 +1,15 @@
+node_modules/
+dist/
+artifacts/
+outputs/
+work/
+.env
+.env.local
+coverage/
+*.log
+*.tsbuildinfo
+*.sqlite
+*.sqlite-wal
+*.sqlite-shm
+vite.config.js
+vite.config.d.ts

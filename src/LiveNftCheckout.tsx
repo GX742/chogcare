@@ -50,7 +50,7 @@ export default function LiveNftCheckout({initiativeId,ready,healthy,availableCla
   const reset=()=>{try{closeSavedInvoice("nft");previous.current=null;setId("");setInvoice(null);setAgreed(false);setError("");}catch(problem){setError(problem instanceof Error?problem.message:"Keep this invoice for recovery.");}};
   const labels={"awaiting-payment":"Waiting for your 1 MON transfer",verifying:"Transfer detected · verifying NFT ownership",verified:"NFT verified · preparing donation",paying:`Sending $${invoice?.subsidyUsdc??NFT_POOL_GRANT_USDC} to your cause`,confirming:"Received · final confirmation pending",delivered:"Donation delivered",expired:"Invoice expired · do not pay","manual-review":"Operator review required · do not pay again"};
   const received=!!invoice&&["confirming","delivered"].includes(invoice.state);
-  return <section className="checkout holder-preview" aria-label="NFT holder donation">
+  return <section className={`checkout holder-preview${received?" is-received":""}`} aria-label="NFT holder donation">
     {id&&!received&&<div className="holder-preview-heading"><Heart size={23} weight="duotone"/><span>CHOG holder benefit</span></div>}
     {!id?<form className="nft-giving-form" onSubmit={e=>void create(e)}>
       <div className="nft-giving-intro"><span className="nft-giving-eyebrow">Your daily holder donation</span><div className="nft-giving-headline"><strong>$1</strong><h3>From our pool.<br/>To your cause.</h3></div><p>Three holders a day. You choose the cause.</p></div>
@@ -78,6 +78,6 @@ export default function LiveNftCheckout({initiativeId,ready,healthy,availableCla
       <p>Claim day: {invoice.claimDay} UTC. Reserved donation: ${invoice.subsidyUsdc}. {invoice.state==="confirming"?"The destination transfer is verified; final confirmation continues in the background.":""}</p><code className="checkout-invoice-id">{invoice.id}</code></div></details>
     </div>:<p className="checkout-help">Restoring your NFT invoice. Do not pay again.</p>}
     <p className="checkout-error" role="alert">{error}</p>
-    <details className="checkout-disclosure"><summary>How it works & daily limits</summary><div><p>No wallet connection. We verify your 1 MON transfer and NFT ownership on Monad. Smart-wallet transfers require a confirmed execution trace. A public address alone cannot claim a donation. Do not use exchange withdrawals or send twice.</p><p>New pool donations pay exactly 1 native USDC on Optimism to your cause. One per wallet and NFT per UTC day, with three recipients and $3 total daily. The reset is 00:00 UTC. Existing invoices retain their original reserved amount. ChogCare pays payout gas separately.</p></div></details>
+    <details className="checkout-disclosure"><summary>How it works & daily limits</summary><div><p>No wallet connection. We verify your 1 MON transfer and NFT ownership on Monad. Smart-wallet transfers require a confirmed execution trace. A public address alone cannot claim a donation. Do not use exchange withdrawals or send twice.</p><p>New pool donations send $1 to your cause on your behalf. One per wallet and NFT per UTC day, with three recipients and $3 total daily. The reset is 00:00 UTC. Existing invoices retain their original reserved amount. ChogCare pays delivery gas separately.</p></div></details>
   </section>;
 }

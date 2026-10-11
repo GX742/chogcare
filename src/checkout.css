@@ -204,65 +204,103 @@
 .donation-share-preview span { overflow-wrap: anywhere; }
 .donation-share .donation-share-note { margin: 12px 0 0; font-size: 11px; line-height: 1.6; color: #ad9dbc; }
 @media (prefers-reduced-motion: reduce) { .donation-share-x, .donation-share-copy { transition: none; } .donation-share-x:hover { transform: none; } }
-.checkout-thanks { padding:4px 0 24px; animation:checkoutReveal .4s ease-out both; }
-.checkout-thanks-status { display:flex; align-items:center; gap:8px; color:#b4e1cf; font-size:15px; font-weight:550; }
-.checkout-thanks-status > svg:last-child { margin-left:auto; color:#c18be9; }
-.checkout-thanks h3 { margin-top:20px; font:650 clamp(27px,2.7vw,38px)/1.16 Manrope,sans-serif; letter-spacing:-1.2px; text-wrap:balance; }
+/* Completion belongs to ChogCare: ink, electric violet, rose and CHOG art.
+   One receipt surface; no green success theme or nested plum form cards. */
+.checkout.is-received {
+  background: radial-gradient(ellipse at 100% 0, #7828c92b, transparent 46%), #10091f;
+  border-radius: 0 0 16px 16px;
+}
+.checkout.is-received::after { border-color:#b652f7; box-shadow:inset 0 0 24px #8c30d414; }
+.checkout-thanks { padding:0 0 22px; animation:checkoutReveal .4s ease-out both; }
+.checkout-thanks-status { display:flex; align-items:center; gap:9px; color:#eacfff; font-size:14px; font-weight:600; }
+.checkout-thanks-status > span { display:grid; place-items:center; width:24px; height:24px; border:1px solid #be68fb70; border-radius:50%; color:#f0d9ff; background:#7926c62b; }
+.checkout-thanks-main { display:grid; grid-template-columns:minmax(0,1fr) 172px; align-items:center; gap:12px; min-height:174px; margin-top:5px; }
+.checkout-thanks-amount { display:flex; align-items:baseline; flex-wrap:wrap; gap:8px 12px; }
+.checkout-thanks-amount strong { color:#fff4ff; font:750 clamp(62px,6.3vw,90px)/1 Manrope,sans-serif; letter-spacing:-4px; font-variant-numeric:tabular-nums; overflow-wrap:anywhere; }
+.checkout-thanks-amount span { color:#eec7ff; font:650 18px/1.3 Manrope,sans-serif; }
+.checkout-thanks-amount.is-long strong { font-size:clamp(40px,4.8vw,65px); letter-spacing:-2px; }
+.checkout-thanks-note { margin-top:14px; color:#c8b1e0; font-size:15px; line-height:1.5; }
+.checkout-thanks-art { display:block; width:100%; height:174px; object-fit:contain; filter:drop-shadow(0 5px 20px #ce49db2b); }
+.checkout-thanks .checkout-thanks-route { display:flex; align-items:center; gap:12px; margin:7px 0 0; padding:15px 0; border-block:1px solid #bc6af333; font:650 18px/1.4 Manrope,sans-serif; letter-spacing:-.4px; }
+.checkout-thanks-route > span:first-child { flex-shrink:0; color:#deacff; }
+.checkout-thanks-route > svg { flex-shrink:0; color:#f586d2; }
+.checkout-thanks-route > span:last-child { color:#fff0fb; overflow-wrap:anywhere; }
 .checkout-thanks h3:focus { outline:none; }
-.checkout-thanks-amount { display:flex; flex-wrap:wrap; align-items:baseline; gap:12px; margin-top:14px; }
-.checkout-thanks-amount strong { font:650 clamp(48px,5.4vw,78px)/1.05 Manrope,sans-serif; color:#f4eafb; letter-spacing:-3px; font-variant-numeric:tabular-nums; overflow-wrap:anywhere; }
-.checkout-thanks-amount.is-long strong { font-size:clamp(35px,3.8vw,54px); letter-spacing:-1.5px; }
-.checkout-thanks-amount span { color:#baa8ca; font-size:16px; font-weight:500; }
-.donor-profile { margin:0 0 22px; padding:26px; border:1px solid #b592d954; border-radius:18px; background:#21172f; box-shadow:inset 0 1px #e4caff0b; }
-.donor-profile-head { display:grid; grid-template-columns:1fr 1fr; gap:14px; }
-.donor-profile-head > span { display:flex; align-items:center; gap:9px; padding-bottom:15px; border-bottom:2px solid #cba9ef18; color:#aa95ba; font-size:14px; font-weight:550; }
-.donor-profile-head b { display:grid; place-items:center; width:25px; height:25px; border-radius:7px; background:#ba94e016; font-size:11px; font-weight:600; }
-.donor-profile-head .is-current { border-color:#be8aef; color:#f1e1fd; }
-.donor-profile-head .is-current b { background:#ae6fed; color:#190e25; }
-.donor-profile-head .is-complete { color:#b5decf; }
-.donor-profile-stage h3 { margin-top:22px; font:650 clamp(24px,2.3vw,30px)/1.15 Manrope,sans-serif; letter-spacing:-.9px; text-wrap:balance; }
-.donor-profile-stage > p { margin:9px 0 23px; color:#c8b6d7; font-size:15px; line-height:1.55; }
-.donor-profile-stage label { display:block; margin-bottom:9px; color:#e3d0f2; font-size:14px; font-weight:500; }
-.donor-name-row { display:grid; grid-template-columns:1fr; gap:13px; }
-.donor-name-row input { min-width:0; width:100%; height:62px; padding:0 17px; border:1px solid #c29eeb68; border-radius:11px; color:#fff; background:#140d1e; font:550 23px Manrope,sans-serif; letter-spacing:-.5px; transition:border-color .2s,background .2s; }
-.donor-name-row input::placeholder { color:#877195; font-size:20px; }
-.donor-name-row input:hover { border-color:#cfa0ff; }
-.donor-name-row button,.donor-publish { display:inline-flex; align-items:center; justify-content:space-between; gap:12px; min-height:56px; padding:0 20px; border:1px solid #ba86fc; border-radius:11px; color:#fff; background:#7b38d2; font-size:16px; font-weight:650; box-shadow:inset 0 1px #ffffff15; transition:background .2s,transform .2s; }
-.donor-name-row button:hover,.donor-publish:hover { background:#8944df; }
-.donor-name-row button:active,.donor-publish:active { transform:translateY(1px); }
-.donor-back { display:flex; align-items:center; gap:8px; width:100%; margin-top:18px; padding:0; border:0; color:#ead5f9; background:none; font:600 19px Manrope,sans-serif; }
-.donor-back span { margin-left:auto; color:#b99ccf; font:400 13px 'DM Sans',sans-serif; }
-.donor-back + h3 { margin-top:17px; }
-.donor-avatar-grid { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:13px; max-height:430px; overflow:auto; padding:3px; margin:-3px; scrollbar-width:thin; }
-.donor-avatar-grid.has-one { grid-template-columns:minmax(0,1fr) minmax(0,1fr); }
-.donor-avatar-grid button { position:relative; min-width:0; padding:8px; border:1px solid #bca0d238; border-radius:13px; color:#c2add3; background:#160e22; text-align:left; transition:border-color .2s,background .2s,transform .2s; }
-.donor-avatar-grid button:hover { border-color:#b782e7; background:#251536; }
-.donor-avatar-grid button:active { transform:scale(.98); }
-.donor-avatar-grid button.selected { border-color:#d19cff; color:#f6ebff; box-shadow:0 0 0 2px #ba80f330; }
-.donor-avatar-grid img { display:block; width:100%; aspect-ratio:1; object-fit:cover; border-radius:9px; background:#24182f; }
-.donor-avatar-grid img.donor-nft-image { background:#24182f url('/chog-holder-nft.png') center/cover no-repeat; }
-.donor-avatar-grid span { display:block; overflow:hidden; margin:10px 3px 4px; font-size:13px; font-weight:550; text-overflow:ellipsis; white-space:nowrap; }
-.donor-avatar-grid svg { position:absolute; top:15px; right:15px; padding:4px; box-sizing:content-box; border-radius:50%; color:#171121; background:#c5efdf; box-shadow:0 3px 14px #11091d55; }
-.donor-publish { width:100%; margin-top:20px; }
-.donor-publish:disabled { opacity:.65; }
-.donor-profile-privacy { margin-top:17px; color:#bba5ca; font-size:13px; line-height:1.5; }
-.donor-profile-error { margin-top:13px; color:#f3b7ca; font-size:14px; line-height:1.55; }
-.donor-profile-done { border-color:#b995da50; background:#21172f; }
-.donor-profile-published { display:flex; align-items:center; gap:8px; color:#b8e7d4; font-size:15px; font-weight:550; }
-.donor-profile-identity { display:flex; align-items:center; gap:20px; margin:24px 0; }
-.donor-profile-avatar { flex:0 0 92px; width:92px; height:92px; overflow:hidden; border:1px solid #d2aaef63; border-radius:19px; }
+.donor-profile { margin:0 0 22px; padding:0; border:0; border-radius:0; color:#efe3ff; background:transparent; box-shadow:none; }
+.donor-profile-head { display:grid; grid-template-columns:1fr 1fr; gap:18px; }
+.donor-profile-head > span { display:flex; align-items:center; gap:9px; padding-bottom:13px; border-bottom:2px solid #b87bef26; color:#977ab7; font-size:14px; font-weight:600; }
+.donor-profile-head b { display:grid; place-items:center; width:23px; height:23px; border-radius:6px; background:#ad4bef18; font-size:10px; font-weight:700; }
+.donor-profile-head .is-current { border-color:#e877d8; color:#f4e5ff; }
+.donor-profile-head .is-current b { background:#bc58ef; color:#1b082c; }
+.donor-profile-head .is-complete { color:#ddb9f7; }
+.donor-profile-stage h3 { margin-top:22px; color:#f7ebff; font:700 clamp(24px,2.4vw,30px)/1.16 Manrope,sans-serif; letter-spacing:-1px; text-wrap:balance; }
+.donor-profile-stage > p { margin:9px 0 21px; color:#bc9ed4; font-size:15px; line-height:1.5; }
+.donor-profile-stage label { display:block; margin-bottom:9px; color:#dec3f3; font-size:13px; font-weight:550; }
+.donor-name-row { display:grid; grid-template-columns:1fr; gap:12px; }
+.donor-name-row input { min-width:0; width:100%; height:58px; padding:0 17px; border:1px solid #bc72f266; border-radius:10px; color:#fff; background:#211036; font:600 24px Manrope,sans-serif; letter-spacing:-.6px; transition:border-color .2s,background .2s; }
+.donor-name-row input::placeholder { color:#8e6baa; font-size:21px; }
+.donor-name-row input:hover { border-color:#de8bf3; }
+.donor-name-row input:focus { background:#26113e; }
+.donor-name-row button,.donor-publish { display:inline-flex; align-items:center; justify-content:space-between; gap:12px; min-height:54px; padding:0 19px; border:1px solid #c16efb; border-radius:10px; color:#fff; background:linear-gradient(105deg,#8436df,#a343d8); font-size:16px; font-weight:700; box-shadow:inset 0 1px #ffffff1c,0 7px 23px #681cba26; transition:filter .2s,transform .2s; }
+.donor-name-row button:hover:not(:disabled),.donor-publish:hover:not(:disabled) { filter:brightness(1.14); }
+.donor-name-row button:active:not(:disabled),.donor-publish:active:not(:disabled) { transform:translateY(1px); }
+.donor-back { display:flex; align-items:center; gap:8px; width:100%; margin-top:17px; padding:0; border:0; color:#f2dcff; background:none; font:650 19px Manrope,sans-serif; }
+.donor-back span { margin-left:auto; color:#b589cb; font:500 13px 'DM Sans',sans-serif; }
+.donor-back + h3 { margin-top:16px; }
+.donor-avatar-grid { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:12px; max-height:340px; overflow:auto; padding:3px; margin:-3px; scrollbar-width:thin; scrollbar-color:#8545b7 #140c23; }
+.donor-avatar-grid.has-one { grid-template-columns:repeat(2,minmax(0,1fr)); }
+.donor-avatar-grid button { position:relative; min-width:0; padding:7px; border:1px solid #a55edc33; border-radius:12px; color:#bda3d1; background:#190d2a; text-align:left; transition:border-color .2s,background .2s,transform .2s; }
+.donor-avatar-grid button:hover:not(:disabled) { border-color:#cc69e6; background:#291039; }
+.donor-avatar-grid button:active:not(:disabled) { transform:scale(.98); }
+.donor-avatar-grid button.selected { border-color:#ef91dd; color:#ffe9fc; background:#291139; box-shadow:0 0 0 2px #e962c721; }
+.donor-avatar-grid img { display:block; width:100%; aspect-ratio:1; object-fit:cover; border-radius:8px; background:#25103b; }
+.donor-avatar-grid img.donor-nft-image { background:#25103b url('/chog-holder-nft.png') center/cover no-repeat; }
+.donor-avatar-grid span { display:block; overflow:hidden; margin:10px 4px 4px; font-size:13px; font-weight:650; text-overflow:ellipsis; white-space:nowrap; }
+.donor-avatar-grid svg { position:absolute; top:13px; right:13px; padding:4px; box-sizing:content-box; border-radius:50%; color:#280b36; background:#ffcfef; box-shadow:0 3px 14px #16062070; }
+.donor-publish { width:100%; margin-top:19px; }
+.donor-publish:disabled { opacity:.6; }
+.donor-profile-privacy { margin-top:14px; color:#9e80b6; font-size:12px; line-height:1.5; }
+.donor-profile-error { margin-top:13px; color:#ffb9da; font-size:14px; line-height:1.55; }
+.donor-profile-done { margin-top:2px; padding:22px; border:1px solid #ad50e657; border-radius:14px; background:radial-gradient(ellipse at 0 0,#822bdd38,transparent 65%),#1b0c2c; }
+.donor-profile-published { display:flex; align-items:center; gap:8px; color:#e9b5f1; font-size:14px; font-weight:600; }
+.donor-profile-published svg { color:#efa2de; }
+.donor-profile-identity { display:flex; align-items:center; gap:21px; margin:23px 0; }
+.donor-profile-avatar { flex:0 0 90px; width:90px; height:90px; overflow:hidden; border:1px solid #de8ce9a1; border-radius:18px; box-shadow:0 4px 24px #b44ae322; }
 .donor-profile-avatar img { width:100%; height:100%; object-fit:cover; }
 .donor-profile-identity > div:last-child { min-width:0; }
-.donor-profile-identity strong { display:block; overflow:hidden; color:#f6eaff; font:700 clamp(27px,2.6vw,36px)/1.1 Manrope,sans-serif; letter-spacing:-.9px; text-overflow:ellipsis; white-space:nowrap; }
-.donor-profile-identity p { margin-top:10px; color:#dfc7f6; font:600 24px/1.2 Manrope,sans-serif; font-variant-numeric:tabular-nums; overflow-wrap:anywhere; }
-.donor-profile-identity p span { display:block; margin-top:4px; color:#b6a0c8; font:400 14px 'DM Sans',sans-serif; }
-.donor-board-link { display:flex; align-items:center; justify-content:space-between; gap:12px; padding-top:17px; border-top:1px solid #bb9bdf26; color:#e4caff; font-size:15px; font-weight:550; transition:color .2s; }
+.donor-profile-identity strong { display:block; overflow:hidden; color:#fff0fc; font:750 clamp(28px,2.8vw,38px)/1.1 Manrope,sans-serif; letter-spacing:-1px; text-overflow:ellipsis; white-space:nowrap; }
+.donor-profile-identity p { margin-top:10px; color:#c998e3; font:550 15px/1.3 'DM Sans',sans-serif; overflow-wrap:anywhere; }
+.donor-board-link { display:flex; align-items:center; justify-content:space-between; gap:12px; padding-top:16px; border-top:1px solid #ce77ed2c; color:#edc4f9; font-size:14px; font-weight:650; transition:color .2s; }
 .donor-board-link:hover { color:#fff; }
-.donor-profile.is-loading { min-height:150px; display:grid; justify-items:center; align-content:center; gap:18px; }
+.donor-profile.is-loading { min-height:130px; display:grid; justify-items:center; align-content:center; gap:18px; }
 .donor-profile.is-loading > div { display:flex; gap:8px; }
-.donor-profile.is-loading p { color:#ccb4df; font-size:16px; }
-.donor-profile.is-loading span { display:block; width:8px; height:8px; border-radius:50%; background:#bd8cef; animation:profilePulse 1s ease-in-out infinite; }
+.donor-profile.is-loading p { color:#d2a6ef; font-size:16px; }
+.donor-profile.is-loading span { display:block; width:8px; height:8px; border-radius:50%; background:#d063ec; animation:profilePulse 1s ease-in-out infinite; }
 .donor-profile.is-loading span:nth-child(2){animation-delay:.15s}.donor-profile.is-loading span:nth-child(3){animation-delay:.3s}
 @keyframes profilePulse { 50% { opacity:.25; transform:translateY(-3px); } }
-@media (max-width:520px){.donor-profile{padding:21px 18px;border-radius:14px}.donor-profile-head{gap:10px}.donor-profile-head>span{gap:7px;font-size:13px}.donor-profile-identity{gap:15px}.donor-profile-avatar{width:80px;height:80px;flex-basis:80px}.donor-profile-identity strong{font-size:29px}.donor-profile-identity p{font-size:22px}.checkout-thanks-amount strong{font-size:64px}.checkout-thanks-amount.is-long strong{font-size:40px}.checkout-thanks-amount span{font-size:15px}}
+.checkout.is-received .donation-share { margin-top:20px; padding-top:19px; border-color:#b564ed30; }
+.checkout.is-received .donation-share-x,.checkout.is-received .donation-share-copy { min-height:52px; font-size:15px; }
+.checkout.is-received .donation-share-x { border-color:#c170f7; background:#8234d9; box-shadow:inset 0 1px #ffffff17; }
+.checkout.is-received .donation-share-x:hover { background:#963be5; }
+.checkout.is-received .donation-share-copy { color:#d5b1eb; border-color:#b673d64d; }
+.checkout.is-received .checkout-disclosure { border-color:#b564ed30; }
+.checkout.is-received .checkout-disclosure summary { color:#a987c1; }
+@media (max-width:520px){
+  .checkout-thanks-main{grid-template-columns:minmax(0,1fr) 120px;gap:7px;min-height:143px}
+  .checkout-thanks-art{height:143px}
+  .checkout-thanks-amount strong{font-size:62px;letter-spacing:-3px}
+  .checkout-thanks-amount.is-long strong{font-size:31px;letter-spacing:-1px}
+  .checkout-thanks-amount span{font-size:15px}
+  .checkout-thanks-note{margin-top:10px;font-size:13px}
+  .checkout-thanks .checkout-thanks-route{gap:9px;font-size:15px}
+  .checkout-thanks-route>svg{width:19px}
+  .donor-profile-head{gap:13px}
+  .donor-profile-head>span{gap:7px;font-size:13px}
+  .donor-profile-stage h3{font-size:25px}
+  .donor-profile-stage>p{font-size:14px}
+  .donor-profile-done{padding:19px 17px}
+  .donor-profile-identity{gap:17px}
+  .donor-profile-avatar{width:78px;height:78px;flex-basis:78px}
+  .donor-profile-identity strong{font-size:30px}
+}
 @media (prefers-reduced-motion:reduce){.donor-profile.is-loading span,.checkout-thanks{animation:none}.donor-avatar-grid button,.donor-name-row button,.donor-publish{transition:none}}

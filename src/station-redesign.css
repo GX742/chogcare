@@ -90,6 +90,8 @@
 .care-mechanics h2 { display: flex; gap: 12px; align-items: center; margin: 10px 0 0; font: 650 clamp(25px, 2.1vw, 30px)/1.2 Manrope, sans-serif; letter-spacing: -1px; white-space: nowrap; }
 .care-mechanics h2 > span { color: #c2a8ff; }
 .care-mechanics h2 svg { color: #8f80a9; flex-shrink: 0; }
+.care-token-mechanic h2 { flex-wrap:wrap; gap:8px 10px; white-space:normal; }
+.care-token-mechanic h2 > .care-charity-word { color:#eee3f9; font-size:.72em; letter-spacing:-.6px; }
 .care-mechanics p { color: #d0c4df; font-size: 13px; line-height: 1.75; margin: 16px 0 0; text-wrap: pretty; }
 .care-mechanic-note { display: block; margin-top: 14px; font-size: 11px; line-height: 1.65; color: #ae9fbf; max-width: 420px; }
 .care-mechanics .care-nft-title { gap: 7px; color: #c2a8ff; font-variant-numeric: tabular-nums; }

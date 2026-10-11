@@ -91,7 +91,7 @@ const initiatives: Initiative[] = [
     image: "/animal-ethics-mark.png",
     imageAlt: "Animal Ethics logo",
     summary: "Researches animal suffering and shares practical knowledge about helping animals, including those living in the wild. Supports education and public outreach.",
-    details: "Animal Ethics works through research, education and public outreach to reduce animal suffering, including suffering in the wild. ChogCare exchanges CHOG and delivers native SOL to the organization's published Solana address. The checkout verifies the signed route and finalized Solana receipt before showing success. This is an independent organization, not a Giveth-listed initiative or a ChogCare partner.",
+    details: "Animal Ethics works through research, education and public outreach to reduce animal suffering, including suffering in the wild. ChogCare exchanges CHOG into the organization's accepted donation currency and delivers it to its published address. The checkout verifies the donation receipt before showing success. This is an independent organization, not a Giveth-listed initiative or a ChogCare partner.",
     raised: null,
     external: false,
     externalLabel: "Official donation instructions",
@@ -383,7 +383,7 @@ export default function App() {
             <div className="care-intro-broadcast">{!stationOpen && <BroadcastPanel headingId="intro-broadcast-heading" />}</div>
             <div className="care-intro-copy">
               <h1 id="hero-heading">Donate with $CHOG.</h1>
-              <p>Choose a charity and send CHOG by QR. ChogCare converts your donation to USDC and delivers it to the initiative.</p>
+              <p>Choose a charity and send CHOG by QR. We handle the exchange and deliver your donation.</p>
               <p className="care-intro-context">The broadcast and your payment stay side by side. No wallet connection to this site.</p>
               <a href="#causes" className="button primary">Choose a cause <ArrowRight size={20} /></a>
             </div>
@@ -394,8 +394,8 @@ export default function App() {
               <div className="care-mechanic-art care-coin-art"><img src="/chog-donation-coin.png" alt="Purple CHOG coin" width="1324" height="1188" loading="lazy" /></div>
               <div className="care-mechanic-copy">
                 <span className="care-mechanic-label">Give with CHOG</span>
-                <h2 id="token-mechanic-title"><span>$CHOG</span><ArrowRight size={24} aria-hidden="true" />Charity</h2>
-                <p>Send CHOG. We exchange and bridge it.<br />Your chosen initiative receives USDC.</p>
+                <h2 id="token-mechanic-title"><span>CHOG</span><ArrowRight size={24} aria-hidden="true" /><span className="care-charity-word" lang="ru">Благотворительность</span></h2>
+                <p>You send CHOG.<br />We deliver your donation to the charity.</p>
                 <span className="care-mechanic-note">Your cause amount stays intact. 10% is added for the NFT community pool.</span>
               </div>
             </article>
@@ -435,7 +435,7 @@ export default function App() {
                   <span className="care-cause-summary">{item.summary}</span>
                   <span className="care-cause-bottom">
                     <span className="care-cause-action">Choose project <ArrowRight size={18} aria-hidden="true" /></span>
-                    <span className="care-cause-status" id={`cause-status-${item.id}`}>{item.live ? item.holderLive===false ? "CHOG · SOL payout" : "CHOG · NFT holder" : "Payments under review"}</span>
+                    <span className="care-cause-status" id={`cause-status-${item.id}`}>{item.live ? item.holderLive===false ? "CHOG donation" : "CHOG · NFT holder" : "Payments under review"}</span>
                   </span>
                 </span>
               </button>)}
@@ -477,8 +477,8 @@ export default function App() {
           <div className="lp-faq-list">
             <details><summary>Do I need a CHOG NFT to donate?<span>+</span></summary><p>No. Anyone can donate 300–1,000,000 CHOG when the processor is available. NFT holders can reserve a separate $1 pool donation when funded claims are open at checkout. Three holders can claim each day.</p></details>
             <details><summary>Do I need to connect my wallet?<span>+</span></summary><p>No connection to this website is required. Once payments are enabled, you will scan a payment QR or copy the dedicated deposit address and confirm a transfer inside your own wallet. Never share your private key or seed phrase.</p></details>
-            <details><summary>How does NFT verification work?<span>+</span></summary><p>Enter the wallet address holding your CHOG NFT. We find the NFT automatically. Reserve $1 and send exactly 1 MON once to your single-use verification address on Monad. The 1 MON is a non-refundable donation held by ChogCare, separate from wallet gas. After verifying your transfer and NFT, the pool sends 1 USDC to your cause on Optimism. One claim per wallet and NFT per UTC day, with three claims and $3 total daily. Only pay an active checkout invoice.</p></details>
-            <details><summary>When is my donation complete?<span>+</span></summary><p>Received by the initiative means we verified its USDC transfer on the destination network. Final confirmation continues in the background; the receipt is not yet irreversible. Donation delivered means finality is confirmed. A CHOG deposit alone is not delivery. Keep the invoice to follow its status.</p></details>
+            <details><summary>How does NFT verification work?<span>+</span></summary><p>Enter the wallet address holding your CHOG NFT. We find the NFT automatically. Reserve $1 and send exactly 1 MON once to your single-use verification address on Monad. The 1 MON is a non-refundable donation held by ChogCare, separate from wallet gas. After verifying your transfer and NFT, the pool donates $1 to your cause on your behalf. One claim per wallet and NFT per UTC day, with three claims and $3 total daily. Only pay an active checkout invoice.</p></details>
+            <details><summary>When is my donation complete?<span>+</span></summary><p>Donation received means we verified the charity's donation receipt. Final confirmation continues in the background; the receipt is not yet irreversible. Donation delivered means finality is confirmed. A CHOG deposit alone is not delivery. Keep the invoice to follow its status.</p></details>
             <details><summary>Who processes the funds?<span>+</span></summary><p>ChogCare controls each dedicated deposit address during processing. Nad.fun and Uniswap handle the exchanges; Relay handles the bridge. A failed or late transfer may require manual recovery. Save your invoice ID and never send a second payment to fix a pending one.</p></details>
           </div>
         </section>

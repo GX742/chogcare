@@ -15,6 +15,8 @@ import { acquireOperatorLease } from "../server/operator-lease.mjs";
 // Keys remain in RAM; a closed terminal stops processing. No production claim.
 let processor, nftProcessor, api, store, timer, integrity, lease, stopping=false;
 try {
+  const publicOrigin=(process.env.CHOGCARE_PUBLIC_ORIGIN?.trim()||"https://chogcare.vercel.app");
+  if(!["https://chogcare.vercel.app","https://chogcare.com","https://www.chogcare.com","http://127.0.0.1:4173"].includes(publicOrigin))throw new Error("Payment site origin is not approved.");
   lease=await acquireOperatorLease();
   // Fail before asking for a password if another process occupies the API port.
   const probe=createServer();
@@ -62,7 +64,7 @@ try {
   console.log(`USDC funder allowlist: ${NFT_POOL_FUNDERS.join(", ")}`);
   console.log("Fund with native USDC (not USDC.e) for donations and at least 0.001 ETH for gas, both on Optimism.");
   console.log("The 1 MON verification donation stays in its dedicated Monad custody address. No automatic forwarding or refund.");
-  api=createPaymentService(store,"http://127.0.0.1:4173",true,combined);
+  api=createPaymentService(store,publicOrigin,true,combined);
   await new Promise((ok,bad)=>{api.once("error",bad);api.listen(4174,"127.0.0.1",ok);});
   const tick=async()=>{if(stopping || integrity.locked)return;try {await Promise.all([
     processor.tick().catch(()=>console.log("CHOG network readiness check failed; retrying.")),

@@ -1,0 +1,21 @@
+[Unit]
+Description=ChogCare Owncast live streaming server
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=owncast
+Group=owncast
+WorkingDirectory=/opt/owncast
+ExecStart=/opt/owncast/owncast
+Restart=always
+RestartSec=5
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/opt/owncast/data
+
+[Install]
+WantedBy=multi-user.target

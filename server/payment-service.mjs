@@ -75,7 +75,8 @@ export function createPaymentService(store, allowedOrigin = "http://127.0.0.1:41
         catch { return respond(503,{error:"CHOG quote is temporarily unavailable."}); }
       }
       if (req.method === "GET" && url.pathname === "/api/payments/leaderboard") {
-        return respond(200,{entries:store.leaderboard(20)});
+        const entries=store.leaderboardRecords(40).map(entry=>({entry,invoice:processor?.get(entry.invoiceId)})).filter(item=>["confirming","delivered"].includes(item.invoice?.state)).slice(0,20).map((item,index)=>({rank:index+1,nickname:item.entry.nickname,initiativeId:item.entry.initiativeId,amount:item.entry.amount,avatarTokenId:item.entry.avatarTokenId,avatarName:item.entry.avatarName,avatarImage:item.entry.avatarImage,publishedAt:item.entry.publishedAt,status:item.invoice.state}));
+        return respond(200,{entries});
       }
       const profileMatch=url.pathname.match(/^\/api\/payments\/invoices\/([a-f0-9]{64})\/profile$/);
       if(req.method==="GET"&&profileMatch){
@@ -83,7 +84,7 @@ export function createPaymentService(store, allowedOrigin = "http://127.0.0.1:41
         const existing=store.findDonorProfile(profileMatch[1]);
         if(existing)return respond(200,{published:true,profile:existing,nfts:[]});
         try{const context=await processor.profileNfts(profileMatch[1]);return respond(200,{published:false,profile:null,nfts:context.nfts});}
-        catch{return respond(409,{error:"Your profile unlocks after the donation reaches final confirmation."});}
+        catch{return respond(409,{error:"Your profile unlocks after the donation is verified on the destination network."});}
       }
       if(req.method==="POST"&&url.pathname==="/api/payments/leaderboard"){
         if(!processor?.profileNfts)return respond(503,{error:"Donor profiles are temporarily unavailable."});
@@ -94,12 +95,11 @@ export function createPaymentService(store, allowedOrigin = "http://127.0.0.1:41
         const current=store.findDonorProfile(input.invoiceId);if(current)return respond(200,{profile:current});
         try{
           const context=await processor.profileNfts(input.invoiceId);
-          if(context.state!=="delivered")return respond(409,{error:"Your profile is ready. Publishing unlocks after final confirmation."});
           const avatar=input.avatarTokenId===null?null:context.nfts.find(item=>item.tokenId===input.avatarTokenId);
           if(input.avatarTokenId!==null&&!avatar)return respond(400,{error:"Choose an NFT verified in the donating wallet."});
           const profile=store.publishDonorProfile({invoiceId:input.invoiceId,nickname,initiativeId:context.initiativeId,amount:context.amount,amountUnits:parseUnits(context.amount,18).toString(),avatarTokenId:avatar?.tokenId??null,avatarName:avatar?.name??null,avatarImage:avatar?.image??null,publishedAt:Date.now()});
           await processor.checkpoint?.();return respond(201,{profile});
-        }catch(error){const recovered=store.findDonorProfile(input.invoiceId);if(recovered)return respond(200,{profile:recovered});return respond(409,{error:"Profile can be published only after a finalized CHOG donation."});}
+        }catch(error){const recovered=store.findDonorProfile(input.invoiceId);if(recovered)return respond(200,{profile:recovered});return respond(409,{error:"Profile can be published only after a verified CHOG donation reaches the destination network."});}
       }
       if (req.method === "GET" && /^\/api\/payments\/invoices\/[a-f0-9]{64}$/.test(url.pathname)) {
         if (processor?.publicStatus().integrityLocked) return respond(503, { code: "INTEGRITY_HOLD", error: "Payments are paused for a storage integrity check. Keep this invoice; do not pay again." });

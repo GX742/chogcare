@@ -1,6 +1,8 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import { once } from "node:events";
 import { openInvoiceStore } from "../server/invoice-store.mjs";
+import { createPaymentService } from "../server/payment-service.mjs";
 
 test("leaderboard ranks exact CHOG units and exposes no invoice or wallet identity",()=>{
   const store=openInvoiceStore(":memory:");
@@ -10,4 +12,30 @@ test("leaderboard ranks exact CHOG units and exposes no invoice or wallet identi
   assert.deepEqual(result.map(item=>[item.rank,item.nickname,item.amount]),[[1,"Big Chog","1000"],[2,"Small Chog","999.9"]]);
   assert.doesNotMatch(JSON.stringify(result),/"invoice|wallet|0x/i);
   store.close();
+});
+
+test("verified confirming donations appear as finalizing without exposing payment identity",async()=>{
+  const invoiceId="c".repeat(64),store=openInvoiceStore(":memory:");
+  let state="confirming";
+  const processor={
+    profileNfts:async id=>{assert.equal(id,invoiceId);return{state,initiativeId:"school-supplies",amount:"300",nfts:[]};},
+    get:id=>id===invoiceId?{state}:null,
+    checkpoint:async()=>{},
+  };
+  const service=createPaymentService(store,"http://127.0.0.1:4173",true,processor);
+  service.listen(0,"127.0.0.1");await once(service,"listening");
+  const base=`http://127.0.0.1:${service.address().port}`;
+  try{
+    const published=await fetch(`${base}/api/payments/leaderboard`,{method:"POST",headers:{Origin:"http://127.0.0.1:4173","Content-Type":"application/json"},body:JSON.stringify({invoiceId,nickname:"Fresh Chog",avatarTokenId:null})});
+    assert.equal(published.status,201);
+    let response=await fetch(`${base}/api/payments/leaderboard`),body=await response.json();
+    assert.deepEqual(body.entries.map(entry=>[entry.nickname,entry.amount,entry.status]),[["Fresh Chog","300","confirming"]]);
+    assert.doesNotMatch(JSON.stringify(body),new RegExp(`${invoiceId}|wallet`,"i"));
+    state="processing";
+    response=await fetch(`${base}/api/payments/leaderboard`);body=await response.json();
+    assert.deepEqual(body.entries,[]);
+    state="delivered";
+    response=await fetch(`${base}/api/payments/leaderboard`);body=await response.json();
+    assert.equal(body.entries[0].status,"delivered");
+  }finally{service.close();await once(service,"close");store.close();}
 });

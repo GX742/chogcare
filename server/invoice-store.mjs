@@ -54,6 +54,10 @@ export function openInvoiceStore(filename) {
       const rows=db.prepare("SELECT nickname,initiative_id,amount,avatar_token_id,avatar_name,avatar_image,published_at FROM donor_profiles ORDER BY amount_sort DESC,published_at ASC LIMIT ?").all(limit);
       return rows.map((row,index)=>({rank:index+1,nickname:row.nickname,initiativeId:row.initiative_id,amount:row.amount,avatarTokenId:row.avatar_token_id,avatarName:row.avatar_name,avatarImage:row.avatar_image,publishedAt:row.published_at}));
     },
+    leaderboardRecords(limit=40) {
+      const rows=db.prepare("SELECT invoice_id,nickname,initiative_id,amount,avatar_token_id,avatar_name,avatar_image,published_at FROM donor_profiles ORDER BY amount_sort DESC,published_at ASC LIMIT ?").all(limit);
+      return rows.map(row=>({invoiceId:row.invoice_id,nickname:row.nickname,initiativeId:row.initiative_id,amount:row.amount,avatarTokenId:row.avatar_token_id,avatarName:row.avatar_name,avatarImage:row.avatar_image,publishedAt:row.published_at}));
+    },
     // Internal primitive only, not exposed by HTTP. Recording proof is NOT a payout.
     recordNftProof(proof, now = Date.now()) {
       proofs.recordVerifiedProof(proof, now);

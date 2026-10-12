@@ -29,6 +29,11 @@ button, a, input { outline-offset: 5px; }
 h1, h2, h3, p { margin: 0; }
 h1, h2, h3 { font-family: "Manrope", sans-serif; }
 .heart-field { position: fixed; inset: 0; width: 100%; height: 100%; pointer-events: none; }
+@media (max-width: 767px) {
+  /* Large viewport height stays stable as Safari/Chrome's address bar collapses.
+     A static field on phones preserves the artwork without continuous canvas work. */
+  .heart-field { bottom: auto; height: 100vh; height: 100lvh; opacity: .65; }
+}
 .site-frame { position: relative; overflow: clip; }
 .section-width { width: min(1160px, calc(100% - 80px)); margin-inline: auto; }
 .skip-link { position: fixed; top: -80px; left: 20px; z-index: 10; padding: 15px; border-radius: 10px; background: #474063; }

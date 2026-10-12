@@ -38,3 +38,4 @@
 .support-checkout-link:hover{color:#ffbce1}
 @media(max-width:520px){.support-content{padding:28px 22px}.support-content h2{font-size:30px}.support-intro{font-size:15px}.support-reference{font-size:25px}}
 @media(prefers-reduced-motion:reduce){.support-close,.support-submit,.support-secondary{transition:none}.support-submit:not(:disabled):hover{transform:none}.support-dialog::backdrop{backdrop-filter:none}}
+@media(max-width:767px){.support-dialog{overscroll-behavior:contain;scroll-padding-block:24px}.support-content{padding-bottom:max(28px,env(safe-area-inset-bottom))}.support-close{width:44px;height:44px}.support-content h2{padding-right:24px}}

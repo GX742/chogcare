@@ -263,3 +263,70 @@
   .care-checkout-column .lp-payment { margin-inline: 0; }
   .care-stream .lp-broadcast-placeholder h2 { font-size: 22px; }
 }
+
+/* Mobile polish: preserve the CHOG identity and all payment states. Keep touch
+   controls readable without squeezing the form into a desktop-sized gutter. */
+@media (max-width: 767px) {
+  .landing-page { font-family: "DM Sans Variable", sans-serif; }
+  .landing-page h1, .landing-page h2, .landing-page h3,
+  .landing-page .brand, .landing-page .leaderboard-board li strong,
+  .landing-page .leaderboard-board li > p, .landing-page .care-contribution-rule > strong,
+  .landing-page .nft-giving-headline > strong,
+  .care-checkout-column .checkout-thanks-amount strong { font-family: "Manrope Variable", sans-serif; }
+  .landing-page.app-layout .site-header { padding-inline: max(16px, env(safe-area-inset-left)); }
+  .landing-page .care-header-inner nav { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 4px 8px; }
+  .landing-page .care-header-inner nav > a { justify-content: center; min-height: 44px; }
+  .landing-page .care-header-inner nav .lp-nav-donate { grid-column: 1 / -1; min-height: 44px; font-size: 13px; margin-top: 2px; }
+  .landing-page .creator-x { width: 44px; height: 44px; }
+  .landing-page .lp-main, .landing-page .lp-footer { width: calc(100% - 16px); }
+  .landing-page .lp-main { margin-top: 10px; box-shadow: none; }
+  .care-intro { padding: 18px 18px 28px; gap: 26px; }
+  .care-intro-copy .button { width: 100%; justify-content: space-between; }
+  .care-intro-copy > p { line-height: 1.7; }
+  .care-mechanics, .care-giving-trust { margin-inline: 18px; }
+  .care-mechanic { grid-template-columns: 72px minmax(0, 1fr); gap: 16px; }
+  .care-mechanic-art { width: 72px; }
+  .care-coin-art img { width: 90px; height: 84px; }
+  .care-mechanics p { font-size: 14px; line-height: 1.65; }
+  .care-mechanic-note { font-size: 12px; }
+  .care-trust-labels { flex-wrap: wrap; }
+  .care-causes { padding-inline: 18px; }
+  .care-cause-buttons { gap: 20px; }
+  .care-cause-body { padding-inline: 12px; }
+  .care-station { padding: 12px 12px 28px; }
+  .care-station-toolbar .lp-text-button, .care-selected .lp-text-button { min-height: 44px; }
+  .care-station-grid { gap: 22px; }
+  .care-station .care-stream { width: min(100%, 360px); }
+  .care-stream .lp-broadcast-frame::before { animation: none; }
+  .care-stream .lp-broadcast-frame { box-shadow: none; }
+  .care-selected { gap: 12px; padding-bottom: 16px; }
+  .care-selected > img { width: 56px; height: 56px; }
+  .care-selected h2 { font-size: 20px; text-wrap: balance; }
+  .care-checkout-column .checkout { padding: 20px 16px; }
+  .care-checkout-column .lp-payment-tabs { gap: 4px; padding: 6px; grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .care-checkout-column .lp-payment-tabs button { min-width: 0; min-height: 56px; gap: 6px; font-size: 13px; padding: 8px 4px; }
+  .care-checkout-column .lp-payment-tabs .payment-tab-art { width: 24px; height: 24px; }
+  .care-checkout-column .payment-service-notice { margin: 16px 12px 0; padding: 12px; gap: 8px; }
+  .care-checkout-column .checkout-address-input { font-size: 16px; }
+  .care-checkout-column .checkout-presets { gap: 6px; }
+  .care-checkout-column .checkout-presets button { min-width: 0; padding-inline: 2px; }
+  .care-checkout-column .checkout-contribution { padding: 4px 10px; }
+  .care-checkout-column .checkout-contribution > div { gap: 10px; padding-block: 10px; }
+  .care-checkout-column .checkout-contribution > div > span { min-width: 0; line-height: 1.5; }
+  .care-checkout-column .checkout-contribution strong { flex-shrink: 0; max-width: 48%; overflow-wrap: anywhere; }
+  .care-checkout-column .checkout-contribution strong small { display: block; margin: 4px 0 0; }
+  .care-checkout-column .checkout-fields dd button { min-width: 44px; min-height: 44px; }
+  .care-checkout-column .checkout-thanks-main { grid-template-columns: minmax(0, 1fr) 94px; }
+  .care-checkout-column .checkout-thanks-amount strong { font-size: clamp(42px, 13vw, 62px); }
+  .care-checkout-column .checkout-thanks-amount.is-long strong { font-size: 30px; }
+  .care-checkout-column .donation-share-actions { flex-wrap: wrap; }
+  .care-checkout-column .donation-share-actions > * { flex: 1 1 120px; }
+  .landing-page .lp-footer { padding-bottom: max(24px, env(safe-area-inset-bottom)); }
+  .landing-page .lp-footer-bottom button, .landing-page .lp-footer-bottom a { min-height: 44px; display: inline-flex; align-items: center; }
+}
+@media (max-width: 360px) {
+  .care-mechanics h2 { font-size: 22px; }
+  .care-checkout-column .lp-payment-tabs button { font-size: 12px; gap: 5px; }
+  .care-checkout-column .lp-payment-tabs small { padding-inline: 3px; }
+  .care-checkout-column .checkout-thanks-art { height: 126px; }
+}

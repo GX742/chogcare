@@ -16,6 +16,7 @@ export default function HeartField({ paused }: { paused: boolean }) {
     const ctx = canvas?.getContext("2d", { alpha: true });
     if (!canvas || !ctx) return;
     const preference = window.matchMedia("(prefers-reduced-motion: reduce)");
+    const compact = window.matchMedia("(max-width: 767px)");
     const header = document.querySelector<HTMLElement>(".site-header");
     let width = 0, height = 0, columns = 0, rows = 0, frame = 0, previous = 0;
     let topInset = 0;
@@ -116,12 +117,17 @@ export default function HeartField({ paused }: { paused: boolean }) {
       cancelAnimationFrame(frame); previous = 0;
       if (document.hidden) { hovered = -1; lastPoint = null; }
       paint();
-      if (!paused && !preference.matches && !document.hidden) frame = requestAnimationFrame(tick);
+      if (!paused && !preference.matches && !compact.matches && !document.hidden) frame = requestAnimationFrame(tick);
     };
     const resize = () => {
-      width = document.documentElement.clientWidth; height = window.innerHeight;
-      topInset = Math.max(0, header?.getBoundingClientRect().bottom ?? 0);
-      const ratio = Math.min(window.devicePixelRatio || 1, 2);
+      const nextWidth = document.documentElement.clientWidth;
+      // Mobile address bars and the keyboard resize the visual viewport. Keep
+      // the heart pattern anchored, rather than rebuilding/stretching it on scroll.
+      const nextHeight = compact.matches ? canvas.getBoundingClientRect().height : window.innerHeight;
+      if (compact.matches && width === nextWidth && height === nextHeight) return;
+      width = nextWidth; height = nextHeight;
+      topInset = compact.matches ? 0 : Math.max(0, header?.getBoundingClientRect().bottom ?? 0);
+      const ratio = Math.min(window.devicePixelRatio || 1, compact.matches ? 1.5 : 2);
       canvas.width = Math.round(width * ratio); canvas.height = Math.round(height * ratio);
       ctx.setTransform(ratio, 0, 0, ratio, 0, 0);
       columns = Math.ceil(width / PITCH_X); rows = Math.ceil(height / PITCH_Y);
@@ -134,7 +140,7 @@ export default function HeartField({ paused }: { paused: boolean }) {
       schedule();
     };
     const onPointer = (event: PointerEvent) => {
-      if (event.pointerType === "touch" || paused || preference.matches) return;
+      if (event.pointerType === "touch" || paused || preference.matches || compact.matches) return;
       const point = { x: event.clientX, y: event.clientY };
       // Trace only the cells actually crossed, including during fast pointer movement.
       if (lastPoint) {
@@ -151,6 +157,7 @@ export default function HeartField({ paused }: { paused: boolean }) {
     };
     const leave = () => { hovered = -1; lastPoint = null; };
     const onScroll = () => {
+      if (compact.matches) return;
       topInset = Math.max(0, header?.getBoundingClientRect().bottom ?? 0);
       leave();
       if (paused || preference.matches) paint();
@@ -165,6 +172,7 @@ export default function HeartField({ paused }: { paused: boolean }) {
     window.addEventListener("blur", leave);
     document.addEventListener("visibilitychange", schedule);
     preference.addEventListener("change", schedule);
+    compact.addEventListener("change", resize);
     return () => {
       cancelAnimationFrame(frame);
       headerObserver.disconnect();
@@ -175,6 +183,7 @@ export default function HeartField({ paused }: { paused: boolean }) {
       window.removeEventListener("blur", leave);
       document.removeEventListener("visibilitychange", schedule);
       preference.removeEventListener("change", schedule);
+      compact.removeEventListener("change", resize);
     };
   }, [paused]);
   return <canvas ref={ref} className="heart-field" aria-hidden="true" />;

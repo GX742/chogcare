@@ -307,7 +307,7 @@
   .care-checkout-column .lp-payment-tabs button { min-width: 0; min-height: 56px; gap: 6px; font-size: 13px; padding: 8px 4px; }
   .care-checkout-column .lp-payment-tabs .payment-tab-art { width: 24px; height: 24px; }
   .care-checkout-column .payment-service-notice { margin: 16px 12px 0; padding: 12px; gap: 8px; }
-  .care-checkout-column .checkout-address-input { font-size: 16px; }
+  .landing-page .checkout-address-input { font-size: 16px; }
   .care-checkout-column .checkout-presets { gap: 6px; }
   .care-checkout-column .checkout-presets button { min-width: 0; padding-inline: 2px; }
   .care-checkout-column .checkout-contribution { padding: 4px 10px; }

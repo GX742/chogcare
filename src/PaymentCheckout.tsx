@@ -23,15 +23,24 @@ export default function PaymentCheckout(props: Props) {
   const [nftQueueFull, setNftQueueFull] = useState(false);
   const [serviceAllowed, setServiceAllowed] = useState(false);
   const [securityNotice, setSecurityNotice] = useState("");
+  const [configInitiative, setConfigInitiative] = useState("");
+  const currentConfig = configInitiative === props.initiativeId;
+  const chogReady = currentConfig && ready;
+  const holderReady = currentConfig && nftReady;
   useEffect(() => {
     let disposed = false;
     const controller = new AbortController();
+    // A newly selected cause must not inherit the previous cause's readiness.
+    setReady(false); setNftReady(false); setPoolHealthy(false);
+    setAvailableClaims(null); setNftQueueFull(false); setServiceAllowed(false); setSecurityNotice("");
+    setConfigInitiative("");
     const poll = async () => {
       try {
         const response = await fetch("/api/payments/config", { signal: AbortSignal.any([controller.signal, AbortSignal.timeout(8000)]) });
         if (!response.ok) throw new Error();
         const config = await response.json();
         if (!disposed) {
+          setConfigInitiative(props.initiativeId);
           const policy = paymentServicePolicy(config);
           setServiceAllowed(policy.allowed);
           setSecurityNotice(policy.notice);
@@ -54,7 +63,8 @@ export default function PaymentCheckout(props: Props) {
   return <>
     {securityNotice && <div className="payment-service-notice" role="status"><Info size={22} aria-hidden="true"/><div><strong>Payments temporarily paused</strong><p>{securityNotice}</p><button className="support-checkout-link" type="button" onClick={() => setSupport({ mode: props.mode, issue: "payment-unavailable" })}>Contact support</button></div></div>}
     {props.initiativeId === "animal-ethics" && props.mode === "nft" && <div className="payment-service-notice" role="status"><Info size={22} aria-hidden="true"/><div><strong>Holder benefit unavailable for this cause</strong><p>Animal Ethics supports CHOG donations, but not donations from this NFT pool. No verification QR is issued here.</p></div></div>}
-    {props.mode === "chog" ? <LiveChogCheckout initiativeId={props.initiativeId} initiativeName={props.initiativeName} ready={ready && acceptsNewChog(props.initiativeId)} destinationChainId={initiativeChain(props.initiativeId,destinationChainId===10?10:1)} serviceAllowed={serviceAllowed} onViewLeaderboard={props.onViewLeaderboard} onSupport={setSupport}/> : !supportsNft(props.initiativeId) ? <section className="checkout"><h3>Holder donations are paused.</h3><p>The selected cause is not supported by the NFT pool.</p></section> : <LiveNftCheckout initiativeId={props.initiativeId} ready={nftReady} healthy={poolHealthy} availableClaims={availableClaims} queueFull={nftQueueFull} serviceAllowed={serviceAllowed} onSupport={setSupport}/>}
+    {props.mode === "chog" ? <LiveChogCheckout initiativeId={props.initiativeId} initiativeName={props.initiativeName} ready={chogReady && acceptsNewChog(props.initiativeId)} destinationChainId={initiativeChain(props.initiativeId,destinationChainId===10?10:1)} serviceAllowed={currentConfig && serviceAllowed} onViewLeaderboard={props.onViewLeaderboard} onSupport={setSupport}/> : !supportsNft(props.initiativeId) ? <section className="checkout"><h3>Holder donations are paused.</h3><p>The selected cause is not supported by the NFT pool.</p></section> : <LiveNftCheckout initiativeId={props.initiativeId} ready={holderReady} healthy={currentConfig && poolHealthy} availableClaims={currentConfig ? availableClaims : null} queueFull={currentConfig && nftQueueFull} serviceAllowed={currentConfig && serviceAllowed} onSupport={setSupport}/>}
+    {!securityNotice && !(props.mode === "chog" ? chogReady : holderReady) && <div className="checkout-service-help"><button className="support-checkout-link" type="button" onClick={() => setSupport({ mode: props.mode, issue: "payment-unavailable" })}>Contact support</button></div>}
     <SupportDialog context={support} onClose={() => setSupport(null)}/>
   </>;
 }

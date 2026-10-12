@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { createLiveResumeSync, createLiveRetryBudget, DEFAULT_LIVE_SEGMENT_SECONDS, latestLiveRange, liveHlsConfig, livePlaybackStrategy, liveSegmentSeconds, recoverLiveNetwork, safeLiveResumeTarget } from "../src/live-player.ts";
+import { createLiveLoadState, createLiveResumeSync, createLiveRetryBudget, DEFAULT_LIVE_SEGMENT_SECONDS, latestLiveRange, liveHlsConfig, livePlaybackStrategy, liveSegmentSeconds, recoverLiveNetwork, safeLiveResumeTarget } from "../src/live-player.ts";
 
 const ranges = (...pairs) => ({ length: pairs.length, start: index => pairs[index][0], end: index => pairs[index][1] });
 
@@ -73,6 +73,40 @@ function fakeTimers() {
     get size() { return pending.size; },
   };
 }
+
+test("broadcast loading has one finite watchdog, not an infinite spinner", () => {
+  const timer = fakeTimers(), states = [];
+  const monitor = createLiveLoadState({ onChange: state => states.push(state), schedule: timer.schedule, cancel: timer.cancel });
+  monitor.waiting(); monitor.waiting(); monitor.waiting();
+  assert.equal(timer.size, 1);
+  timer.fire();
+  assert.equal(monitor.state, "unavailable");
+  assert.deepEqual(states, ["unavailable"]);
+  monitor.waiting(); assert.equal(timer.size, 0, "automatic retries cannot reset the error into a spinner");
+  monitor.playing(); assert.equal(monitor.state, "playing", "background recovery can still restore playback");
+  monitor.dispose();
+});
+
+test("blocked autoplay remains actionable and cancels its loading watchdog", () => {
+  const timer = fakeTimers(), states = [];
+  const monitor = createLiveLoadState({ onChange: state => states.push(state), schedule: timer.schedule, cancel: timer.cancel });
+  monitor.waiting(); monitor.blocked();
+  assert.equal(timer.size, 0); assert.equal(monitor.state, "blocked");
+  monitor.waiting(); assert.equal(monitor.state, "blocked");
+  monitor.playing(); assert.deepEqual(states, ["blocked", "playing"]);
+  monitor.dispose();
+});
+
+test("a stalled established broadcast times out; hidden/unmounted pages cancel timers", () => {
+  const timer = fakeTimers(), states = [];
+  const monitor = createLiveLoadState({ onChange: state => states.push(state), schedule: timer.schedule, cancel: timer.cancel });
+  monitor.playing(); monitor.waiting(); assert.equal(timer.size, 1);
+  monitor.suspend(); assert.equal(timer.size, 0);
+  monitor.waiting(); timer.fire(); assert.equal(monitor.state, "unavailable");
+  monitor.dispose(); const before = [...states];
+  monitor.playing(); monitor.blocked(); monitor.unavailable(); monitor.waiting();
+  assert.deepEqual(states, before); assert.equal(timer.size, 0);
+});
 
 test("resume synchronizes once after metadata becomes seekable, not on every playlist update", () => {
   const timer = fakeTimers(), media = { currentTime: 20, seekable: ranges() };

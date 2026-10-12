@@ -44,6 +44,32 @@ type SeekableRanges = {
 };
 type LiveMedia = { currentTime: number; readonly seekable: SeekableRanges };
 type Timer = ReturnType<typeof setTimeout>;
+export type LiveLoadState = "loading" | "playing" | "blocked" | "unavailable";
+
+// Network retries may continue in the background, but the visitor must never
+// be left looking at an unbounded spinner or unable to start blocked autoplay.
+export function createLiveLoadState({ onChange, schedule = setTimeout, cancel = clearTimeout }: {
+  onChange: (state: LiveLoadState) => void;
+  schedule?: (callback: () => void, delay: number) => Timer;
+  cancel?: (timer: Timer) => void;
+}) {
+  let state: LiveLoadState = "loading", timer: Timer | null = null, disposed = false;
+  const clear = () => { if (timer !== null) { cancel(timer); timer = null; } };
+  const change = (next: LiveLoadState) => { if (!disposed && state !== next) { state = next; onChange(next); } };
+  return {
+    waiting() {
+      if (disposed || state === "blocked" || state === "unavailable") return;
+      change("loading");
+      if (timer === null) timer = schedule(() => { timer = null; change("unavailable"); }, 15_000);
+    },
+    playing() { if (disposed) return; clear(); change("playing"); },
+    blocked() { if (disposed) return; clear(); change("blocked"); },
+    unavailable() { if (disposed) return; clear(); change("unavailable"); },
+    suspend() { clear(); },
+    dispose() { disposed = true; clear(); },
+    get state() { return state; },
+  };
+}
 
 export function latestLiveRange(seekable: SeekableRanges): { start: number; end: number } | null {
   try {

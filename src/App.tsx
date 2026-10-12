@@ -8,7 +8,7 @@ import { checkoutChanged, checkoutSelection, rememberMode } from "./checkout-ses
 import CheckoutRecovery from "./CheckoutRecovery";
 import CheckoutSizeTransition from "./CheckoutSizeTransition";
 import Leaderboard from "./Leaderboard";
-import { createLiveResumeSync, createLiveRetryBudget, liveHlsConfig, livePlaybackStrategy, liveSegmentSeconds, recoverLiveNetwork, DEFAULT_LIVE_SEGMENT_SECONDS } from "./live-player";
+import { createLiveLoadState, createLiveResumeSync, createLiveRetryBudget, liveHlsConfig, livePlaybackStrategy, liveSegmentSeconds, recoverLiveNetwork, DEFAULT_LIVE_SEGMENT_SECONDS, type LiveLoadState } from "./live-player";
 import { broadcastStreamUrl } from "./broadcast-source";
 
 import "./station-redesign.css";
@@ -140,6 +140,9 @@ function owncastStreamUrl() {
 function NativeLivePlayer({ src, onReady, onWaiting }: { src: string; onReady: () => void; onWaiting: () => void }) {
   const videoRef = useRef<HTMLVideoElement>(null);
   const callbacks = useRef({ onReady, onWaiting });
+  const playAction = useRef<(() => void) | null>(null);
+  const [loadState, setLoadState] = useState<LiveLoadState>("loading");
+  const [attempt, setAttempt] = useState(0);
 
   useEffect(() => { callbacks.current = { onReady, onWaiting }; }, [onReady, onWaiting]);
 
@@ -151,18 +154,28 @@ function NativeLivePlayer({ src, onReady, onWaiting }: { src: string; onReady: (
     let lastRecovery: (() => void) | null = null, recoveryHeld = false;
     const nativeHlsCapable = Boolean(video.canPlayType("application/vnd.apple.mpegurl"));
     let nativeActive = false, mseAttached = false;
+    setLoadState("loading");
+    const loadMonitor = createLiveLoadState({ onChange: state => { if (!cancelled) setLoadState(state); } });
     const retryBudget = createLiveRetryBudget();
     const resumeSync = createLiveResumeSync({ media: video, segmentSeconds: () => segmentSeconds, liveSyncPosition: () => hls?.liveSyncPosition ?? null });
-    const waiting = () => { if (!cancelled) callbacks.current.onWaiting(); };
+    const waiting = () => { if (!cancelled) { if (document.hidden) loadMonitor.suspend(); else loadMonitor.waiting(); callbacks.current.onWaiting(); } };
+    const playing = () => { if (!cancelled) { loadMonitor.playing(); callbacks.current.onReady(); } };
+    const pausedPlayback = () => { if (!cancelled && !document.hidden && !video.ended) { loadMonitor.blocked(); callbacks.current.onWaiting(); } };
+    const endedPlayback = () => { if (!cancelled) { loadMonitor.unavailable(); callbacks.current.onWaiting(); } };
     const startPlayback = () => {
-      if (!cancelled) void video.play().catch(waiting);
+      if (!cancelled) void video.play().then(() => { if (!video.paused && video.readyState >= 3) playing(); }).catch(problem => {
+        if (cancelled) return;
+        if (problem?.name === "NotAllowedError") { loadMonitor.blocked(); callbacks.current.onWaiting(); }
+        else { if (loadMonitor.state === "blocked") loadMonitor.unavailable(); waiting(); }
+      });
     };
+    playAction.current = startPlayback;
     const recover = (operation: () => void) => {
       if (cancelled || retryTimer !== null) return;
       waiting();
       lastRecovery = operation;
       const delay = retryBudget.nextDelay();
-      if (delay === null) { recoveryHeld = true; hls?.stopLoad(); return; }
+      if (delay === null) { recoveryHeld = true; hls?.stopLoad(); loadMonitor.unavailable(); return; }
       recoveryHeld = false;
       retryTimer = setTimeout(() => {
         retryTimer = null;
@@ -182,11 +195,12 @@ function NativeLivePlayer({ src, onReady, onWaiting }: { src: string; onReady: (
     const metadata = () => { resumeSync.request(); startPlayback(); };
     const canPlay = () => { resumeSync.update(); };
     const visibility = () => {
-      if (document.hidden) { wasHidden = true; return; }
-      if (wasHidden) { wasHidden = false; resume(); }
+      if (document.hidden) { wasHidden = true; loadMonitor.suspend(); return; }
+      if (wasHidden) { wasHidden = false; waiting(); resume(); }
     };
     const pageShow = (event: PageTransitionEvent) => { if (event.persisted) resume(); };
     const nativeError = () => {
+      waiting();
       if (nativeActive) recover(() => { video.load(); startPlayback(); });
     };
     const startNative = () => {
@@ -194,10 +208,16 @@ function NativeLivePlayer({ src, onReady, onWaiting }: { src: string; onReady: (
       hls?.destroy(); hls = null;
       nativeActive = true;
       video.src = src;
+      startPlayback();
     };
 
     waiting();
     video.addEventListener("loadedmetadata", metadata);
+    video.addEventListener("playing", playing);
+    video.addEventListener("pause", pausedPlayback);
+    video.addEventListener("ended", endedPlayback);
+    video.addEventListener("waiting", waiting);
+    video.addEventListener("stalled", waiting);
     video.addEventListener("canplay", canPlay);
     video.addEventListener("error", nativeError);
     document.addEventListener("visibilitychange", visibility);
@@ -206,7 +226,7 @@ function NativeLivePlayer({ src, onReady, onWaiting }: { src: string; onReady: (
     void import("hls.js").then(({ default: Hls }) => {
         if (cancelled) return;
         const strategy = livePlaybackStrategy(Hls.isSupported(), nativeHlsCapable);
-        if (strategy !== "hls") { if (strategy === "native") startNative(); return; }
+        if (strategy !== "hls") { if (strategy === "native") startNative(); else loadMonitor.unavailable(); return; }
         hls = new Hls(liveHlsConfig());
         hls.on(Hls.Events.MANIFEST_PARSED, startPlayback);
         hls.on(Hls.Events.LEVEL_UPDATED, (_event, data) => {
@@ -217,19 +237,26 @@ function NativeLivePlayer({ src, onReady, onWaiting }: { src: string; onReady: (
           if (!data.fatal || !hls || cancelled) return;
           if (data.type === Hls.ErrorTypes.NETWORK_ERROR) recover(() => { if (hls) recoverLiveNetwork(hls, src, data.details); });
           else if (data.type === Hls.ErrorTypes.MEDIA_ERROR) recover(() => { hls?.recoverMediaError(); });
-          else { waiting(); hls.destroy(); hls = null; }
+          else { waiting(); loadMonitor.unavailable(); hls.destroy(); hls = null; }
         });
         mseAttached = true;
         hls.attachMedia(video);
         hls.loadSource(src);
-      }).catch(() => { waiting(); startNative(); });
+      }).catch(() => { if (cancelled) return; waiting(); if (nativeHlsCapable) startNative(); else loadMonitor.unavailable(); });
 
     return () => {
       cancelled = true;
+      playAction.current = null;
+      loadMonitor.dispose();
       if (retryTimer !== null) clearTimeout(retryTimer);
       retryBudget.dispose();
       resumeSync.dispose();
       video.removeEventListener("loadedmetadata", metadata);
+      video.removeEventListener("playing", playing);
+      video.removeEventListener("pause", pausedPlayback);
+      video.removeEventListener("ended", endedPlayback);
+      video.removeEventListener("waiting", waiting);
+      video.removeEventListener("stalled", waiting);
       video.removeEventListener("canplay", canPlay);
       video.removeEventListener("error", nativeError);
       document.removeEventListener("visibilitychange", visibility);
@@ -239,7 +266,7 @@ function NativeLivePlayer({ src, onReady, onWaiting }: { src: string; onReady: (
       video.removeAttribute("src");
       video.load();
     };
-  }, [src]);
+  }, [src, attempt]);
 
   return <>
     <video
@@ -253,12 +280,15 @@ function NativeLivePlayer({ src, onReady, onWaiting }: { src: string; onReady: (
       controlsList="nodownload noplaybackrate noremoteplayback"
       tabIndex={-1}
       aria-label="ChogCare live broadcast"
-      onPlaying={onReady}
-      onWaiting={onWaiting}
-      onStalled={onWaiting}
-      onError={onWaiting}
       onContextMenu={(event) => event.preventDefault()}
     />
+    {loadState !== "playing" && <div className="lp-broadcast-loading lp-broadcast-state" role="status" aria-live="polite">
+      {loadState === "loading" ? <><i aria-hidden="true"/><span>Loading live broadcast…</span></> : <>
+        <strong>{loadState === "blocked" ? "Ready when you are." : "Broadcast unavailable"}</strong>
+        <span>{loadState === "blocked" ? "Your browser needs a tap to start the video." : "We couldn’t load the stream. You can try again."}</span>
+        <button type="button" onClick={() => { if (loadState === "blocked") playAction.current?.(); else setAttempt(value => value + 1); }}>{loadState === "blocked" ? "Play broadcast" : "Retry broadcast"}</button>
+      </>}
+    </div>}
   </>;
 }
 
@@ -287,9 +317,9 @@ function BroadcastPanel({ headingId }: { headingId: string }) {
           <span className="lp-broadcast-live" role="status" aria-label="Live broadcast">
             <i aria-hidden="true" />LIVE
           </span>
-          <span className={`lp-broadcast-loading${playerLoaded ? " is-hidden" : ""}`} aria-hidden="true">
+          {!owncastUrl && <span className={`lp-broadcast-loading${playerLoaded ? " is-hidden" : ""}`} aria-hidden="true">
             <i />Loading live broadcast…
-          </span>
+          </span>}
         </> : <div className="lp-broadcast-placeholder">
           <Broadcast size={38} weight="light" aria-hidden="true" />
           <h2 id={headingId}>ChogCare broadcast</h2>
@@ -537,7 +567,7 @@ export default function App() {
 
     <dialog ref={dialogRef} className="lp-project-dialog" onCancel={() => setOpenInitiative(null)} onClose={() => setOpenInitiative(null)} onClick={event => { if (event.target === event.currentTarget) setOpenInitiative(null); }} aria-labelledby="project-dialog-title">
       {openInitiative && <article>
-        <button className="lp-dialog-close" onClick={() => setOpenInitiative(null)} aria-label="Close project details" autoFocus><X size={22} /></button>
+        <div className="lp-dialog-tools"><button className="lp-dialog-close" onClick={() => setOpenInitiative(null)} aria-label="Close project details" autoFocus><X size={22} /></button></div>
         <img src={openInitiative.image} alt={openInitiative.imageAlt} width="640" height="350" />
         <div className="lp-dialog-content"><span className="lp-label">{openInitiative.category} · {openInitiative.location}</span><h2 id="project-dialog-title">{openInitiative.name}</h2><p>{openInitiative.details}</p>
           <Funding initiative={openInitiative} />

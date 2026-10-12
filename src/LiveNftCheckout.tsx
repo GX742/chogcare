@@ -55,7 +55,7 @@ export default function LiveNftCheckout({initiativeId,ready,healthy,availableCla
     {id&&!received&&<div className="holder-preview-heading"><Heart size={23} weight="duotone"/><span>CHOG holder benefit</span></div>}
     {!id?<form className="nft-giving-form" onSubmit={e=>void create(e)}>
       <div className="nft-giving-intro"><span className="nft-giving-eyebrow">Your daily holder donation</span><div className="nft-giving-headline"><strong>$1</strong><h3>From our pool.<br/>To your cause.</h3></div><p>Three holders a day. You choose the cause.</p></div>
-      <div className="nft-giving-availability"><span>{availableClaims===null?"Checking availability":<><strong>{ready?availableClaims:0}</strong> of 3 places left today</>}</span><span>$3 daily pool</span></div>
+      <div className="nft-giving-availability"><span>{!ready?"Holder donations paused":availableClaims===null?"Checking availability":<><strong>{availableClaims}</strong> of 3 places left today</>}</span><span>$3 daily pool</span></div>
       <div className="nft-wallet-field"><label className="checkout-label" htmlFor="nft-holder">Your CHOG NFT wallet</label>
       <input className="checkout-address-input" id="nft-holder" placeholder="Paste wallet address · 0x…" aria-describedby="nft-wallet-help" value={holder} onChange={e=>setHolder(e.target.value)} maxLength={42} autoComplete="off" spellCheck={false} required disabled={busy||!!pending}/>
       <p className="checkout-help" id="nft-wallet-help">We find your NFT automatically. No wallet connection.</p></div>

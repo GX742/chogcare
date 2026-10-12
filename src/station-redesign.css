@@ -42,7 +42,7 @@
 .care-contribution-rule { display: grid; grid-template-columns: auto minmax(0, 1fr); align-items: center; gap: 16px 24px; min-width: 0; }
 .care-trust-labels { grid-column: 1 / -1; display: flex; gap: 8px; }
 .care-trust-labels span { padding: 5px 8px; border: 1px solid #bda4ee2e; border-radius: 5px; color: #bbaacb; font-size: 9px; font-weight: 650; letter-spacing: .07em; text-transform: uppercase; }
-.care-contribution-rule > strong { color: #c9a6ff; font: 620 clamp(50px, 4.4vw, 72px)/.9 Manrope, sans-serif; letter-spacing: -.07em; font-variant-numeric: tabular-nums; }
+.care-contribution-rule > strong { color: #c9a6ff; font: 620 clamp(50px, 4.4vw, 72px)/.9 "Manrope Variable", sans-serif; letter-spacing: -.07em; font-variant-numeric: tabular-nums; }
 .care-contribution-rule h2 { margin: 0; font-size: clamp(20px, 1.8vw, 27px); line-height: 1.2; letter-spacing: -.8px; font-weight: 620; text-wrap: balance; }
 .care-contribution-rule p { max-width: 47ch; margin: 8px 0 0; color: #bfb1ce; font-size: 13px; line-height: 1.6; text-wrap: pretty; }
 .care-split-meter { grid-column: 1 / -1; display: grid; grid-template-columns: 10fr 1fr; gap: 3px; margin-top: 3px; }
@@ -72,7 +72,7 @@
 }
 .care-intro { display: grid; grid-template-columns: minmax(320px, 430px) minmax(340px, 520px); justify-content: center; align-items: center; gap: clamp(64px, 8vw, 150px); padding: 32px 4% 48px; background: #110c1d; }
 .care-intro-broadcast { min-width: 0; }
-.care-intro h1 { font: 550 clamp(32px, 3.1vw, 46px)/1.13 Manrope, sans-serif; letter-spacing: -.045em; margin: 0 0 22px; max-width: 450px; text-wrap: balance; }
+.care-intro h1 { font: 550 clamp(32px, 3.1vw, 46px)/1.13 "Manrope Variable", sans-serif; letter-spacing: -.045em; margin: 0 0 22px; max-width: 450px; text-wrap: balance; }
 .care-intro-copy > p { max-width: 420px; color: #d1c7dd; font-size: 16px; line-height: 1.75; margin-bottom: 20px; }
 .care-intro-copy > .care-intro-context { color: #b2a5c1; font-size: 13px; max-width: 360px; margin-bottom: 28px; }
 .care-intro .button { display: inline-flex; gap: 28px; white-space: nowrap; }
@@ -87,7 +87,7 @@
 .care-mechanic-copy { min-width: 0; align-self: stretch; }
 .care-mechanic-label-row { display: flex; align-items: center; gap: 12px; min-height: 22px; flex-wrap: wrap; }
 .care-mechanic-label { display: block; color: #b7a8cd; font-size: 11px; font-weight: 500; line-height: 22px; letter-spacing: .04em; }
-.care-mechanics h2 { display: flex; gap: 12px; align-items: center; margin: 10px 0 0; font: 650 clamp(25px, 2.1vw, 30px)/1.2 Manrope, sans-serif; letter-spacing: -1px; white-space: nowrap; }
+.care-mechanics h2 { display: flex; gap: 12px; align-items: center; margin: 10px 0 0; font: 650 clamp(25px, 2.1vw, 30px)/1.2 "Manrope Variable", sans-serif; letter-spacing: -1px; white-space: nowrap; }
 .care-mechanics h2 > span { color: #c2a8ff; }
 .care-mechanics h2 svg { color: #8f80a9; flex-shrink: 0; }
 .care-token-mechanic h2 { flex-wrap:wrap; gap:8px 10px; white-space:normal; }
@@ -100,7 +100,7 @@
 /* Initiative gallery: preserve real project media and CHOG's violet identity.
    Variance 5 / motion 3 / density 4. Open tiles, 16px media, 10px actions. */
 .care-causes { padding: 52px 6% 64px; scroll-margin-top: 25px; background: #110c1d; }
-.care-causes > h2 { font: 650 clamp(32px, 3vw, 44px)/1.15 Manrope, sans-serif; letter-spacing: -1.7px; }
+.care-causes > h2 { font: 650 clamp(32px, 3vw, 44px)/1.15 "Manrope Variable", sans-serif; letter-spacing: -1.7px; }
 .care-causes > h2 > span { color: #b67aff; }
 .care-causes > p { color: #bfb2d0; font-size: 16px; margin-top: 12px; }
 .care-cause-buttons { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 36px 28px; margin-top: 30px; }
@@ -117,7 +117,7 @@
 .care-cause-body { display: flex; flex: 1; flex-direction: column; align-items: flex-start; gap: 12px; padding: 22px 16px 16px; width: 100%; min-width: 0; }
 .care-cause-meta { display: flex; flex-wrap: wrap; gap: 6px 12px; color: #bfb0d0; font-size: 12px; line-height: 1.5; }
 .care-cause-meta > span + span { border-left: 1px solid #bda4ee45; padding-left: 12px; }
-.care-cause-body > strong { font: 600 clamp(20px, 1.75vw, 25px)/1.3 Manrope, sans-serif; letter-spacing: -.65px; text-wrap: balance; }
+.care-cause-body > strong { font: 600 clamp(20px, 1.75vw, 25px)/1.3 "Manrope Variable", sans-serif; letter-spacing: -.65px; text-wrap: balance; }
 .care-cause-summary { color: #c6b9d4; font-size: 15px; line-height: 1.6; text-wrap: pretty; max-width: 58ch; }
 .care-cause-bottom { display: flex; align-items: center; gap: 18px; flex-wrap: wrap; width: 100%; padding-top: 13px; margin-top: auto; }
 .care-cause-action { display: inline-flex; align-items: center; gap: 10px; min-height: 44px; color: #d5afff; font-size: 14px; font-weight: 600; white-space: nowrap; }
@@ -190,7 +190,7 @@
 .care-checkout-column .checkout-receipts { display: flex; flex-wrap: wrap; gap: 16px; }
 .nft-giving-eyebrow { display: block; color: #c4b1da; font-size: 14px; font-weight: 500; }
 .nft-giving-headline { display: flex; align-items: center; gap: 24px; margin: 16px 0; }
-.nft-giving-headline > strong { color: #b67aff; font: 600 clamp(52px, 4vw, 72px)/1 Manrope, sans-serif; letter-spacing: -3px; font-variant-numeric: tabular-nums; }
+.nft-giving-headline > strong { color: #b67aff; font: 600 clamp(52px, 4vw, 72px)/1 "Manrope Variable", sans-serif; letter-spacing: -3px; font-variant-numeric: tabular-nums; }
 .care-checkout-column .nft-giving-headline h3 { font-size: clamp(19px, 1.7vw, 25px); line-height: 1.3; font-weight: 550; letter-spacing: -.7px; }
 .nft-giving-intro > p { max-width: 42ch; color: #c3b7cf; font-size: 14px; line-height: 1.65; }
 .nft-giving-availability { display: flex; justify-content: space-between; gap: 14px; flex-wrap: wrap; padding: 16px 0 22px; border-bottom: 1px solid #bda4ee24; color: #ab9bbc; font-size: 13px; }

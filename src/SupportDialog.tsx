@@ -58,8 +58,10 @@ export default function SupportDialog({ context, onClose }: Props) {
   const locked = busy || uncertain;
 
   return <dialog ref={dialog} className="support-dialog" aria-labelledby="support-title" aria-describedby="support-intro" onCancel={onClose} onClose={onClose} onClick={event => { if (event.target === event.currentTarget) onClose(); }}>
-    <div className="support-content">
+    <div className="support-tools">
       <button className="support-close" type="button" onClick={onClose} aria-label="Close support"><X size={22}/></button>
+    </div>
+    <div className="support-content">
       <span className="support-icon" aria-hidden="true"><ChatCircle size={28} weight="duotone"/></span>
       <p className="support-eyebrow">CHOGCARE SUPPORT</p>
       <h2 id="support-title">A little help,<br/><span>when you need it.</span></h2>

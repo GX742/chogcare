@@ -267,17 +267,26 @@
 /* Mobile polish: preserve the CHOG identity and all payment states. Keep touch
    controls readable without squeezing the form into a desktop-sized gutter. */
 @media (max-width: 767px) {
-  .landing-page { font-family: "DM Sans Variable", sans-serif; }
+  html { overscroll-behavior-y: none; scroll-padding-top: calc(92px + env(safe-area-inset-top)); background: #0e0a19; }
+  body { overscroll-behavior-y: none; background: #0e0a19; }
+  .landing-page { font-family: "DM Sans Variable", sans-serif; padding-top: calc(76px + env(safe-area-inset-top)); }
+  .heart-field { clip-path: inset(calc(76px + env(safe-area-inset-top)) 0 0); }
   .landing-page h1, .landing-page h2, .landing-page h3,
   .landing-page .brand, .landing-page .leaderboard-board li strong,
   .landing-page .leaderboard-board li > p, .landing-page .care-contribution-rule > strong,
   .landing-page .nft-giving-headline > strong,
   .care-checkout-column .checkout-thanks-amount strong { font-family: "Manrope Variable", sans-serif; }
-  .landing-page.app-layout .site-header { padding-inline: max(16px, env(safe-area-inset-left)); }
-  .landing-page .care-header-inner nav { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 4px 8px; }
-  .landing-page .care-header-inner nav > a { justify-content: center; min-height: 44px; }
-  .landing-page .care-header-inner nav .lp-nav-donate { grid-column: 1 / -1; min-height: 44px; font-size: 13px; margin-top: 2px; }
-  .landing-page .creator-x { width: 44px; height: 44px; }
+  /* A genuinely fixed, opaque header: no sticky scroll container and no
+     transparent strip exposing the heart canvas during mobile overscroll. */
+  .landing-page.app-layout .site-header { position: fixed; inset: 0 0 auto; z-index: 4; min-height: calc(76px + env(safe-area-inset-top)); padding: calc(12px + env(safe-area-inset-top)) max(14px, env(safe-area-inset-right)) 12px max(14px, env(safe-area-inset-left)); background: #0e0a19; backdrop-filter: none; }
+  .landing-page .care-header-inner { min-height: 52px; grid-template-columns: minmax(0, 1fr) auto; gap: 12px; }
+  .landing-page .care-header-inner nav { display: none; }
+  .landing-page .care-header-inner .brand { font-size: 20px; gap: 10px; }
+  .landing-page .care-header-inner .brand img { width: 40px; height: 40px; }
+  .landing-page .care-header-inner .brand-collab { font-size: 10px; }
+  .landing-page .care-header-inner .creator { padding: 0; border: 0; gap: 8px; }
+  .landing-page .care-header-inner .creator > img { display: block; width: 36px; height: 36px; flex-shrink: 0; }
+  .landing-page .creator-x { width: 44px; height: 44px; margin-left: 0; }
   .landing-page .lp-main, .landing-page .lp-footer { width: calc(100% - 16px); }
   .landing-page .lp-main { margin-top: 10px; box-shadow: none; }
   .care-intro { padding: 18px 18px 28px; gap: 26px; }
@@ -325,6 +334,7 @@
   .landing-page .lp-footer-bottom button, .landing-page .lp-footer-bottom a { min-height: 44px; display: inline-flex; align-items: center; }
 }
 @media (max-width: 360px) {
+  .landing-page .care-header-inner .creator > span { display: none; }
   .care-mechanics h2 { font-size: 22px; }
   .care-checkout-column .lp-payment-tabs button { font-size: 12px; gap: 5px; }
   .care-checkout-column .lp-payment-tabs small { padding-inline: 3px; }

@@ -106,7 +106,7 @@ export default function HeartField({ paused }: { paused: boolean }) {
     const tick = (time: number) => {
       if (!previous) previous = time;
       const elapsed = time - previous;
-      if (elapsed >= 30) {
+      if (elapsed >= (compact.matches ? 50 : 30)) {
         const delta = Math.min(elapsed, 65);
         clock.current += delta; previous = time;
         paint(delta);
@@ -117,7 +117,7 @@ export default function HeartField({ paused }: { paused: boolean }) {
       cancelAnimationFrame(frame); previous = 0;
       if (document.hidden) { hovered = -1; lastPoint = null; }
       paint();
-      if (!paused && !preference.matches && !compact.matches && !document.hidden) frame = requestAnimationFrame(tick);
+      if (!paused && !preference.matches && !document.hidden) frame = requestAnimationFrame(tick);
     };
     const resize = () => {
       const nextWidth = document.documentElement.clientWidth;
@@ -127,7 +127,7 @@ export default function HeartField({ paused }: { paused: boolean }) {
       if (compact.matches && width === nextWidth && height === nextHeight) return;
       width = nextWidth; height = nextHeight;
       topInset = compact.matches ? 0 : Math.max(0, header?.getBoundingClientRect().bottom ?? 0);
-      const ratio = Math.min(window.devicePixelRatio || 1, compact.matches ? 1.5 : 2);
+      const ratio = Math.min(window.devicePixelRatio || 1, 2);
       canvas.width = Math.round(width * ratio); canvas.height = Math.round(height * ratio);
       ctx.setTransform(ratio, 0, 0, ratio, 0, 0);
       columns = Math.ceil(width / PITCH_X); rows = Math.ceil(height / PITCH_Y);

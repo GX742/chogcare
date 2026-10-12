@@ -420,7 +420,7 @@ export default function App() {
         <nav aria-label="Main navigation">
           <a href="#causes" onClick={event => { event.preventDefault(); leaveStation("causes"); }}>The causes</a><a href="#how-it-works" onClick={event => { event.preventDefault(); leaveStation("how-it-works"); }}>How it works</a><a href="#leaderboard" onClick={event => { event.preventDefault(); leaveStation("leaderboard"); }}>Leaderboard</a><a href="#causes" onClick={event => { event.preventDefault(); leaveStation("causes"); }} className="lp-nav-donate">Choose a cause <ArrowUpRight size={15} /></a>
         </nav>
-        <div className="creator"><img src="/gx-avatar.png" alt="" width="36" height="36" /><span><small>CREATED BY</small>GX</span><a className="creator-x" href="https://x.com/GxOlympus" target="_blank" rel="noopener noreferrer" aria-label="GX on X (opens in a new tab)"><XLogo size={21} weight="bold" /></a></div>
+        <div className="creator"><img src="/gx-avatar.png" alt="GX avatar" width="36" height="36" /><span><small>CREATED BY</small>GX</span><a className="creator-x" href="https://x.com/GxOlympus" target="_blank" rel="noopener noreferrer" aria-label="GX on X (opens in a new tab)"><XLogo size={21} weight="bold" /></a></div>
         </div>
       </header>
 

@@ -163,9 +163,11 @@ export default function HeartField({ paused }: { paused: boolean }) {
       if (paused || preference.matches) paint();
     };
     resize();
-    const headerObserver = new ResizeObserver(resize);
-    if (header) headerObserver.observe(header);
+    const layoutObserver = new ResizeObserver(resize);
+    if (header) layoutObserver.observe(header);
+    layoutObserver.observe(canvas);
     window.addEventListener("resize", resize);
+    window.visualViewport?.addEventListener("resize", resize);
     window.addEventListener("scroll", onScroll, { passive: true });
     window.addEventListener("pointermove", onPointer, { passive: true });
     document.documentElement.addEventListener("pointerleave", leave);
@@ -175,8 +177,9 @@ export default function HeartField({ paused }: { paused: boolean }) {
     compact.addEventListener("change", resize);
     return () => {
       cancelAnimationFrame(frame);
-      headerObserver.disconnect();
+      layoutObserver.disconnect();
       window.removeEventListener("resize", resize);
+      window.visualViewport?.removeEventListener("resize", resize);
       window.removeEventListener("scroll", onScroll);
       window.removeEventListener("pointermove", onPointer);
       document.documentElement.removeEventListener("pointerleave", leave);

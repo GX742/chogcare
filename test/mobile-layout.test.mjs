@@ -15,6 +15,8 @@ const source = stripTypeScriptTypes(read("../src/HeartField.tsx")
 function field({ compact = true, reduced = false } = {}) {
   let paints = 0, scheduled = 0, bitmapWrites = 0;
   const events = new Map(), queries = new Map(), effects = [], frames = [];
+  const observed = [];
+  let notifyLayout = () => {};
   const context = new Proxy({}, { get: (_, key) => {
     if (key === "clearRect") return () => paints++;
     if (key === "createLinearGradient") return () => ({ addColorStop() {} });
@@ -52,7 +54,7 @@ function field({ compact = true, reduced = false } = {}) {
   };
   runInNewContext(source + "\nHeartField({ paused: false });", {
     window, document, Path2D: class {},
-    ResizeObserver: class { observe() {} disconnect() {} },
+    ResizeObserver: class { constructor(callback) { notifyLayout = callback; } observe(target) { observed.push(target); } disconnect() {} },
     requestAnimationFrame: callback => { frames.push(callback); return ++scheduled; }, cancelAnimationFrame() {},
     useRef: value => ({ current: value === null ? canvas : value }),
     useEffect: callback => effects.push(callback),
@@ -63,6 +65,7 @@ function field({ compact = true, reduced = false } = {}) {
     stats: () => ({ paints, scheduled, bitmapWrites }),
     fire: event => events.get(event)?.(),
     tick: time => frames.shift()?.(time),
+    notifyLayout: () => notifyLayout(), observed,
   };
 }
 
@@ -79,6 +82,28 @@ test("mobile heart colors animate at retina density while artwork stays fixed on
   assert.ok(view.stats().paints > before.paints, "colors continue flowing without scrolling");
   view.cleanup();
   assert.equal(view.events.size, 0, "all listeners are removed on unmount");
+});
+
+test("late CSS canvas growth redraws the entire bitmap without a window resize event", () => {
+  const view = field();
+  assert.ok(view.observed.includes(view.canvas), "the actual canvas box is observed");
+  view.bounds.height = 1004;
+  view.notifyLayout();
+  assert.equal(view.canvas.height, 2008, "drawing covers the extended retina canvas");
+  const after = view.stats();
+  view.notifyLayout();
+  assert.deepEqual(view.stats(), after, "intrinsic bitmap writes cannot create a resize loop");
+  view.cleanup();
+});
+
+test("iPhone unsafe regions receive a root-level heart pattern, not a plain color", () => {
+  assert.match(read("../index.html"), /viewport-fit=cover/);
+  assert.match(read("../src/station-redesign.css"), /html:has\(\.landing-page\), body:has\(\.landing-page\) \{ background:[^}]*chog-heart-tile\.svg[^}]*repeat/);
+  const tile = read("../public/chog-heart-tile.svg");
+  assert.match(tile, /viewBox="0 0 92 74"/);
+  assert.match(tile, /linearGradient/);
+  assert.doesNotMatch(tile, /<script|onload=|href="https?:/);
+  assert.match(read("../src/ops-dashboard.css"), /padding-top:env\(safe-area-inset-top\)/);
 });
 
 test("address-bar and keyboard height changes do not rebuild the mobile field", () => {

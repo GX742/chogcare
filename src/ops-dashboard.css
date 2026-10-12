@@ -64,3 +64,4 @@
 @media(min-width:900px){.ops-hero{min-height:410px}.ops-hero-art{width:650px;height:535px;top:-60px}.ops-hero h1{font-size:76px}.ops-hero-copy{margin-top:58px}}
 @media(max-width:360px){.ops-dashboard{padding-left:16px;padding-right:16px}.ops-status-panel{padding:21px 17px 15px}.ops-status-list li{gap:9px;font-size:14px}.ops-status{font-size:12px}.ops-metric{padding:17px 14px}.ops-metric h2{font-size:13px}.ops-section-title h2{font-size:21px}}
 @media(prefers-reduced-motion:reduce){.ops-estimate-button,.ops-visit,.ops-visit-arrow{transition:none}.ops-estimate-button:not(:disabled):hover,.ops-visit:hover .ops-visit-arrow{transform:none}}
+.ops-dashboard{padding-top:env(safe-area-inset-top);padding-bottom:max(36px,env(safe-area-inset-bottom))}

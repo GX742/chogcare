@@ -269,6 +269,10 @@
 @media (max-width: 767px) {
   html { overscroll-behavior-y: none; scroll-padding-top: calc(92px + env(safe-area-inset-top)); background: #0e0a19; }
   body { overscroll-behavior-y: none; background: #0e0a19; }
+  /* Safari can expose the root page background behind its bottom toolbar,
+     outside the composited fixed canvas. Repeat vector hearts on that surface
+     too, rather than relying on a larger canvas alone. */
+  html:has(.landing-page), body:has(.landing-page) { background: #0e0a19 url('/chog-heart-tile.svg') repeat 0 0 / 92px 74px; }
   .landing-page { font-family: "DM Sans Variable", sans-serif; padding-top: calc(76px + env(safe-area-inset-top)); }
   .heart-field { clip-path: inset(calc(76px + env(safe-area-inset-top)) 0 0); }
   .landing-page h1, .landing-page h2, .landing-page h3,

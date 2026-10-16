@@ -22,7 +22,7 @@ class StationApplication {
     memoryReady = EEPROM.length() == 64 && EEPROM.getConstDataPtr() != nullptr;
     if (memoryReady) loadLastDone();
     displayReady = display.begin();
-    Serial.print(F("{\"v\":1,\"type\":\"hello\",\"last\":\""));
+    Serial.print(F("{\"v\":1,\"type\":\"hello\",\"scenes\":2,\"last\":\""));
     Serial.print(lastDone);
     Serial.println(F("\"}"));
     if (!displayReady || !memoryReady) Serial.println(F("{\"v\":1,\"type\":\"fault\"}"));
@@ -49,7 +49,13 @@ class StationApplication {
       } else {
         const float in = smooth(age / float(StationConfig::FADE_IN_MS));
         const float out = smooth((StationConfig::SHOW_MS - age) / float(StationConfig::FADE_OUT_MS));
-        const float breath = 217 + 30 * sinf(age * TWO_PI / 1450.0f);
+        // One physical single-color LED: soft arrival, steady gift, then a
+        // double heartbeat. No RGB claims, flashing or blocking delays.
+        const uint32_t thanksAt = StationConfig::PHOTO_MS + StationConfig::AMOUNT_MS;
+        const float phase = (age % 1800) / 1800.0f;
+        const float heart = expf(-powf((phase - 0.20f) / 0.09f, 2)) +
+                            0.7f * expf(-powf((phase - 0.43f) / 0.09f, 2));
+        const float breath = age < thanksAt ? 160 + 35 * sinf(age * TWO_PI / 2400.0f) : 110 + 120 * heart;
         analogWrite(StationConfig::LED_PIN, lroundf(in * out * breath));
       }
     } else analogWrite(StationConfig::LED_PIN, 0);
@@ -96,7 +102,7 @@ class StationApplication {
   void command(const StationProtocol::Command &next) {
     heardBridge = true; lastPingAt = millis();
     if (next.type == StationProtocol::Type::Ping) {
-      Serial.println(F("{\"v\":1,\"type\":\"pong\"}"));
+      Serial.println(F("{\"v\":1,\"type\":\"pong\",\"scenes\":2}"));
       return;
     }
     if (!displayReady || !memoryReady) return;
@@ -107,7 +113,7 @@ class StationApplication {
       return;
     }
     current = next; active = true; startedAt = millis();
-    display.show(current.nick, current.amount, startedAt);
+    display.show(current.nick, current.amount, current.cause, current.test, startedAt);
     ack(current.id, "accepted");
   }
   void readSerial() {

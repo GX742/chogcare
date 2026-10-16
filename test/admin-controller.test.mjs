@@ -2,12 +2,13 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { EventEmitter } from "node:events";
 import { PassThrough } from "node:stream";
+import { execFileSync } from "node:child_process";
 import { mkdtemp, mkdir, writeFile, readFile, readdir, rm } from "node:fs/promises";
 import { join, resolve, relative, basename } from "node:path";
 import { createAdminController, sanitizePaymentConfig, projectVideoSettings, readLocalJson, createBoundedExecutor } from "../admin/controller.mjs";
 import { runPrivatePaymentWorker } from "../admin/payment-worker.mjs";
 import { runPrivateStationWorker } from "../admin/station-worker.mjs";
-import { startPaymentWorker } from "../scripts/start-payments.mjs";
+import { startPaymentWorker, PAYMENT_STARTUP_FAILURES } from "../scripts/start-payments.mjs";
 import { PaymentIntegrityError } from "../server/payment-integrity.mjs";
 
 const SECRET = "Never-log-this-custody-password!123";
@@ -38,7 +39,7 @@ async function fixture(overrides = {}) {
       calls.push({ protectDirectory: kind });
       const directory = join(workspace, "work", kind); await mkdir(directory, { recursive: true }); return directory;
     },
-    exec: async (file, args, options) => { calls.push({ file, args, options }); return args[0] === "--version" ? "v25.9.0\n" : args.at(-2) === "is-active" ? "active\n" : ""; },
+    exec: async (file, args, options) => { calls.push({ file, args, options }); return args[0] === "--version" ? "v24.22.0\n" : args.at(-2) === "is-active" ? "active\n" : ""; },
     portBusy: async port => external || port === 4174 && (alive || fallback?.listening),
     requestJson: async (url, options) => {
       calls.push({ url, options });
@@ -78,6 +79,7 @@ async function fixture(overrides = {}) {
         child.sent.push(structuredClone(message)); callback?.();
         if (message.type === "secret") { alive = true; queueMicrotask(() => child.emit("message", { type: "ready" })); }
         if (message.type === "stop" && !overrides.stallStop) { alive = false; child.connected = false; queueMicrotask(() => child.emit("exit", 0)); }
+        if (message.type === "test" && !overrides.stallTest) queueMicrotask(()=>child.emit("message",{type:"test-result",requestId:message.requestId,status:overrides.testStatus??"accepted"}));
       };
       children.push(child);
       queueMicrotask(() => child.emit("message", { type: file.endsWith("payment-worker.mjs") ? "secret-request" : "ready" }));
@@ -144,6 +146,8 @@ test("one-use custody IPC waits for the child's preflight request, never argv/en
     assert.equal(launch.options.windowsHide, true);
     assert.equal(JSON.stringify(launch).includes(SECRET), false);
     for (const name of ["NODE_OPTIONS", "NODE_PATH", "HTTP_PROXY", "HTTPS_PROXY", "ELECTRON_RUN_AS_NODE"]) assert.equal(launch.options.env[name], undefined);
+    assert.equal(launch.options.env.OS, process.platform === "win32" ? "Windows_NT" : undefined);
+    assert.equal(launch.options.env.CHOGCARE_PUBLIC_ORIGIN,"https://chogcare.xyz");
     assert.deepEqual(child.sent, [{ type: "secret", password: SECRET }]);
     child.emit("message", { type: "secret-request" });
     child.stdout.write(SECRET); child.stderr.write(SECRET);
@@ -154,6 +158,19 @@ test("one-use custody IPC waits for the child's preflight request, never argv/en
     await f.admin.action({ type: "payments.stop" }); await pause();
     assert.deepEqual(child.sent.at(-1), { type: "stop" });
     assert.equal(f.calls.filter(item => item.listen).length, 2, "offline support returns only after the managed signer exits");
+  } finally { await f.dispose(); }
+});
+
+test("sanitized Windows worker environment supports real private operations ACL initialization without custody", { skip: process.platform !== "win32" }, async () => {
+  const f = await fixture();
+  try {
+    await f.admin.action({ type: "payments.start", password: SECRET });
+    const launch = f.calls.find(item => item.fork).fork;
+    const source = "import { initLocalOpsDirectory } from './server/local-ops-storage.mjs'; for (let repeat = 0; repeat < 2; repeat++) for (const kind of ['support', 'admin']) initLocalOpsDirectory(process.argv[1], kind);";
+    assert.doesNotThrow(() => execFileSync(process.execPath, ["--input-type=module", "-e", source, f.workspace], {
+      cwd: resolve("."), env: launch.options.env, shell: false, windowsHide: true,
+      timeout: 60000, stdio: "ignore",
+    }));
   } finally { await f.dispose(); }
 });
 
@@ -358,7 +375,7 @@ test("timed-out service changes stay tracked until exit so quitting cannot aband
   await assert.rejects(execute("wsl.exe", ["--exec", "/bin/systemctl", "stop", "owncast"]), /still pending/);
   child.emit("exit", 0); assert.equal(execute.hasPendingMutations(), false);
   let mutation = false;
-  const mockExec = async (_file, args) => args[0] === "--version" ? "v25.9.0" : "active";
+  const mockExec = async (_file, args) => args[0] === "--version" ? "v24.22.0" : "active";
   mockExec.hasPendingMutations = () => mutation;
   const f = await fixture({ dependencies: { exec: mockExec } });
   try { mutation = true; await assert.rejects(f.admin.close(), /confirmed local service change is still pending/); mutation = false; await f.admin.close(); }
@@ -398,6 +415,40 @@ test("private station close drains its bridge over IPC and rejects demo/simulati
   await assert.rejects(runPrivateStationWorker(privateChannel(["--simulate"]), async () => {}));
 });
 
+test("station test is a strict owned-child command with no renderer-controlled amount or payload",async()=>{
+  const f=await fixture();try{
+    await assert.rejects(f.admin.action({type:"station.test"}),/Connect the station/);
+    await f.admin.action({type:"station.start",port:"COM6"});
+    for(const extra of [{amount:"300"},{port:"COM6"},{requestId:"a".repeat(24)},{payload:{type:"donation"}}])await assert.rejects(f.admin.action({type:"station.test",...extra}),/Unsupported/);
+    await f.admin.action({type:"station.test"});const child=f.children[0],wire=child.sent.find(x=>x.type==="test");
+    assert.deepEqual(Object.keys(wire),["type","requestId"]);assert.match(wire.requestId,/^[a-f0-9]{24}$/);
+    assert.equal(f.admin.snapshot().stationTest,"running");await assert.rejects(f.admin.action({type:"station.test"}),/already running/);
+    child.emit("message",{type:"event",code:"station-test-done",level:"info"});assert.equal(f.admin.snapshot().stationTest,"done");
+    await f.admin.action({type:"station.test"});await f.admin.action({type:"station.stop"});assert.equal(f.admin.snapshot().stationTest,"idle");
+    assert.equal(f.calls.filter(x=>x.fork).length,1,"no second process or serial connection is created for a test");
+  }finally{await f.dispose();}
+});
+
+test("station test rejects busy/offline devices and clears a timed-out request without retrying it",async()=>{
+  for(const options of [{testStatus:"busy"},{testStatus:"not-ready"},{stallTest:true,dependencies:{stationTestTimeout:10}}]){
+    const f=await fixture(options);try{await f.admin.action({type:"station.start",port:"COM6"});await assert.rejects(f.admin.action({type:"station.test"}));
+      assert.equal(f.admin.snapshot().stationTest,"error");assert.equal(f.children[0].sent.filter(x=>x.type==="test").length,1);
+    }finally{await f.dispose();}
+  }
+});
+
+test("private station test IPC strips arbitrary data and reports only fixed device test states",async()=>{
+  const channel=privateChannel(["--port","COM6"]);let tests=0,callbacks;
+  await runPrivateStationWorker(channel,async(_args,options)=>{callbacks=options;return {test(){tests++;return "accepted";},close:async()=>{}};});
+  const requestId="a".repeat(24);
+  for(const msg of [{type:"test"},{type:"test",requestId,amount:"999"},{type:"test",requestId:123},{type:"test",requestId:"bad"}])channel.emit("message",msg);
+  assert.equal(tests,0);channel.emit("message",{type:"test",requestId});assert.equal(tests,1);
+  assert.deepEqual(channel.sent.at(-1),{type:"test-result",requestId,status:"accepted"});
+  callbacks.onTestState("done");assert.equal(channel.sent.at(-1).code,"station-test-done");
+  const before=channel.sent.length;callbacks.onTestState(SECRET);assert.equal(channel.sent.length,before);
+  channel.emit("message",{type:"stop"});await pause();assert.equal(channel.connected,false);
+});
+
 function startupDependencies(overrides = {}) {
   const calls = [];
   const probe = new EventEmitter(); probe.listen = (_port, _host, ok) => queueMicrotask(ok); probe.close = ok => ok();
@@ -409,11 +460,85 @@ function startupDependencies(overrides = {}) {
     openPaymentIntegrity: () => { calls.push("integrity"); return { locked: false, checkpoint() { calls.push("checkpoint"); } }; },
     readFile: async () => { calls.push("vault-read"); return "{}"; },
     unlockCustodyVault: async (_vault, password) => { assert.equal(password, SECRET); calls.push("unlock"); return {}; },
+    createBackupProtection: () => ({ close() { calls.push("backup-close"); } }),
+    createPaymentBackup: () => { calls.push("backup"); return { output: "mock-backup" }; },
+    verifyRecoveryBundle: () => ({ verified: true }),
     createChogProcessor: () => processor, createNftProcessor: () => processor,
     openInvoiceStore: () => ({ close() { calls.push("store-close"); } }), createPaymentService: () => api,
     ...overrides,
   } };
 }
+
+test("startup diagnostics identify initialization failures without forwarding caught secrets", async () => {
+  const fail = () => { throw Error(SECRET); };
+  const cases = [
+    ["startup-vault-read", { readFile: async () => fail() }],
+    ["startup-vault-unlock", { unlockCustodyVault: async () => fail() }],
+    ["startup-chog-init", { createChogProcessor: fail }],
+    ["startup-nft-init", { createNftProcessor: fail }],
+  ];
+  for (const [expected, overrides] of cases) {
+    const events = [], f = startupDependencies(overrides);
+    await assert.rejects(startPaymentWorker({ passwordProvider: async () => SECRET, serviceOptions: {}, onEvent: event => events.push(event) }, f.dependencies));
+    assert.ok(events.some(event => event.code === expected && event.level === "error"));
+    assert.equal(JSON.stringify(events).includes(SECRET), false);
+    assert.equal(f.calls.at(-1), "lease-close");
+    assert.equal(f.calls.includes("api-close"), false);
+    assert.ok(Object.hasOwn(PAYMENT_STARTUP_FAILURES, expected));
+  }
+});
+
+test("desktop recognizes only fixed startup reasons, not raw diagnostic messages", async () => {
+  const f = await fixture();
+  try {
+    const opening = f.admin.action({ type: "payments.start", password: SECRET });
+    await pause(); const child = f.children.at(-1);
+    for (const code of Object.keys(PAYMENT_STARTUP_FAILURES)) child.emit("message", { type: "event", code, level: "error" });
+    child.emit("message", { type: "event", code: "startup-vault-unlock", level: "error", message: SECRET });
+    child.emit("message", { type: "ready" }); await opening;
+    const events = f.admin.snapshot().events;
+    for (const message of Object.values(PAYMENT_STARTUP_FAILURES)) assert.ok(events.some(event => event.message === message));
+    assert.equal(JSON.stringify(events).includes(SECRET), false);
+  } finally { await f.dispose(); }
+});
+
+test("encrypted backup is verified on startup and sealed again before lease release", async () => {
+  const events = [], f = startupDependencies();
+  const worker = await startPaymentWorker({ passwordProvider: async () => SECRET, serviceOptions: {}, onEvent: event => events.push(event) }, f.dependencies);
+  assert.equal(worker.diagnostics().backup.verifiedAtStartup, true);
+  assert.ok(worker.diagnostics().backup.lastBackupAt > 0);
+  assert.ok(events.some(event => event.code === "backup-verified"));
+  await worker.close();
+  assert.equal(f.calls.filter(call => call === "backup").length, 2);
+  assert.ok(f.calls.lastIndexOf("backup") < f.calls.indexOf("backup-close"));
+  assert.ok(f.calls.indexOf("backup-close") < f.calls.indexOf("lease-close"));
+});
+
+test("backup failure is sanitized and does not interrupt existing payment processing", async () => {
+  const events = [], f = startupDependencies({ createPaymentBackup() { throw Error(SECRET); } });
+  const worker = await startPaymentWorker({ passwordProvider: async () => SECRET, serviceOptions: {}, onEvent: event => events.push(event) }, f.dependencies);
+  assert.ok(worker);
+  assert.equal(worker.diagnostics().backup.verifiedAtStartup, false);
+  assert.equal(worker.diagnostics().backup.lastBackupAt, 0);
+  assert.ok(events.some(event => event.code === "backup-failed" && event.level === "warning"));
+  assert.equal(JSON.stringify(events).includes(SECRET), false);
+  await worker.close();
+});
+
+test("operations initialization failures are safely diagnosed and close the read-only impact source", async () => {
+  const events = [];
+  let impactClosed = false, apiCreated = false;
+  const f = startupDependencies({
+    openReadOnlyImpactSource: () => ({ summary: () => ({}), close() { impactClosed = true; } }),
+    createOperationsRuntime: () => { throw Error(SECRET); },
+    createPaymentService: () => { apiCreated = true; },
+  });
+  await assert.rejects(startPaymentWorker({ passwordProvider: async () => SECRET, onEvent: event => events.push(event) }, f.dependencies));
+  assert.ok(events.some(event => event.code === "startup-operations-init" && event.level === "error"));
+  assert.equal(JSON.stringify(events).includes(SECRET), false);
+  assert.equal(impactClosed, true); assert.equal(apiCreated, false);
+  assert.equal(f.calls.at(-1), "lease-close");
+});
 
 test("shared worker requests GUI password only after lease, port and integrity checks; closes checkpoint before lease", async () => {
   const f = startupDependencies(); let close;
@@ -423,6 +548,127 @@ test("shared worker requests GUI password only after lease, port and integrity c
   await close();
   assert.ok(f.calls.lastIndexOf("checkpoint") < f.calls.lastIndexOf("lease-close"));
   assert.ok(f.calls.indexOf("api-close") < f.calls.indexOf("processor-close"));
+});
+
+test("NFT readiness failure keeps CHOG alive, blocks NFT issuance, and retries safely", async () => {
+  let combined, networkReady = false, nftIssues = 0, chogIssues = 0, recovered;
+  const recovery = new Promise(ok => { recovered = ok; });
+  const events = [], f = startupDependencies({
+    createChogProcessor: () => ({ operatorAddress: "public-operator", tick: async () => {}, close: async () => {}, publicStatus: () => ({ paymentsEnabled: true }), issue: async () => { chogIssues++; return { mock: true }; } }),
+    createNftProcessor: () => ({ treasuryAddress: "public-treasury", tick: async () => { if (!networkReady) throw Error(SECRET); recovered(); }, close: async () => {}, publicStatus: () => ({ nftPaymentsEnabled: true, poolHealthy: true, poolTreasury: "public-treasury" }), issue: async () => { nftIssues++; } }),
+    createPaymentService: (_store, _origin, _custody, processor) => {
+      combined = processor;
+      const api = new EventEmitter(); api.listen = (_port, _host, ok) => queueMicrotask(ok); api.close = ok => ok(); return api;
+    },
+  });
+  const worker = await startPaymentWorker({ passwordProvider: async () => SECRET, serviceOptions: {}, onEvent: event => events.push(event) }, f.dependencies);
+  try {
+    assert.ok(worker);
+    assert.equal(combined.publicStatus().paymentsEnabled, true);
+    assert.equal(combined.publicStatus().nftPaymentsEnabled, false);
+    assert.equal(combined.publicStatus().poolHealthy, false);
+    assert.equal(combined.publicStatus().poolTreasury, undefined);
+    await assert.rejects(combined.issue({ mode: "nft" }), /not ready/);
+    assert.equal(nftIssues, 0);
+    await combined.issue({ mode: "chog" }); assert.equal(chogIssues, 1);
+    assert.ok(events.some(event => event.code === "nft-network"));
+    assert.equal(events.some(event => event.code === "startup-failed"), false);
+    assert.equal(JSON.stringify(events).includes(SECRET), false);
+    networkReady = true;
+    let deadline;
+    try { await Promise.race([recovery, new Promise((_ok, bad) => { deadline = setTimeout(() => bad(Error("Retry did not run")), 3000); })]); }
+    finally { clearTimeout(deadline); }
+    await pause();
+    assert.equal(combined.publicStatus().nftPaymentsEnabled, true);
+    assert.equal(combined.publicStatus().poolHealthy, true);
+    assert.equal(combined.publicStatus().poolTreasury, "public-treasury");
+  } finally { await worker.close(); }
+});
+
+for (const slowMode of ["chog", "nft"]) test(`slow ${slowMode} processing cannot starve the other mode or overlap its own signer`, async () => {
+  let scheduled, release, stalled = false;
+  const calls = { chog: 0, nft: 0 };
+  const makeProcessor = mode => ({
+    operatorAddress: "public-operator", treasuryAddress: "public-treasury",
+    publicStatus: () => config,
+    async tick() {
+      calls[mode]++;
+      if (mode === slowMode && stalled) await new Promise(ok => { release = ok; });
+    }, close: async () => {},
+  });
+  const f = startupDependencies({
+    createChogProcessor: () => makeProcessor("chog"), createNftProcessor: () => makeProcessor("nft"),
+    setInterval(callback) { scheduled = callback; return { mock: true }; }, clearInterval() {},
+  });
+  const worker = await startPaymentWorker({ passwordProvider: async () => SECRET, serviceOptions: {} }, f.dependencies);
+  try {
+    stalled = true;
+    const before = { ...calls }, fastMode = slowMode === "chog" ? "nft" : "chog";
+    scheduled(); await pause();
+    assert.equal(typeof release, "function");
+    scheduled(); await pause();
+    assert.equal(calls[slowMode], before[slowMode] + 1, "only one tick per signer may be in flight");
+    assert.equal(calls[fastMode], before[fastMode] + 2, "unrelated RPC latency cannot delay this mode's next poll");
+  } finally { release?.(); await pause(); await worker.close(); }
+  const afterClose = { ...calls }; scheduled(); await pause(); assert.deepEqual(calls, afterClose);
+});
+
+test("NFT readiness integrity errors still abort startup and never expose a payment API", async () => {
+  let apiCreated = false;
+  const f = startupDependencies({
+    createNftProcessor: () => ({ tick: async () => { throw new PaymentIntegrityError(); }, close: async () => {} }),
+    createPaymentService: () => { apiCreated = true; },
+  });
+  await assert.rejects(startPaymentWorker({ passwordProvider: async () => SECRET, serviceOptions: {} }, f.dependencies), PaymentIntegrityError);
+  assert.equal(apiCreated, false); assert.equal(f.calls.at(-1), "lease-close");
+});
+
+test("read-only heartbeats remain independent of stalled signers and stop with the worker",async()=>{
+  let scheduled,release,stall=false;
+  const probes={chog:0,nft:0};
+  const processor=mode=>({operatorAddress:"public-operator",treasuryAddress:"public-treasury",publicStatus:()=>config,
+    async tick(){if(stall)await new Promise(ok=>{release=ok;});},
+    async refreshReadiness(){probes[mode]++;},close:async()=>{}});
+  const chog=processor("chog"),nft=processor("nft");
+  nft.tick=async()=>{};
+  const f=startupDependencies({createChogProcessor:()=>chog,createNftProcessor:()=>nft,setInterval(callback){scheduled=callback;return{};},clearInterval(){}});
+  const worker=await startPaymentWorker({passwordProvider:async()=>SECRET,serviceOptions:{}},f.dependencies);
+  try{stall=true;scheduled();await pause();assert.equal(typeof release,"function");assert.deepEqual(probes,{chog:1,nft:1});}
+  finally{release?.();await pause();await worker.close();}
+  scheduled();await pause();assert.deepEqual(probes,{chog:1,nft:1});
+});
+
+test("an unconfirmed NFT health check cannot publish its treasury even if tick resolves", async () => {
+  let combined;
+  const f = startupDependencies({
+    createNftProcessor: () => ({ treasuryAddress: "public-treasury", publicStatus: () => ({ nftPaymentsEnabled: true, poolHealthy: false, poolTreasury: "public-treasury" }), tick: async () => {}, close: async () => {} }),
+    createPaymentService: (_store, _origin, _custody, processor) => {
+      combined=processor; const api=new EventEmitter();api.listen=(_port,_host,ok)=>queueMicrotask(ok);api.close=ok=>ok();return api;
+    },
+  });
+  const worker=await startPaymentWorker({passwordProvider:async()=>SECRET,serviceOptions:{}},f.dependencies);
+  try {assert.equal(combined.publicStatus().nftPaymentsEnabled,false);assert.equal(combined.publicStatus().poolTreasury,undefined);}
+  finally {await worker.close();}
+});
+
+test("a later NFT integrity error gates both modes even when their last status was healthy", async () => {
+  let combined, checks = 0;
+  const events = [], f = startupDependencies({
+    createNftProcessor: () => ({ treasuryAddress: "public-treasury", publicStatus: () => ({ nftPaymentsEnabled: true, poolHealthy: true }), tick: async () => { if (++checks > 1) throw new PaymentIntegrityError(); }, close: async () => {} }),
+    createPaymentService: (_store, _origin, _custody, processor) => {
+      combined = processor;
+      const api = new EventEmitter(); api.listen = (_port, _host, ok) => queueMicrotask(ok); api.close = ok => ok(); return api;
+    },
+  });
+  const worker = await startPaymentWorker({ passwordProvider: async () => SECRET, serviceOptions: {}, onEvent: event => events.push(event) }, f.dependencies);
+  try {
+    const status = combined.publicStatus();
+    assert.equal(status.integrityLocked, true);
+    assert.equal(status.paymentsEnabled, false); assert.equal(status.nftPaymentsEnabled, false);
+    await assert.rejects(combined.issue({ mode: "chog" }), PaymentIntegrityError);
+    await assert.rejects(combined.issue({ mode: "nft" }), PaymentIntegrityError);
+    assert.ok(events.some(event => event.code === "integrity-locked"));
+  } finally { await worker.close(); }
 });
 
 test("integrity failure blocks password request/unlock and does not enroll/reset financial state", async () => {
@@ -468,7 +714,7 @@ test("default ops runtime receives only status and query-only impact, and closes
 });
 
 test("dependency exceptions cannot smuggle a password by imitating a safe error prefix", async () => {
-  const f = await fixture({ dependencies: { exec: async (_file, args) => { if (args[0] === "--version") return "v25.9.0"; if (args.includes("start")) throw new Error(`Configuration failed; ${SECRET}`); return "active"; } } });
+  const f = await fixture({ dependencies: { exec: async (_file, args) => { if (args[0] === "--version") return "v24.22.0"; if (args.includes("start")) throw new Error(`Configuration failed; ${SECRET}`); return "active"; } } });
   try {
     await assert.rejects(f.admin.action({ type: "gateway.start", confirmed: true }), /No credentials or raw service errors/);
     assert.equal(JSON.stringify(f.snapshots).includes(SECRET), false);
@@ -485,6 +731,6 @@ test("a disconnected USB bridge makes its private worker drain and disconnect", 
 test("station shutdown uses serial EOF and an owned completion promise, never ChildProcess.kill", async () => {
   const script = await readFile(new URL("../scripts/station-bridge.mjs", import.meta.url), "utf8");
   assert.match(script, /serial\.stdin\.end\(\)/);
-  assert.match(script, /return \{ close, finished \}/);
+  assert.match(script, /return \{ close, finished, test\(\)/);
   assert.doesNotMatch(script, /serial\??\.kill\(/);
 });

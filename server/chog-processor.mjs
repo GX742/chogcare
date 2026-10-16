@@ -21,9 +21,12 @@ import { validatePoolBatchCall } from "./pool-batch-policy.mjs";
 import { NFT_CONTRIBUTION_SOURCE_PATH, NFT_POOL_BATCH_MIN_USDC, NFT_POOL_SOURCE_GAS_GRANT, NFT_TREASURY_PATH } from "./nft-pool-config.mjs";
 import { CHOG, MONAD_USDC, UNISWAP_ROUTER, WMON, GIVETH_PROJECT_RECIPIENT, sellAbi, swapRouterAbi } from "../src/route.ts";
 import { PAYMENT_POLICY } from "./policy.mjs";
+import { prepareMonadTransaction } from "./monad-preflight.mjs";
+import { createPaymentPerformance } from "./payment-performance.mjs";
+import { paymentRpcClient, PAYMENT_RPC_URLS } from "./payment-rpc.mjs";
+import { observeSourceSubmission } from "./source-submission.mjs";
+import {SOURCE_GAS_GRANT,OPERATOR_READY_BALANCE,sourceGasGrant,sourceGasCharge} from "./source-gas-policy.mjs";
 
-const GAS_GRANT = parseUnits("5",18);
-const OPERATOR_READY_BALANCE = parseUnits("6",18); // Include gas for funding the child.
 const same=(a,b)=>typeof a==="string"&&typeof b==="string"&&a.toLowerCase()===b.toLowerCase();
 const hashPattern=/^0x[0-9a-f]{64}$/i;
 const solanaSignaturePattern=/^[1-9A-HJ-NP-Za-km-z]{64,88}$/;
@@ -57,19 +60,20 @@ export async function fetchProfileMetadata(uri, fetcher=fetch) {
 
 // Local single-operator pilot. The root is provided ONLY by the owner's hidden
 // terminal prompt, never via HTTP/env/browser. No arbitrary signing HTTP method.
-export function createChogProcessor({ filename, vault, root, checkpoint=()=>{}, monadRpc="https://rpc.monad.xyz", ethereumRpc="https://ethereum-rpc.publicnode.com", optimismRpc="https://mainnet.optimism.io", solanaRpc="https://api.mainnet-beta.solana.com", newDestinationChainId=NEW_DONATION_CHAIN_ID }, dependencies={}) {
+export function createChogProcessor({ filename, vault, root, checkpoint=()=>{}, monadRpc=PAYMENT_RPC_URLS[143][0], ethereumRpc="https://ethereum-rpc.publicnode.com", optimismRpc=PAYMENT_RPC_URLS[10][0], solanaRpc="https://api.mainnet-beta.solana.com", newDestinationChainId=NEW_DONATION_CHAIN_ID }, dependencies={}) {
   deliveryNetwork(newDestinationChainId);
   if(root.neuter().extendedKey!==vault.xpub)throw new Error("Signer branch mismatch.");
   for(const url of [monadRpc,ethereumRpc,optimismRpc,solanaRpc])if(new URL(url).protocol!=="https:")throw new Error("HTTPS RPC required.");
   // Dependency injection is code-only for deterministic tests, never HTTP input.
-  const source=dependencies.source??createPublicClient({chain:monad,transport:http(monadRpc,{timeout:15_000,retryCount:0})});
+  const source=dependencies.source??paymentRpcClient(monad,monadRpc);
   const destination=dependencies.destination??createPublicClient({chain:mainnet,transport:http(ethereumRpc,{timeout:15_000,retryCount:0})});
-  const opDestination=dependencies.optimismDestination??createPublicClient({chain:optimism,transport:http(optimismRpc,{timeout:15_000,retryCount:0})});
+  const opDestination=dependencies.optimismDestination??paymentRpcClient(optimism,optimismRpc);
   const destinationClient=id=>id===1?destination:id===10?opDestination:null;
   const solana=dependencies.solanaVerifier??createSolanaReceiptVerifier(solanaRpc);
   const quoteSale=dependencies.saleQuote??saleQuote, quoteSwap=dependencies.usdcQuote??usdcQuote;
   const quoteBridge=dependencies.bridgeQuote??bridgeQuote, getRelay=dependencies.relayJson??relayJson;
   const db=new DatabaseSync(filename);
+  const metrics=createPaymentPerformance();
   const poolCollector=root.derivePath(NFT_CONTRIBUTION_SOURCE_PATH), poolTreasury=root.derivePath(NFT_TREASURY_PATH);
   const configuredPoolTreasury=dependencies.nftPoolTreasury??(Object.keys(dependencies).length?poolTreasury.address:NFT_POOL_TREASURY);
   if(!same(poolTreasury.address,configuredPoolTreasury)||same(poolCollector.address,poolTreasury.address)||same(poolCollector.address,root.address))throw new Error("NFT pool custody paths do not match the pinned configuration.");
@@ -79,22 +83,39 @@ export function createChogProcessor({ filename, vault, root, checkpoint=()=>{}, 
     CREATE TABLE IF NOT EXISTS pool_contributions(invoice_id TEXT PRIMARY KEY,units TEXT NOT NULL,source_hash TEXT NOT NULL UNIQUE);
     CREATE TABLE IF NOT EXISTS pool_contribution_batches(id TEXT PRIMARY KEY,state TEXT NOT NULL,document TEXT NOT NULL);`);
   const allocator=createAddressAllocator(db,vault), journal=sourceJournal(db);
-  let running=false, closed=false, healthyAt=0, gasBalance=0n, expiredCursor="";
+  let running=false, tracking=false, closed=false, healthyAt=0, gasBalance=0n, expiredCursor="";
+  const activeInvoices=new Set();
+  const readinessNow=dependencies.now??Date.now;
+  let readinessRequest=null;
+  // Health must not expire merely because an existing invoice is awaiting a
+  // slow bridge/RPC. This probe reads pinned chains and gas only; it cannot
+  // sign, allocate an address, touch an invoice or bypass the gas requirement.
+  const refreshReadiness=()=>{
+    if(closed)return Promise.resolve();
+    if(readinessRequest)return readinessRequest;
+    readinessRequest=(async()=>{
+      const [sourceChain,destinationChain]=await Promise.all([source.getChainId(),destinationClient(newDestinationChainId).getChainId()]);
+      if(sourceChain!==143||destinationChain!==newDestinationChainId)throw new Error("RPC chain mismatch.");
+      const balance=await source.getBalance({address:root.address});
+      if(!closed){gasBalance=balance;healthyAt=readinessNow();}
+    })().catch(error=>{healthyAt=0;throw error;}).finally(()=>{readinessRequest=null;});
+    return readinessRequest;
+  };
   let rateCache=null,rateRequest=null,poolPendingUsdc=0n;
   const nftMetadataCache=new Map(),nftMetadataRequests=new Map(),nftProfileRequests=new Map();
   // Only finalized/canonical source receipts are cached, in RAM. Restart always
   // re-verifies them. Pending receipts and Ethereum observations are never cached.
   const sourceConfirmed=new Map();
-  const confirmedSource=async hash=>{
+  const confirmedSource=async (hash,observedReceipt)=>{
     if(sourceConfirmed.has(hash))return sourceConfirmed.get(hash);
-    const result=await finalizedReceipt(source,143,hash);
+    const result=await metrics.measure("source-confirmation",()=>finalizedReceipt(source,143,hash,observedReceipt));
     if(sourceConfirmed.size>=256)sourceConfirmed.delete(sourceConfirmed.keys().next().value);
     sourceConfirmed.set(hash,result);return result;
   };
   const save=x=>db.prepare("UPDATE chog_invoices SET state=?,document=? WHERE id=?").run(x.state,JSON.stringify(x),x.id);
   const load=id=>{const row=db.prepare("SELECT document FROM chog_invoices WHERE id=?").get(id);return row?JSON.parse(row.document):null;};
   const publicInvoice=x=>{const network=deliveryNetwork(x.destinationChainId);return {kind:"payment",id:x.id,mode:"chog",asset:"CHOG",chainId:143,amount:x.amount,donationAmount:x.donationAmount??x.amount,
-    poolContributionAmount:x.poolContributionAmount??null,contributionPercent:x.contributionPercent??0,poolContributionState:x.contributionPercent===10?(journal.get(x.id,"pool-contribution")?"collected":"pending"):null,
+    poolContributionAmount:x.poolContributionAmount??null,contributionPercent:x.contributionPercent??0,poolContributionState:x.contributionPercent===10?(db.prepare("SELECT 1 FROM pool_contributions WHERE invoice_id=?").get(x.id)?"collected":"pending"):null,
     initiativeId:x.initiativeId??"burundi",recipient:chogBeneficiary(x.initiativeId??"burundi",network.id),
     depositAddress:x.depositAddress,paymentUri:paymentRequestUri({mode:"chog",amount:x.amount,depositAddress:x.depositAddress,chainId:143}),
     minUsdc:x.minOutput,state:x.state,expiresAt:x.expiresAt,depositHash:x.depositHash??null,bridgeHash:journal.get(x.id,"bridge")?.hash??null,destinationHash:x.destinationHash??null,
@@ -108,38 +129,24 @@ export function createChogProcessor({ filename, vault, root, checkpoint=()=>{}, 
       const call=await build();
       if(!call)return null;
       validateSourceCall(phase,{...call,from:wallet.address},x,root.address);
-      const [latest,pending]=await Promise.all([source.getTransactionCount({address:wallet.address,blockTag:"latest"}),source.getTransactionCount({address:wallet.address,blockTag:"pending"})]);
-      if(latest!==pending)return null;
-      const gasPrice=await source.getGasPrice(), maxFeePerGas=gasPrice*2n;
-      if(maxFeePerGas>500_000_000_000n)throw new Error("Gas spike: processing paused automatically.");
-      const estimated=await source.estimateGas({account:wallet.address,...call});
-      const gasLimit=estimated*125n/100n;
-      if(gasLimit>1_500_000n)throw new Error("Gas estimate exceeds local pilot limit.");
-      if(await source.getBalance({address:wallet.address})<call.value+gasLimit*maxFeePerGas)throw new Error("Operator gas funds are insufficient.");
+      const fees=await metrics.measure("source-preflight",()=>prepareMonadTransaction(source,wallet.address,call));
+      if(!fees)return null;
       if(phase==="bridge" && Date.now()>x.bridge.validUntil)throw new Error("Bridge quote expired before signing.");
-      validateSourceCall(phase,{...call,from:wallet.address},x,root.address);
+      validateSourceCall(phase,{...call,...fees,from:wallet.address},x,root.address);
       checkpoint();
-      const raw=await wallet.signTransaction({...call,chainId:143,type:2,nonce:latest,gasLimit,maxFeePerGas,maxPriorityFeePerGas:gasPrice/10n});
-      row=journal.persist(x.id,phase,wallet.address,latest,raw);
+      const raw=await wallet.signTransaction({...call,chainId:143,type:2,...fees});
+      row=journal.persist(x.id,phase,wallet.address,fees.nonce,raw);
       checkpoint();
       if(phase==="bridge") {x.bridgeStartedAt=Date.now();save(x);}
     }
     if(!same(keccakRaw(row.raw),row.hash))throw new Error("Stored transaction integrity failure.");
     validateSourceCall(phase,Transaction.from(row.raw),x,root.address,Date.now(),true);
     if(sourceConfirmed.has(row.hash))return sourceConfirmed.get(row.hash).receipt;
-    let receipt;
-    try { receipt=await source.getTransactionReceipt({hash:row.hash}); }
-    catch(error) { if(error.name!=="TransactionReceiptNotFoundError")throw error; }
-    if(!receipt) {
-      // Sending identical signed bytes cannot create a second payment. Never
-      // substitute a new quote/nonce when the transport result is unknown.
-      checkpoint(); // Also covers a persisted transaction restored after a crash.
-      try { const returned=await source.sendRawTransaction({serializedTransaction:row.raw}); if(!same(returned,row.hash))throw new Error("RPC hash mismatch."); }
-      catch { x.message="Transaction submitted or pending. Checking its original hash; do not pay again."; save(x); }
-      return null;
-    }
+    const receipt=await observeSourceSubmission(source,row,{checkpoint,
+      onPending(){x.message="Transaction submitted or pending. Checking its original hash; do not pay again.";save(x);}});
+    if(!receipt)return null;
     if(receipt.status!=="success") { x.state="manual-review"; x.message="A processing transaction reverted. Funds need operator review; do not pay again."; save(x);return null; }
-    const {receipt:confirmed}=await confirmedSource(row.hash);
+    const {receipt:confirmed}=await confirmedSource(row.hash,receipt);
     return confirmed;
   }
 
@@ -150,25 +157,22 @@ export function createChogProcessor({ filename, vault, root, checkpoint=()=>{}, 
     if(!row) {
       const call=await build();if(!call)return null;
       validatePoolBatchCall(phase,{...call,from:wallet.address},x,root.address,poolCollector.address);
-      const [latest,pending]=await Promise.all([source.getTransactionCount({address:wallet.address,blockTag:"latest"}),source.getTransactionCount({address:wallet.address,blockTag:"pending"})]);
-      if(latest!==pending)return null;
-      const gasPrice=await source.getGasPrice(),maxFeePerGas=gasPrice*2n;
-      if(maxFeePerGas>500_000_000_000n)throw new Error("Gas spike: NFT pool batching paused automatically.");
-      const estimated=await source.estimateGas({account:wallet.address,...call}),gasLimit=estimated*125n/100n;
-      if(gasLimit>1_500_000n)throw new Error("NFT pool batch gas estimate exceeds the limit.");
-      if(await source.getBalance({address:wallet.address})<call.value+gasLimit*maxFeePerGas)throw new Error("NFT pool batch gas funds are insufficient.");
+      const fees=await metrics.measure("source-preflight",()=>prepareMonadTransaction(source,wallet.address,call));
+      if(!fees)return null;
       if(phase==="pool-bridge"&&Date.now()>x.bridge.validUntil)throw new Error("NFT pool batch quote expired before signing.");
+      validatePoolBatchCall(phase,{...call,from:wallet.address},x,root.address,poolCollector.address);
       checkpoint();
-      const raw=await wallet.signTransaction({...call,chainId:143,type:2,nonce:latest,gasLimit,maxFeePerGas,maxPriorityFeePerGas:gasPrice/10n});
-      row=journal.persist(x.id,phase,wallet.address,latest,raw);checkpoint();
+      const raw=await wallet.signTransaction({...call,chainId:143,type:2,...fees});
+      row=journal.persist(x.id,phase,wallet.address,fees.nonce,raw);checkpoint();
     }
     if(!same(keccakRaw(row.raw),row.hash))throw new Error("Stored NFT pool batch transaction integrity failure.");
     validatePoolBatchCall(phase,Transaction.from(row.raw),x,root.address,poolCollector.address);
     if(sourceConfirmed.has(row.hash))return sourceConfirmed.get(row.hash).receipt;
-    let receipt;try{receipt=await source.getTransactionReceipt({hash:row.hash});}catch(error){if(error.name!=="TransactionReceiptNotFoundError")throw error;}
-    if(!receipt){checkpoint();try{const returned=await source.sendRawTransaction({serializedTransaction:row.raw});if(!same(returned,row.hash))throw new Error("RPC hash mismatch.");}catch{x.message="NFT pool batch submitted or pending. Tracking the original hash.";saveBatch(x);}return null;}
+    const receipt=await observeSourceSubmission(source,row,{checkpoint,
+      onPending(){x.message="NFT pool batch submitted or pending. Tracking the original hash.";saveBatch(x);}});
+    if(!receipt)return null;
     if(receipt.status!=="success"){x.state="manual-review";x.message="NFT pool batching transaction reverted. Contributions remain recoverable.";saveBatch(x);return null;}
-    return (await confirmedSource(row.hash)).receipt;
+    return (await confirmedSource(row.hash,receipt)).receipt;
   }
 
   async function processContributionBatch() {
@@ -208,7 +212,7 @@ export function createChogProcessor({ filename, vault, root, checkpoint=()=>{}, 
     }
   }
 
-  async function processInvoice(x) {
+  async function processInvoice(x,sourceOnly=false) {
     // Missing chain means a legacy Ethereum invoice. Never migrate paid or
     // already-issued instructions by changing the new-invoice default.
     const network=deliveryNetwork(x.destinationChainId);
@@ -235,13 +239,13 @@ export function createChogProcessor({ filename, vault, root, checkpoint=()=>{}, 
         x.state="manual-review";x.message="This historical recipient requires operator review. Your original payment is preserved; do not pay again.";save(x);return;
       }
       if(!x.sale) {x.sale=await quoteSale(source,BigInt(x.units));save(x);}
-      if(!await send(x,"gas",root,async()=>({to:x.depositAddress,value:GAS_GRANT,data:"0x"})))return;
+      if(!await send(x,"gas",root,async()=>({to:x.depositAddress,value:sourceGasGrant(x),data:"0x"})))return;
       if(!await send(x,"approve-chog",wallet,async()=>approve(CHOG,x.sale.router,BigInt(x.units))))return;
       const sold=await send(x,"sell",wallet,async()=>({to:x.sale.router,value:0n,data:encodeFunctionData({abi:sellAbi,functionName:"sell",args:[{amountIn:BigInt(x.units),amountOutMin:BigInt(x.sale.minMon),token:CHOG,to:x.depositAddress,deadline:BigInt(Math.floor(Date.now()/1000)+300)}]})}));
       if(!sold)return;
       if(!x.monToSwap) {
         const approval=await confirmedSource(journal.get(x.id,"approve-chog").hash);
-        const operatorRemaining=GAS_GRANT-approval.receipt.gasUsed*approval.receipt.effectiveGasPrice-sold.gasUsed*sold.effectiveGasPrice;
+        const operatorRemaining=sourceGasGrant(x)-sourceGasCharge(journal.get(x.id,"approve-chog"),approval.receipt)-sourceGasCharge(journal.get(x.id,"sell"),sold);
         const balance=await source.getBalance({address:x.depositAddress,blockNumber:sold.blockNumber});
         const proceeds=balance-operatorRemaining;
         if(proceeds<BigInt(x.sale.minMon)||operatorRemaining<0n)throw new Error("Sale proceeds do not reconcile.");
@@ -259,7 +263,9 @@ export function createChogProcessor({ filename, vault, root, checkpoint=()=>{}, 
         }else x.usdcToBridge=String(settlement);
         save(x);
       }
-      if(x.contributionPercent===10 && !journal.get(x.id,"pool-contribution")) {
+      // A journal entry proves signed submission, not successful finality.
+      // Resume/check the SAME contribution before approving the charity bridge.
+      if(x.contributionPercent===10) {
         const collected=await send(x,"pool-contribution",wallet,async()=>({to:MONAD_USDC,value:0n,data:encodeFunctionData({abi:erc20Abi,functionName:"transfer",args:[poolCollector.address,BigInt(x.poolContributionUsdc)]})}));
         if(!collected)return;
         atomic(db,()=>{const hash=journal.get(x.id,"pool-contribution").hash,old=db.prepare("SELECT * FROM pool_contributions WHERE invoice_id=?").get(x.id);
@@ -276,6 +282,7 @@ export function createChogProcessor({ filename, vault, root, checkpoint=()=>{}, 
       if(!bridged)return;
       x.state="bridging";x.message=null;save(x);
     }
+    if(sourceOnly)return; // Relay observation must never occupy the source signer lane.
     if(x.state==="bridging" || x.state==="confirming") {
       // Once an actual transfer is observed, Relay availability must not block
       // finality checks. A reorg clears the observation and returns to discovery.
@@ -326,6 +333,21 @@ export function createChogProcessor({ filename, vault, root, checkpoint=()=>{}, 
       }
     }
   }
+  async function safelyProcess(x,sourceOnly=false){
+    if(closed||activeInvoices.has(x.id))return;
+    activeInvoices.add(x.id);
+    try{await processInvoice(x,sourceOnly);}catch(error){
+      x.message=error instanceof AwaitingFinalityError?"Transaction included on Monad. Waiting for source finality before continuing; no further payment is needed.":x.state==="confirming"?"A destination transfer was observed. Network verification is temporarily unavailable; final delivery is not confirmed yet. Do not pay again.":"Processing paused while the network or route is checked. Do not pay again.";save(x);
+    }finally{activeInvoices.delete(x.id);}
+  }
+  async function trackPending(){
+    if(tracking||closed)return;
+    tracking=true;
+    try{return await metrics.measure("chog-tracking",async()=>{
+      const rows=db.prepare("SELECT document FROM chog_invoices WHERE state IN ('bridging','confirming') ORDER BY rowid").all();
+      await Promise.all(rows.map(row=>safelyProcess(JSON.parse(row.document))));
+    });}finally{tracking=false;}
+  }
   async function publicChogRate(){
     if(closed)throw new Error("Payment worker is closed.");
     if(rateCache&&Date.now()-rateCache.quotedAt<30_000)return rateCache;
@@ -375,10 +397,13 @@ export function createChogProcessor({ filename, vault, root, checkpoint=()=>{}, 
     try{return await request;}finally{nftProfileRequests.delete(id);}
   }
   return {
+    diagnostics(){return metrics.snapshot();},
     publicChogRate,
     profileNfts,
     leaderboardDonation(id){return closed||!/^[a-f0-9]{64}$/.test(id??"")?null:verifiedLeaderboardDonation(load(id),id);},
-    publicStatus(){return {paymentsEnabled:!closed&&Date.now()-healthyAt<60_000&&gasBalance>=OPERATOR_READY_BALANCE,paymentMode:"local-pilot",workerVersion:"2026-10-11-pending-profile-v6",destinationChainId:newDestinationChainId,supportedModes:["chog"],supportedInitiatives:[...CHOG_INITIATIVES],poolContributionPercent:10,poolContributionMode:"added-on-top",poolContributionBatchMinimumUsdc:"5.00",poolContributionPendingUsdc:formatUnits(poolPendingUsdc,6)};},
+    refreshReadiness,
+    track:trackPending,
+    publicStatus(){const networkReady=!closed&&readinessNow()-healthyAt<60_000;return {paymentsEnabled:networkReady&&gasBalance>=OPERATOR_READY_BALANCE,chogReadiness:!networkReady?"network-unavailable":gasBalance<OPERATOR_READY_BALANCE?"gas-needed":"ready",paymentMode:"local-pilot",workerVersion:"2026-10-16-local-fast-v11",destinationChainId:newDestinationChainId,supportedModes:["chog"],supportedInitiatives:[...CHOG_INITIATIVES],poolContributionPercent:10,poolContributionMode:"added-on-top",poolContributionBatchMinimumUsdc:"5.00",poolContributionPendingUsdc:formatUnits(poolPendingUsdc,6)};},
     canRetryUnissuedChog(id){return !closed && /^[a-f0-9]{64}$/.test(id) && !load(id) && !db.prepare("SELECT 1 FROM deposit_addresses WHERE invoice_id=?").get(id);},
     async issue(input, requestId) {
       if(requestId!==undefined && !/^[a-f0-9]{64}$/.test(requestId))throw new Error("Invalid internal request ID.");
@@ -404,7 +429,7 @@ export function createChogProcessor({ filename, vault, root, checkpoint=()=>{}, 
       if(invoiceChain===SOLANA_CHAIN_ID)assertCrossAssetBridgeDelivery(estimate,requiredDelivery);else assertBridgeDelivery(estimate,requiredDelivery);
       if(db.prepare("SELECT COUNT(*) AS n FROM chog_invoices WHERE state IN ('awaiting-payment','processing','bridging','confirming')").get().n>=3)throw new Error("Three payments are already active. Please wait.");
       const id=requestId??randomBytes(32).toString("hex"), addressAllocation=allocator.allocate(id), created=await source.getBlock({blockTag:"finalized"});
-      const x={id,initiativeId:input.initiativeId,index:addressAllocation.derivation_index,depositAddress:addressAllocation.address,
+      const x={id,initiativeId:input.initiativeId,index:addressAllocation.derivation_index,depositAddress:addressAllocation.address,sourceGasPlanVersion:2,gasGrantUnits:String(SOURCE_GAS_GRANT),
         amount:formatUnits(units,18),donationAmount:formatUnits(donationUnits,18),poolContributionAmount:formatUnits(allocation.contributionUnits,18),contributionPercent:10,poolCollector:poolCollector.address,
         units:String(units),minimumTotalUsdc:swap.minUsdc,minimumCauseSourceUsdc:String(sourceSplit.causeUnits),minOutput:estimate.minOutput,minimumUsd:invoiceChain===SOLANA_CHAIN_ID?estimate.minimumOutputUsdMicros:estimate.minOutput,
         createdBlock:String(created.number),cursor:String(created.number),expiresAt:Date.now()+20*60_000,state:"awaiting-payment",destinationChainId:invoiceChain,bridgeEstimatedSeconds:estimate.estimatedSeconds??null};
@@ -417,18 +442,13 @@ export function createChogProcessor({ filename, vault, root, checkpoint=()=>{}, 
     get(id){if(!/^[a-f0-9]{64}$/.test(id))return null;const x=load(id);return x?publicInvoice(x):null;},
     async tick() {
       if(running||closed)return;running=true;
-      try {
-        const [sourceChain,destinationChain]=await Promise.all([source.getChainId(),destinationClient(newDestinationChainId).getChainId()]);
-        if(sourceChain!==143||destinationChain!==newDestinationChainId)throw new Error("RPC chain mismatch.");
-        gasBalance=await source.getBalance({address:root.address});healthyAt=Date.now();
+      try {return await metrics.measure("chog-tick",async()=>{
+        await refreshReadiness();
         const invoices=db.prepare("SELECT document FROM chog_invoices WHERE state IN ('awaiting-payment','processing','bridging','confirming') ORDER BY rowid").all();
         // Continue observing expired addresses, rotating one per tick. Expired
         // invoices never block active orders, and late deposits remain reviewable.
         const expired=db.prepare("SELECT id,document FROM chog_invoices WHERE state='expired' AND id>? ORDER BY id LIMIT 1").get(expiredCursor);
         if(expired){expiredCursor=expired.id;invoices.push(expired);}else expiredCursor="";
-        const safelyProcess=async x=>{try {await processInvoice(x);}catch(error) {
-          x.message=error instanceof AwaitingFinalityError?"Transaction included on Monad. Waiting for source finality before continuing; no further payment is needed.":x.state==="confirming"?"A destination transfer was observed. Network verification is temporarily unavailable; final delivery is not confirmed yet. Do not pay again.":"Processing paused while the network or route is checked. Do not pay again.";save(x);
-        }};
         const pending=invoices.map(row=>JSON.parse(row.document));
         // Read-only destination checks are independent of the source signer.
         // A slow bridge must not hold up another payment's exchange (or finality).
@@ -436,15 +456,15 @@ export function createChogProcessor({ filename, vault, root, checkpoint=()=>{}, 
         const tracking=pending.filter(x=>["bridging","confirming"].includes(x.state));
         const sourceWork=pending.filter(x=>!["bridging","confirming"].includes(x.state));
         await Promise.all([
-          ...tracking.map(safelyProcess),
-          (async()=>{for(const x of sourceWork)await safelyProcess(x);})(),
+          ...tracking.map(x=>safelyProcess(x)),
+          (async()=>{for(const x of sourceWork)await safelyProcess(x,true);})(),
         ]);
         // Batch only after all invoice source work completes: operator funding
         // and collector transactions must never race for a shared signer nonce.
         try{await processContributionBatch();}catch{const batch=activeBatch();if(batch&&batch.state!=="manual-review"){batch.message="NFT pool batching is paused. Contributions remain in the dedicated collector and the original batch will retry.";saveBatch(batch);}}
-      } catch(error) {healthyAt=0;throw error;} finally {running=false;}
+      });} catch(error) {healthyAt=0;throw error;} finally {running=false;}
     },
-    async close(){closed=true;while(running)await new Promise(r=>setTimeout(r,50));db.close();},
+    async close(){closed=true;while(running||tracking||activeInvoices.size||readinessRequest)await new Promise(r=>setTimeout(r,50));db.close();},
     operatorAddress:root.address,
   };
 }

@@ -4,6 +4,14 @@ export const DEFAULT_LIVE_SEGMENT_SECONDS = 3;
 export const LIVE_SYNC_SEGMENT_COUNT = 3;
 export const LIVE_MAX_LATENCY_SEGMENT_COUNT = 6;
 
+// Let portrait camera footage fill its frame without cropping the terminal.
+// Landscape/offline footage retains the existing contained fallback layout.
+export function portraitFrameAspect(width: number, height: number): number | undefined {
+  if (!Number.isFinite(width) || !Number.isFinite(height) || width <= 0 || height <= 0) return undefined;
+  const ratio = width / height;
+  return ratio >= .4 && ratio <= 1 ? ratio : undefined;
+}
+
 export function livePlaybackStrategy(mseSupported: boolean, nativeSupported: boolean): "hls" | "native" | "unsupported" {
   // Some Chromium builds advertise native HLS as well as MSE. Prefer hls.js
   // there so live-edge, bounded buffering and recovery policies still apply.

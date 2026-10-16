@@ -1,6 +1,15 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { createLiveLoadState, createLiveResumeSync, createLiveRetryBudget, DEFAULT_LIVE_SEGMENT_SECONDS, latestLiveRange, liveHlsConfig, livePlaybackStrategy, liveSegmentSeconds, recoverLiveNetwork, safeLiveResumeTarget } from "../src/live-player.ts";
+import { createLiveLoadState, createLiveResumeSync, createLiveRetryBudget, DEFAULT_LIVE_SEGMENT_SECONDS, latestLiveRange, liveHlsConfig, livePlaybackStrategy, liveSegmentSeconds, portraitFrameAspect, recoverLiveNetwork, safeLiveResumeTarget } from "../src/live-player.ts";
+
+test("portrait camera frame uses the actual ratio without scaling/cropping landscape fallback footage", () => {
+  assert.equal(portraitFrameAspect(1080, 1920), 9 / 16);
+  assert.equal(portraitFrameAspect(720, 1280), 9 / 16);
+  assert.equal(portraitFrameAspect(1080, 1080), 1);
+  for (const [width, height] of [[1920,1080], [0,0], [1080,0], [-720,1280], [NaN,1920], [1080,Infinity], [100,1920]]) {
+    assert.equal(portraitFrameAspect(width, height), undefined);
+  }
+});
 
 const ranges = (...pairs) => ({ length: pairs.length, start: index => pairs[index][0], end: index => pairs[index][1] });
 

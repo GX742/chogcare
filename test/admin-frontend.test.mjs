@@ -5,6 +5,14 @@ import { readFileSync } from "node:fs";
 const source = readFileSync(new URL("../src/admin/AdminApp.tsx", import.meta.url), "utf8");
 const controller = readFileSync(new URL("../admin/controller.mjs", import.meta.url), "utf8");
 
+test("screen test is explicit, device-confirmed and disabled for disconnected/external/busy stations",()=>{
+  assert.match(source,/className="admin-button admin-outline admin-test-button"/);
+  assert.match(source,/disabled=\{!api \|\| !service.managed \|\| !running \|\| Boolean\(busy\) \|\| snapshot\?\.stationTest === "running"\}/);
+  assert.match(source,/act\(\{ type: "station.test" \}, "station.test"\)/);
+  assert.match(source,/TEST - NO PAYMENT/);assert.match(source,/role="status" aria-live="polite"/);
+  assert.match(source,/confirmed by the device/);assert.match(source,/No transaction, history or leaderboard entry/);
+});
+
 test("Connect and Save share the exact controller COM port constraint", () => {
   const expression = source.match(/const validPort = (\/[^\n]+?\/)\.test\(port\);/)?.[1];
   const serverExpression = controller.match(/const COM = (\/[^\n]+?\/);/)?.[1];

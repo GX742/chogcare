@@ -1,6 +1,7 @@
 import { decodeFunctionData, encodeFunctionData, erc20Abi, isAddress, parseAbi, zeroAddress } from "viem";
 import { CHOG, NAD_CURVE_ROUTER, NAD_DEX_ROUTER, MONAD_USDC, UNISWAP_ROUTER, UNISWAP_FEES, WMON, sellAbi, swapRouterAbi } from "../src/route.ts";
 import { RELAY_DEPOSITORY } from "./relay-route.mjs";
+import {sourceGasGrant,validateSourceGas} from "./source-gas-policy.mjs";
 
 const depositAbi=parseAbi(["function depositErc20(address depositor,address token,uint256 amount,bytes32 id)"]);
 const same=(a,b)=>typeof a==="string"&&typeof b==="string"&&a.toLowerCase()===b.toLowerCase();
@@ -13,11 +14,12 @@ export function validateSourceCall(phase,call,invoice,operator,now=Date.now(),pe
   const contributionInvoice=invoice?.contributionPercent===10;
   const minimumUnits=(contributionInvoice?330n:300n)*10n**18n,maximumUnits=(contributionInvoice?1_100_000n:1_000_000n)*10n**18n;
   if(!invoice || !positive(invoice.units) || BigInt(invoice.units)<minimumUnits || BigInt(invoice.units)>maximumUnits || typeof call.data!=="string" || call.data.length>2048)fail();
+  validateSourceGas(phase,call,invoice);
   const payer=invoice.depositAddress;
   const minimumSourceUsdc=invoice.minimumUsd??invoice.minOutput;
   if(!same(call.from,phase==="gas"?operator:payer))fail();
   if(phase==="gas") {
-    if(!same(call.to,payer)||call.value!==5n*10n**18n||call.data!=="0x")fail();
+    if(!same(call.to,payer)||call.value!==sourceGasGrant(invoice)||call.data!=="0x")fail();
     return;
   }
   if(phase!=="swap"&&call.value!==0n)fail();

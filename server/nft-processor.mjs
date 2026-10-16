@@ -1,6 +1,6 @@
 import { randomBytes } from "node:crypto";
 import { DatabaseSync } from "node:sqlite";
-import { createPublicClient, http, erc20Abi, parseAbi, isAddress, zeroAddress, encodeFunctionData, decodeEventLog, formatUnits } from "viem";
+import { erc20Abi, parseAbi, isAddress, zeroAddress, encodeFunctionData, decodeEventLog, formatUnits } from "viem";
 import { monad, optimism } from "viem/chains";
 import { estimateTotalFee } from "viem/op-stack";
 import { createAddressAllocator } from "./address-allocator.mjs";
@@ -17,6 +17,8 @@ import { PAYMENT_POLICY, SUBSIDY_UNITS } from "./policy.mjs";
 import { chogBeneficiary, supportsNft, NFT_INITIATIVES } from "../src/chog-beneficiary.ts";
 import { deliveryNetwork } from "../src/delivery-network.ts";
 import { NFT_POOL_FUNDER, NFT_POOL_FUNDERS, NFT_POOL_CHAIN, NFT_TREASURY_PATH, NFT_POOL_GAS_MIN, NFT_PAYOUT_FEE_CAP } from "./nft-pool-config.mjs";
+import { createPaymentPerformance } from "./payment-performance.mjs";
+import { paymentRpcClient } from "./payment-rpc.mjs";
 
 const network = deliveryNetwork(NFT_POOL_CHAIN);
 const nftAbi = parseAbi(["function ownerOf(uint256) view returns (address)", "function tokensOfOwner(address) view returns (uint256[])"]);
@@ -34,10 +36,11 @@ const MAX_PROOF_FAILURES = 8;
 export function createNftProcessor({ filename, vault, root, checkpoint = () => {} }, dependencies = {}) {
   if (root.neuter().extendedKey !== vault.xpub) throw new Error("Signer branch mismatch.");
   const wallet = root.derivePath(NFT_TREASURY_PATH);
-  const source = dependencies.source ?? createPublicClient({chain:monad,transport:http("https://rpc.monad.xyz",{timeout:15000,retryCount:0})});
-  const destination = dependencies.destination ?? createPublicClient({chain:optimism,transport:http("https://mainnet.optimism.io",{timeout:15000,retryCount:0})});
+  const source = dependencies.source ?? paymentRpcClient(monad);
+  const destination = dependencies.destination ?? paymentRpcClient(optimism);
   const feeEstimate = dependencies.feeEstimate ?? (args => estimateTotalFee(destination,args));
   const now = dependencies.now ?? Date.now;
+  const metrics = createPaymentPerformance();
   const db = new DatabaseSync(filename);
   db.exec(`PRAGMA journal_mode=WAL; PRAGMA synchronous=FULL; PRAGMA busy_timeout=5000;
     CREATE TABLE IF NOT EXISTS nft_invoices (id TEXT PRIMARY KEY,state TEXT NOT NULL,document TEXT NOT NULL);
@@ -48,6 +51,21 @@ export function createNftProcessor({ filename, vault, root, checkpoint = () => {
   const meta = db.prepare("SELECT * FROM nft_pool_meta WHERE singleton=1").get();
   if (!same(meta.treasury,wallet.address) || !same(meta.funder,NFT_POOL_FUNDER) || meta.chain_id !== 10) throw new Error("NFT treasury configuration mismatch.");
   let running=false, closed=false, healthyAt=0, gas=0n, usdc=0n, issuing=false;
+  let readinessRequest=null, fundingVerified=false;
+  // Read-only heartbeat, independent of the serialized proof/payout queue.
+  // Balances alone NEVER credit funding: the verified funding ledger and its
+  // first successful sync remain mandatory before this can advertise health.
+  const refreshReadiness=()=>{
+    if(closed)return Promise.resolve();
+    if(readinessRequest)return readinessRequest;
+    readinessRequest=(async()=>{
+      const [sourceChain,destinationChain]=await Promise.all([source.getChainId(),destination.getChainId()]);
+      if(sourceChain!==143||destinationChain!==10)throw new Error("Wrong network.");
+      const [nextGas,nextUsdc]=await Promise.all([destination.getBalance({address:wallet.address}),destination.readContract({address:network.usdc,abi:erc20Abi,functionName:"balanceOf",args:[wallet.address]})]);
+      if(!closed){gas=nextGas;usdc=nextUsdc;if(fundingVerified)healthyAt=now();}
+    })().catch(error=>{healthyAt=0;throw error;}).finally(()=>{readinessRequest=null;});
+    return readinessRequest;
+  };
   const save = x => db.prepare("UPDATE nft_invoices SET state=?,document=? WHERE id=?").run(x.state,JSON.stringify(x),x.id);
   const load = id => {const r=db.prepare("SELECT document FROM nft_invoices WHERE id=?").get(id);return r?JSON.parse(r.document):null;};
   const pendingUnits = () => BigInt(db.prepare("SELECT COALESCE(SUM(units),0) AS n FROM pool_reservations WHERE state!='paid'").get().n);
@@ -96,7 +114,7 @@ export function createNftProcessor({ filename, vault, root, checkpoint = () => {
     if (x.proofRetryAt && now() < x.proofRetryAt) return false;
     try {
       if (!hash(x.depositHash)) throw new Error("Missing pinned NFT deposit.");
-      const proof = await verifyNftDeposit(source,{...x,kind:"nft-verification",state:"awaiting-payment",createdBlock:BigInt(x.createdBlock)},x.depositHash);
+      const proof = await metrics.measure("nft-proof",()=>verifyNftDeposit(source,{...x,kind:"nft-verification",state:"awaiting-payment",createdBlock:BigInt(x.createdBlock)},x.depositHash));
       atomic(db,()=>{
         const existing = db.prepare("SELECT document FROM nft_proofs WHERE invoice_id=?").get(x.id);
         if (existing) {
@@ -152,8 +170,8 @@ export function createNftProcessor({ filename, vault, root, checkpoint = () => {
   async function observeDeposit(x) {
     // A crash after pinning a candidate must never make us select another hash.
     if (x.depositHash) { await verifyPinnedDeposit(x); return; }
-    const tip=await source.getBlock({blockTag:"finalized"});
-    if(await source.getChainId()!==143)throw new Error("Wrong source chain.");
+    const [tip,sourceChain]=await Promise.all([source.getBlock({blockTag:"finalized"}),source.getChainId()]);
+    if(sourceChain!==143)throw new Error("Wrong source chain.");
     let cursor=BigInt(x.cursor);
     // Older workers skipped smart-wallet calls. Re-scan their original window
     // once, never replace a pinned proof or a payout/reservation.
@@ -240,7 +258,7 @@ export function createNftProcessor({ filename, vault, root, checkpoint = () => {
     catch(error){if(error.name!=="TransactionReceiptNotFoundError")throw error;}
     if(!receipt){checkpoint();await outbox.broadcast(destination,x.id,checkpoint);return;}
     if(receipt.status!=="success"){x.state="manual-review";x.message="Payout needs operator recovery. Do not pay again.";save(x);return;}
-    const inspected=await inspectReceipt(destination,10,row.tx_hash);
+    const inspected=await inspectReceipt(destination,10,row.tx_hash,receipt);
     for(const l of inspected.receipt.logs) {
       if(l.removed||!same(l.address,network.usdc)||!same(l.transactionHash,row.tx_hash)||l.blockNumber!==receipt.blockNumber||!same(l.blockHash,receipt.blockHash))continue;
       let event;try{event=decodeEventLog({abi:erc20Abi,eventName:"Transfer",data:l.data,topics:l.topics,strict:true});}catch{continue;}
@@ -253,6 +271,7 @@ export function createNftProcessor({ filename, vault, root, checkpoint = () => {
   }
 
   return {
+    diagnostics(){return metrics.snapshot();},
     treasuryAddress:wallet.address,
     canRetryUnissuedNft(id) {
       // Only a request that never reached address allocation may be retried.
@@ -261,10 +280,11 @@ export function createNftProcessor({ filename, vault, root, checkpoint = () => {
         !db.prepare("SELECT 1 FROM deposit_addresses WHERE invoice_id=?").get(id) &&
         !db.prepare("SELECT 1 FROM pool_reservations WHERE invoice_id=?").get(id);
     },
+    refreshReadiness,
     publicStatus() {
       const s=ledger.summary(now());
       const availableCheckoutSlots=Math.max(0,ACTIVE_LIMIT-activeCount());
-      return {nftWorkerVersion:"2026-10-11-dollar-three-v7",nftSupported:true,nftPaymentsEnabled:healthy()&&gas>=NFT_POOL_GAS_MIN&&usdc>=pendingUnits()+BigInt(SUBSIDY_UNITS)&&s.availableClaims>0&&availableCheckoutSlots>0,
+      return {nftWorkerVersion:"2026-10-16-rpc-scan-v10",nftReadiness:!healthy()?"network-unavailable":gas<NFT_POOL_GAS_MIN?"gas-needed":usdc<pendingUnits()+BigInt(SUBSIDY_UNITS)||s.fundedAvailableUnits<SUBSIDY_UNITS?"funding-needed":s.availableClaims<=0?"daily-limit":availableCheckoutSlots<=0?"queue-full":"ready",nftSupported:true,nftPaymentsEnabled:healthy()&&gas>=NFT_POOL_GAS_MIN&&usdc>=pendingUnits()+BigInt(SUBSIDY_UNITS)&&s.availableClaims>0&&availableCheckoutSlots>0,
         nftSupportedInitiatives:[...NFT_INITIATIVES],poolChainId:10,poolTreasury:wallet.address,poolUsdc:network.usdc,poolFunder:NFT_POOL_FUNDER,poolFunders:[...NFT_POOL_FUNDERS],poolFunded:s.fundedAvailableUnits>=SUBSIDY_UNITS,
         availableClaims:s.availableClaims,availableCheckoutSlots,nftQueueFull:availableCheckoutSlots===0,reservedTodayUsdc:(s.reservedTodayUnits/1000000).toFixed(2),poolGasReady:gas>=NFT_POOL_GAS_MIN,poolHealthy:healthy()};
     },
@@ -274,8 +294,8 @@ export function createNftProcessor({ filename, vault, root, checkpoint = () => {
       try {
         if(!this.publicStatus().nftPaymentsEnabled)throw new Error("NFT pool is not ready.");
         if(input.mode!=="nft"||input.amount!=="1"||!supportsNft(input.initiativeId)||!isAddress(input.holderAddress)||same(input.holderAddress,zeroAddress)||input.tokenId!==undefined&&(typeof input.tokenId!=="string"||!/^\d{1,78}$/.test(input.tokenId)||BigInt(input.tokenId)>=2n**256n))throw new Error("Invalid holder invoice.");
-        const created=await source.getBlock({blockTag:"finalized"});
-        if(await source.getChainId()!==143)throw new Error("Wrong source chain.");
+        const [created,sourceChain]=await Promise.all([source.getBlock({blockTag:"finalized"}),source.getChainId()]);
+        if(sourceChain!==143)throw new Error("Wrong source chain.");
         if(input.tokenId===undefined) {
           const tokens=await source.readContract({address:PAYMENT_POLICY.nftCollection,abi:nftAbi,functionName:"tokensOfOwner",args:[input.holderAddress],blockNumber:created.number});
           if(!Array.isArray(tokens)||tokens.length>1969||tokens.some(t=>typeof t!=="bigint"||t<0n||t>=2n**256n))throw new Error("Invalid NFT lookup response.");
@@ -305,17 +325,34 @@ export function createNftProcessor({ filename, vault, root, checkpoint = () => {
     get(id){if(!/^[a-f0-9]{64}$/.test(id))return null;const x=load(id);return x?publicInvoice(x):null;},
     async tick() {
       if(running||closed)return;running=true;
-      try {
-        if(await source.getChainId()!==143||await destination.getChainId()!==10)throw new Error("Wrong network.");
-        await syncFunding();healthyAt=now();
+      try {return await metrics.measure("nft-tick",async()=>{
+        const [sourceChain,destinationChain]=await Promise.all([source.getChainId(),destination.getChainId()]);
+        if(sourceChain!==143||destinationChain!==10)throw new Error("Wrong network.");
+        await metrics.measure("nft-funding",syncFunding);fundingVerified=true;healthyAt=now();
         const rows=db.prepare("SELECT document FROM nft_invoices WHERE state IN ('awaiting-payment','verifying','verified','paying','confirming') ORDER BY rowid").all();
-        for(const row of rows){const x=JSON.parse(row.document);try {
-          if(x.state==="awaiting-payment")await observeDeposit(x);
+        // Detection/proofs use independent deposit addresses and can overlap.
+        // Every treasury operation (including nonce reads and signing) stays in
+        // ONE queue. A slow unpaid invoice must not block an existing payout.
+        // Process in bounded groups even when resuming a historical database.
+        let payoutTail=Promise.resolve();
+        const settle=x=>{
+          const result=payoutTail.then(()=>metrics.measure("nft-payout",()=>pay(x)));
+          payoutTail=result.catch(()=>{});return result;
+        };
+        const processRow=async row=>{const x=JSON.parse(row.document);try {
+          if(x.state==="awaiting-payment")await metrics.measure("nft-discovery",()=>observeDeposit(x));
           else if(x.state==="verifying")await verifyPinnedDeposit(x);
-          if(["verified","paying","confirming"].includes(x.state))await pay(x);
-        }catch(error){x.message=error instanceof AwaitingFinalityError?"Waiting for network finality. Do not pay again.":"Processing is paused. Keep this invoice; do not pay again.";save(x);}}
-      } catch(error){healthyAt=0;throw error;}finally{running=false;}
+          if(["verified","paying","confirming"].includes(x.state))await settle(x);
+        }catch(error){x.message=error instanceof AwaitingFinalityError?"Waiting for network finality. Do not pay again.":"Processing is paused. Keep this invoice; do not pay again.";save(x);}};
+        for(let offset=0;offset<rows.length;offset+=ACTIVE_LIMIT){
+          // Drain siblings even if a local storage error escapes processRow.
+          // Never release the tick/signing lock while another task is alive.
+          const results=await Promise.allSettled(rows.slice(offset,offset+ACTIVE_LIMIT).map(processRow));
+          const failure=results.find(result=>result.status==="rejected");
+          if(failure)throw failure.reason;
+        }
+      });} catch(error){fundingVerified=false;healthyAt=0;throw error;}finally{running=false;}
     },
-    async close(){closed=true;while(running||issuing)await new Promise(r=>setTimeout(r,50));db.close();},
+    async close(){closed=true;while(running||issuing||readinessRequest)await new Promise(r=>setTimeout(r,50));db.close();},
   };
 }

@@ -64,6 +64,18 @@ test("station wire has exact donation amount, public nickname and no financial i
   assert.equal(paymentStateDigest(f.settings.profileFilename), profileBefore, "station never writes financial/profile databases");
 });
 
+test("initiative art comes only from finalized source and preserves durable payloads", async t => {
+  const f = await fixture(t); let events = f.start();
+  f.add(1, "delivered", {initiativeId:"solar-foundation"}); f.publish(1,"GX");
+  const before = paymentStateDigest(f.settings.processorFilename);
+  events.sync(true,2000); const wire = events.next(2000);
+  assert.equal(wire.cause,"solar-foundation"); assert.equal(wire.test,undefined);
+  events = f.restart(); events.sync(true,3000); assert.deepEqual(events.next(3000),wire);
+  assert.equal(paymentStateDigest(f.settings.processorFilename),before);
+  assert.throws(()=>stationDonation({...wire,cause:"https://evil.example/image"}),/initiative/);
+  assert.throws(()=>stationDonation({...wire,test:false}),/test marker/);
+});
+
 test("offline or integrity-held worker cannot read new events or forward queued gratitude", async t => {
   const f = await fixture(t), events = f.start(); f.add(1); f.publish(1, "GX");
   assert.equal(events.sync(false, 2000), 0); assert.equal(events.next(5000), null); assert.equal(events.summary().cursor, 0);
@@ -83,7 +95,7 @@ test("nickname grace accepts a late profile without changing an already queued w
 
 test("donors who skip the public profile receive an anonymous thank-you after the nickname grace", async t => {
   const f = await fixture(t), events = f.start(); f.add(1); events.sync(true, 2000);
-  assert.equal(STATION_NICKNAME_GRACE_MS, 30_000);
+  assert.equal(STATION_NICKNAME_GRACE_MS, 8_000);
   assert.equal(events.next(2000 + STATION_NICKNAME_GRACE_MS - 1), null);
   assert.equal(events.next(2000 + STATION_NICKNAME_GRACE_MS).nick, "CHOG FRIEND");
 });
@@ -118,6 +130,79 @@ test("exact CHOG amounts never use floating point or silently round", () => {
   assert.equal(stationAmount("300.000000000000000001"), "300.000000000000000001");
   assert.equal(stationAmount("1000000"), "1000000");
   for (const amount of ["1000000.000000000000000001", "1000001", "0", "-1", "1e3", "NaN", "300\n", "300.1234567890123456789", "000300", "0300", "00.1"]) assert.throws(() => stationAmount(amount));
+});
+
+const arrival = { observedDestinationHash: `0x${"a".repeat(64)}`, observedUsdc: "450000", destinationIncludedAt: 2000, initiativeId: "solar-foundation" };
+
+test("verified arrival triggers gratitude before finality without writing payment state", async t => {
+  const f = await fixture(t), events = f.start();
+  f.add(1, "confirming", arrival); f.publish(1, "GX");
+  const before = paymentStateDigest(f.settings.processorFilename);
+  assert.equal(events.sync(true, 2500), 1);
+  const payload = events.next(2500);
+  assert.equal(payload.nick, "GX"); assert.equal(payload.cause, "solar-foundation");
+  assert.equal(payload.amount, "300"); assert.equal(payload.test, undefined);
+  assert.equal(paymentStateDigest(f.settings.processorFilename), before);
+  assert.equal(f.processor.prepare("SELECT COUNT(*) AS n FROM delivered_events").get().n, 0);
+  events.complete(payload.id, 3000);
+  f.deliver(1); assert.equal(events.sync(true, 4000), 0);
+  assert.equal(events.next(4000), null, "finality must not trigger a second show");
+  assert.deepEqual(events.summary(), { cursor: 1, pending: 0, completed: 1 });
+});
+
+test("arrival persists through restart and finality with the same USB identity", async t => {
+  const f = await fixture(t); let events = f.start();
+  f.add(1, "confirming", arrival); events.sync(true, 2500);
+  assert.equal(events.next(10499), null);
+  const payload = events.next(10500); assert.equal(payload.nick, "CHOG FRIEND");
+  events = f.restart(); f.deliver(1); assert.equal(events.sync(true, 12000), 0);
+  assert.deepEqual(events.next(12000), payload);
+  events.complete(payload.id); events = f.restart(); events.sync(true, 13000);
+  assert.equal(events.next(13000), null);
+});
+
+test("arrival requires a verified receipt, positive amount and post-install inclusion", async t => {
+  const f = await fixture(t), events = f.start();
+  f.add(1, "confirming", { ...arrival, observedDestinationHash: null });
+  f.add(2, "confirming", { ...arrival, observedUsdc: "0" });
+  f.add(3, "confirming", { ...arrival, destinationIncludedAt: 999 });
+  f.add(4, "confirming", { ...arrival, message: "Network verification unavailable" });
+  f.add(5, "bridging", arrival);
+  assert.equal(events.sync(true, 3000), 0); assert.equal(events.next(3000), null);
+});
+
+test("reorganized and offline arrivals are held, then resume without changing their payload", async t => {
+  const f = await fixture(t), events = f.start();
+  const invoice = f.add(1, "confirming", arrival); f.publish(1, "GX");
+  events.sync(true, 2500); const payload = events.next(2500);
+  f.processor.prepare("UPDATE chog_invoices SET state='bridging',document=? WHERE id=?")
+    .run(JSON.stringify({ ...invoice, state: "bridging", observedDestinationHash: null }), invoice.id);
+  events.sync(true, 3000); assert.equal(events.next(3000, payload.id), null);
+  f.processor.prepare("UPDATE chog_invoices SET state='confirming',document=? WHERE id=?").run(JSON.stringify(invoice), invoice.id);
+  events.sync(false, 4000); assert.equal(events.next(4000, payload.id), null);
+  events.sync(true, 5000); assert.deepEqual(events.next(5000, payload.id), payload);
+});
+
+test("pending arrival keeps its turn when another invoice finalizes", async t => {
+  const f = await fixture(t), events = f.start();
+  f.add(1, "confirming", arrival); f.publish(1, "GX");
+  events.sync(true, 2500); const payload = events.next(2500);
+  f.add(2); f.publish(2, "Next donor"); events.sync(true, 3000);
+  assert.deepEqual(events.next(3000, payload.id), payload);
+  events.complete(payload.id); assert.equal(events.next(4000).nick, "Next donor");
+});
+
+test("existing v1 station queue is preserved while adding arrival support", async t => {
+  const f = await fixture(t); let events = f.start();
+  f.add(1); f.publish(1, "Existing donor"); events.sync(true, 2000);
+  const payload = events.next(2000);
+  // Represents the old installation: no arrival table and existing v1 outbox.
+  const sidecar = new DatabaseSync(f.settings.stationFilename);
+  sidecar.exec("DROP TABLE station_arrivals"); sidecar.close();
+  events = f.restart(); events.sync(true, 3000);
+  assert.deepEqual(events.next(3000), payload);
+  events.complete(payload.id); f.add(2, "confirming", arrival); f.publish(2, "New donor");
+  assert.equal(events.sync(true, 4000), 1); assert.equal(events.next(4000).nick, "New donor");
 });
 
 test("screen nickname sanitization is UTF-8 bounded and transliterates unsupported Latin glyphs", () => {

@@ -9,236 +9,181 @@
 #include "StationConfig.h"
 #include "StationArt.h"
 
-// A band compositor writes finished pixels straight to the TFT. No fillScreen
-// between frames and no full-sized RGB framebuffer on the ESP8266.
+// One 15 KB strip, never a full-screen framebuffer. The initiative is text
+// only; the small ChogCare coin remains on the amount/thank-you screens.
 class StationDisplay {
  public:
   StationDisplay() : tft(StationConfig::TFT_CS, StationConfig::TFT_DC,
                          StationConfig::TFT_RST), band(240, StationConfig::STRIP_HEIGHT) {}
-
   bool begin() {
     if (!band.getBuffer()) return false;
-    tft.init(240, 320);
-    tft.setRotation(StationConfig::ROTATION);
-    tft.setSPISpeed(StationConfig::SPI_HZ);
-    tft.setTextWrap(false);
-    type.begin(band);
-    type.setFontMode(1);
-    type.setFontDirection(0);
-    amount[0] = nick[0] = '\0';
-    renderFull();
-    return true;
+    tft.init(240, 320); tft.setRotation(StationConfig::ROTATION);
+    tft.setSPISpeed(StationConfig::SPI_HZ); tft.setTextWrap(false);
+    type.begin(band); type.setFontMode(1); type.setFontDirection(0);
+    renderFull(); return true;
   }
-
   void setConnected(bool value) {
     if (connected == value) return;
     connected = value;
-    renderBand(0);
+    if (!active) renderBand(0);
   }
-
-  void show(const char *nickname, const char *chog, uint32_t now) {
-    strlcpy(nick, nickname, sizeof(nick));
-    formatAmount(chog);
-    prepareTypography();
-    active = true;
-    startedAt = now;
-    frameAt = now;
+  void show(const char *nickname, const char *chog, const char *cause, bool isTest, uint32_t now) {
+    strlcpy(nick, nickname, sizeof(nick)); formatAmount(chog);
+    test = isTest || !strcmp(nick, "TEST - NO PAYMENT") || !strcmp(nick, "DEMO");
+    title1 = "A cause you chose"; title2 = "Real-world care";
+    if (!strcmp(cause, "school-supplies")) { title1 = "School supplies"; title2 = "Crypto education"; }
+    else if (!strcmp(cause, "vida-verde")) { title1 = "+Vida +Verde"; title2 = "Venezuela"; }
+    else if (!strcmp(cause, "solar-foundation")) { title1 = "The Solar"; title2 = "Foundation"; }
+    else if (!strcmp(cause, "animal-ethics")) { title1 = "Animal Ethics"; title2 = ""; }
+    else if (!strcmp(cause, "burundi")) { title1 = "Perfect Villages"; title2 = "Burundi"; }
+    type.setFont(u8g2_font_10x20_t_cyrillic); nicknameWidth = type.getUTF8Width(nick) + 1;
+    int16_t x, y; uint16_t w, h;
+    band.setFont(&FreeSansBold24pt7b); band.getTextBounds(amount, 0, 0, &x, &y, &w, &h);
+    amountWidth = w; amountBearing = x; band.setFont(nullptr);
+    active = true; startedAt = frameAt = now; age = 0; lastScene = 0;
     renderFull();
   }
-
-  void idle() {
-    active = false;
-    renderFull();
-  }
-
+  void idle() { active = false; age = 0; renderFull(); }
   void animate(uint32_t now) {
     const uint32_t elapsed = now - frameAt;
     if (elapsed < StationConfig::FRAME_MS) return;
     frameAt = now;
-    // Keep phases small for continuous 24/7 operation. Converting the total
-    // uptime to float loses animation precision after long uptimes.
-    orbitPhase = fmodf(orbitPhase + min(elapsed, uint32_t(1000)) * 0.00028f, TWO_PI);
+    orbitPhase = fmodf(orbitPhase + min(elapsed, uint32_t(1000)) * 0.0018f, TWO_PI);
     age = active ? now - startedAt : 0;
-    // Redraw each moving strip once. Overflowing names/amounts move in the
-    // original large font; short text remains steady, not repeatedly resized.
+    const uint8_t current = scene();
+    const bool full = active && current != lastScene;
     for (int16_t y = 0; y < 320; y += StationConfig::STRIP_HEIGHT) {
-      const bool movingArt = active ? y >= 96 && y <= 192 : y >= 64 && y <= 192;
-      const bool movingName = active && nicknameWidth > TEXT_WIDTH && y >= 64 && y <= 96;
-      const bool movingAmount = active && amountWidth > TEXT_WIDTH && y >= 192 && y <= 256;
-      if (movingArt || movingName || movingAmount) renderBand(y);
+      const bool moving = active ?
+        (y == 288 || (current == 1 && amountWidth > 216 && y >= 160 && y <= 224) ||
+         (current == 2 && y >= 64 && y <= 160) ||
+         (current == 2 && nicknameWidth > 216 && y >= 224 && y <= 256)) : y >= 64 && y <= 192;
+      if (full || moving) renderBand(y);
     }
+    lastScene = current;
   }
 
  private:
-  static constexpr int16_t TEXT_LEFT = 12, TEXT_WIDTH = 216;
   Adafruit_ST7789 tft;
   GFXcanvas16 band;
   U8G2_FOR_ADAFRUIT_GFX type;
-  bool active = false, connected = false;
+  bool active = false, connected = false, test = false;
   uint32_t startedAt = 0, frameAt = 0, age = 0;
+  uint8_t lastScene = 0;
   float orbitPhase = 0;
-  int16_t bandY = 0;
-  int16_t nicknameWidth = 0, amountWidth = 0, amountBearing = 0;
-  const GFXfont *amountFont = &FreeSansBold24pt7b;
-  uint8_t amountScale = 1;
+  int16_t bandY = 0, nicknameWidth = 0, amountWidth = 0, amountBearing = 0;
   char nick[97] = {}, amount[32] = {};
-
-  static uint16_t rgb(uint8_t r, uint8_t g, uint8_t b) {
-    return ((r & 0xf8) << 8) | ((g & 0xfc) << 3) | (b >> 3);
-  }
-  static float ease(float x) { x = constrain(x, 0.0f, 1.0f); return x * x * (3 - 2 * x); }
+  const char *title1 = "", *title2 = "";
+  static uint16_t rgb(uint8_t r, uint8_t g, uint8_t b) { return ((r & 0xf8) << 8) | ((g & 0xfc) << 3) | (b >> 3); }
   static uint16_t background() { return rgb(15, 5, 25); }
-  bool intersects(int16_t top, int16_t bottom) const {
-    return bandY < bottom && bandY + StationConfig::STRIP_HEIGHT > top;
+  static uint16_t ink() { return rgb(252, 247, 255); }
+  static uint16_t pink() { return rgb(255, 163, 215); }
+  static uint16_t muted() { return rgb(181, 165, 203); }
+  static float ease(float x) { x = constrain(x, 0.0f, 1.0f); return x * x * (3 - 2 * x); }
+  uint8_t scene() const { return age < StationConfig::PHOTO_MS ? 0 : age < StationConfig::PHOTO_MS + StationConfig::AMOUNT_MS ? 1 : 2; }
+  uint32_t sceneAge() const { return age - (scene() == 0 ? 0 : scene() == 1 ? StationConfig::PHOTO_MS : StationConfig::PHOTO_MS + StationConfig::AMOUNT_MS); }
+  uint32_t sceneDuration() const { return scene() == 0 ? StationConfig::PHOTO_MS : scene() == 1 ? StationConfig::AMOUNT_MS : StationConfig::THANKS_MS; }
+  bool intersects(int16_t top, int16_t bottom) const { return bandY < bottom && bandY + StationConfig::STRIP_HEIGHT > top; }
+  void line(int16_t x1, int16_t y1, int16_t x2, int16_t y2, uint16_t color) { band.drawLine(x1, y1 - bandY, x2, y2 - bandY, color); }
+  void dot(int16_t x, int16_t y, int16_t radius, uint16_t color) { band.fillCircle(x, y - bandY, radius, color); }
+  void small(const char *value, int16_t x, int16_t baseline, uint16_t color) {
+    type.setFont(u8g2_font_6x12_tf); type.setForegroundColor(color);
+    type.setCursor(x, baseline - bandY); type.print(value);
   }
-  void line(int16_t x1, int16_t y1, int16_t x2, int16_t y2, uint16_t color) {
-    band.drawLine(x1, y1 - bandY, x2, y2 - bandY, color);
-  }
-  void dot(int16_t x, int16_t y, int16_t radius, uint16_t color) {
-    band.fillCircle(x, y - bandY, radius, color);
-  }
-  void text(const char *value, const uint8_t *font, int16_t x, int16_t baseline, uint16_t color) {
-    type.setFont(font);
-    type.setForegroundColor(color);
-    type.setCursor(x, baseline - bandY);
-    type.print(value);
-    // One-pixel overstrike makes the Cyrillic strokes survive webcam scaling.
-    type.setCursor(x + 1, baseline - bandY);
-    type.print(value);
-  }
-  int16_t textX(int16_t width) const {
-    if (width <= TEXT_WIDTH) return (240 - width) / 2;
-    // A full pass within the 20-second show, with time to read both ends.
-    // age is wrap-safe and identical for every strip in the current frame.
-    const uint32_t travel = age > 1500 ? min(age - 1500, uint32_t(16000)) : 0;
-    const int16_t offset = lroundf((width - TEXT_WIDTH) * ease(travel / 16000.0f));
-    return TEXT_LEFT - offset;
-  }
-  void maskTextMargins(int16_t top, int16_t bottom) {
-    band.fillRect(0, top - bandY, TEXT_LEFT, bottom - top, background());
-    band.fillRect(240 - TEXT_LEFT, top - bandY, TEXT_LEFT, bottom - top, background());
-  }
-  void prepareTypography() {
-    type.setFont(u8g2_font_inr24_t_cyrillic);
-    nicknameWidth = type.getUTF8Width(nick) + 1;
-    int16_t x, y; uint16_t width, height;
-    amountFont = &FreeSansBold24pt7b;
-    amountScale = 1;
-    band.setFont(amountFont);
-    band.setTextSize(amountScale);
-    band.getTextBounds(amount, 0, 0, &x, &y, &width, &height);
-    // Precise long values scroll at this same moderate size, without rounding.
-    amountWidth = width; amountBearing = x;
-    band.setTextSize(1);
-    band.setFont(nullptr);
+  void smallCenter(const char *value, int16_t baseline, uint16_t color) {
+    type.setFont(u8g2_font_6x12_tf); small(value, (240 - type.getUTF8Width(value)) / 2, baseline, color);
   }
   void gfxCenter(const char *value, const GFXfont *font, int16_t baseline, uint16_t color) {
-    int16_t x, y; uint16_t width, height;
-    band.setFont(font);
-    band.setTextSize(1);
-    band.getTextBounds(value, 0, 0, &x, &y, &width, &height);
-    band.setTextColor(color);
-    band.setCursor((240 - width) / 2 - x, baseline - bandY);
-    band.print(value);
-    band.setFont(nullptr);
+    int16_t x, y; uint16_t w, h;
+    band.setFont(font); band.setTextSize(1); band.getTextBounds(value, 0, 0, &x, &y, &w, &h);
+    band.setTextColor(color); band.setCursor((240 - w) / 2 - x, baseline - bandY); band.print(value); band.setFont(nullptr);
   }
-  void charityRoute(int16_t baseline, uint16_t ink, uint16_t accent) {
-    int16_t x, y; uint16_t leftWidth, rightWidth, height;
-    band.setFont(&FreeSansBold12pt7b);
-    band.setTextSize(1);
-    band.getTextBounds("CHOG", 0, 0, &x, &y, &leftWidth, &height);
-    const int16_t leftBearing = x;
-    band.getTextBounds("CHARITY", 0, 0, &x, &y, &rightWidth, &height);
-    const int16_t rightBearing = x;
-    const int16_t start = (240 - leftWidth - rightWidth - 40) / 2;
-    band.setTextColor(ink);
-    band.setCursor(start - leftBearing, baseline - bandY);
-    band.print("CHOG");
-    const int16_t arrowX = start + leftWidth + 8, arrowY = baseline - 8;
-    line(arrowX, arrowY, arrowX + 23, arrowY, accent);
-    line(arrowX + 18, arrowY - 5, arrowX + 23, arrowY, accent);
-    line(arrowX + 18, arrowY + 5, arrowX + 23, arrowY, accent);
-    band.setTextColor(accent);
-    band.setCursor(arrowX + 32 - rightBearing, baseline - bandY);
-    band.print("CHARITY");
-    band.setFont(nullptr);
+  void initiativeTitle(const char *value, int16_t baseline, uint16_t color) {
+    if (!value[0]) return;
+    int16_t x, y; uint16_t w, h;
+    band.setFont(&FreeSansBold18pt7b); band.getTextBounds(value, 0, 0, &x, &y, &w, &h);
+    gfxCenter(value, w <= 216 ? &FreeSansBold18pt7b : &FreeSansBold12pt7b, baseline, color);
+  }
+  int16_t textX(int16_t width) const {
+    if (width <= 216) return (240 - width) / 2;
+    const uint32_t local = sceneAge();
+    const float progress = local <= 650 ? 0 : min(local - 650, uint32_t(3200)) / 3200.0f;
+    return 12 - lroundf((width - 216) * ease(progress));
+  }
+  void mask(int16_t top, int16_t height) {
+    band.fillRect(0, top - bandY, 12, height, background());
+    band.fillRect(228, top - bandY, 12, height, background());
   }
   void coin(const uint16_t *pixels, int16_t size, int16_t left, int16_t top) {
-    // Clip before drawing: only the rows in this 32px band are read from flash.
-    // Keep the const pointer: Adafruit_GFX's PROGMEM overload uses pgm_read_word.
-    const int16_t first = max(top, bandY);
-    const int16_t last = min(int16_t(top + size), int16_t(bandY + StationConfig::STRIP_HEIGHT));
-    if (first >= last) return;
-    band.drawRGBBitmap(left, first - bandY, pixels + (first - top) * size, size, last - first);
+    const int16_t first = max(top, bandY), last = min(int16_t(top + size), int16_t(bandY + StationConfig::STRIP_HEIGHT));
+    if (first < last) band.drawRGBBitmap(left, first - bandY, pixels + (first - top) * size, size, last - first);
+  }
+  void heart(int16_t x, int16_t y, int16_t size) {
+    dot(x - size / 2, y, size / 2, pink()); dot(x + size / 2, y, size / 2, pink());
+    band.fillTriangle(x - size, y - bandY, x + size, y - bandY, x, y + size - bandY, pink());
+  }
+  void chrome() {
+    for (uint8_t i = 0; i < 3; ++i) band.fillRoundRect(12 + i * 74, 6 - bandY, 68, 3, 1, i == scene() ? pink() : rgb(55, 34, 76));
+    const char *label = scene() == 0 ? "YOUR IMPACT" : scene() == 1 ? "YOUR DONATION" : "WITH GRATITUDE";
+    small(label, 12, 29, muted());
+    if (test) small("TEST / NO PAYMENT", 132, 29, pink());
+    if (intersects(314, 320)) {
+      band.fillRect(12, 315 - bandY, 216, 2, rgb(55, 34, 76));
+      band.fillRect(12, 315 - bandY, min(uint32_t(216), age * 216 / StationConfig::SHOW_MS), 2, pink());
+    }
   }
   void renderFull() {
-    age = 0;
-    for (int16_t y = 0; y < 320; y += StationConfig::STRIP_HEIGHT) {
-      renderBand(y);
-      yield();
-    }
+    for (int16_t y = 0; y < 320; y += StationConfig::STRIP_HEIGHT) { renderBand(y); yield(); }
   }
   void renderBand(int16_t y) {
-    bandY = y;
-    // Compose finished pixels offscreen; no physical fillScreen between frames.
-    band.fillScreen(background());
-    const uint16_t ink = rgb(255, 255, 255), pink = rgb(255, 163, 229);
-    if (intersects(0, 10)) dot(232, 6, 3, connected ? rgb(133, 255, 205) : rgb(91, 58, 111));
-    if (active) {
-      if (intersects(0, 56)) gfxCenter("Thank you", &FreeSansBold18pt7b, 46, pink);
-      if (intersects(64, 112)) {
-        text(nick, u8g2_font_inr24_t_cyrillic, textX(nicknameWidth), 96, ink);
-        maskTextMargins(64, 112);
-      }
-      if (intersects(112, 208)) {
-        coin(StationArt::DonationCoin, StationArt::DonationCoinSize, 72, 112);
-        for (uint8_t i = 0; i < 4; ++i) {
-          const float a = orbitPhase + i * TWO_PI / 4;
-          // Stay beside the image and clear of the name and amount slots.
-          const int16_t dx = lroundf(cosf(a) * 58), dy = lroundf(sinf(a) * 42);
-          if (abs(dx) >= 51) dot(120 + dx, 160 + dy, 2, pink);
-        }
-      }
-      if (intersects(208, 272)) { drawAmount(254, ink); maskTextMargins(208, 272); }
-      if (intersects(272, 308)) gfxCenter("CHOG", &FreeSansBold12pt7b, 291, pink);
-    } else {
-      if (intersects(0, 56)) gfxCenter("ChogCare", &FreeSansBold18pt7b, 46, ink);
+    bandY = y; band.fillScreen(background());
+    if (!active) {
+      if (intersects(0, 56)) { gfxCenter("ChogCare", &FreeSansBold18pt7b, 46, ink()); dot(232, 6, 3, connected ? rgb(133, 255, 205) : rgb(91, 58, 111)); }
       if (intersects(72, 224)) {
-        coin(StationArt::IdleCoin, StationArt::IdleCoinSize, 56, 84);
-        for (uint8_t i = 0; i < 2; ++i) {
-          const float a = orbitPhase + i * PI;
-          const int16_t dx = lroundf(cosf(a) * 75), dy = lroundf(sinf(a) * 70);
-          if (abs(dx) >= 68 || abs(dy) >= 68) dot(120 + dx, 148 + dy, 2, pink);
-        }
+        coin(StationArt::IdleCoin, 128, 56, 84);
+        for (uint8_t i = 0; i < 2; ++i) { const float a = orbitPhase + i * PI; const int16_t dx = lroundf(cosf(a) * 75), dy = lroundf(sinf(a) * 70); if (abs(dx) >= 68 || abs(dy) >= 68) dot(120 + dx, 148 + dy, 2, pink()); }
       }
-      if (intersects(248, 296)) charityRoute(275, ink, pink);
+      if (intersects(248, 296)) { gfxCenter("CHOG", &FreeSansBold12pt7b, 265, ink()); smallCenter("SMALL GIFTS. REAL CARE.", 293, muted()); }
+    } else {
+      if (scene() == 0) {
+        if (intersects(64, 96)) smallCenter("Your care goes to", 86, muted());
+        if (intersects(112, 192)) {
+          initiativeTitle(title1, title2[0] ? 145 : 164, ink());
+          initiativeTitle(title2, 187, pink());
+        }
+        if (intersects(208, 240)) line(84, 220, 156, 220, pink());
+        if (intersects(288, 312)) {
+          smallCenter(test ? "INITIATIVE PREVIEW" : "A cause you supported", 304, muted());
+        }
+      } else if (scene() == 1) {
+        if (intersects(48, 144)) coin(StationArt::DonationCoin, 96, 72, 48);
+        if (intersects(156, 216)) {
+          band.setFont(&FreeSansBold24pt7b); band.setTextColor(ink()); band.setCursor(textX(amountWidth) - amountBearing, 205 - bandY); band.print(amount); band.setFont(nullptr); mask(156, 60);
+        }
+        if (intersects(220, 312)) {
+          gfxCenter("CHOG", &FreeSansBold12pt7b, 237, pink());
+          smallCenter("Original donation amount", 263, muted());
+          smallCenter(test ? "SIMULATED - NO FUNDS MOVED" : "Cause delivery confirmed", 290, ink());
+        }
+      } else {
+        if (intersects(48, 176)) coin(StationArt::IdleCoin, 128, 56, 48);
+        if (intersects(64, 164)) { const int16_t size = 5 + lroundf(2 * (sinf(orbitPhase * 2) + 1)); heart(32, 108, size); heart(208, 108, size); }
+        if (intersects(184, 220)) gfxCenter("Thank you!", &FreeSansBold18pt7b, 214, pink());
+        if (intersects(224, 264)) {
+          if (test) gfxCenter("CHOG FRIEND", &FreeSansBold12pt7b, 253, ink());
+          else { type.setFont(u8g2_font_10x20_t_cyrillic); type.setForegroundColor(ink()); type.setCursor(textX(nicknameWidth), 253 - bandY); type.print(nick); mask(224, 40); }
+        }
+        if (intersects(272, 312)) { smallCenter("You made a difference.", 283, ink()); smallCenter(test ? "SCREEN PREVIEW ONLY" : "Real people. Real care.", 304, muted()); }
+      }
+      chrome();
     }
-    tft.drawRGBBitmap(0, y, band.getBuffer(), 240, StationConfig::STRIP_HEIGHT);
-    yield();
+    tft.drawRGBBitmap(0, y, band.getBuffer(), 240, StationConfig::STRIP_HEIGHT); yield();
   }
   void formatAmount(const char *value) {
     const char *decimal = strchr(value, '.');
     const size_t whole = decimal ? static_cast<size_t>(decimal - value) : strlen(value);
     uint8_t at = 0;
-    for (size_t i = 0; i < whole; ++i) {
-      amount[at++] = value[i];
-      if (i + 1 < whole && (whole - i - 1) % 3 == 0) amount[at++] = ',';
-    }
-    if (decimal) {
-      const size_t fraction = strlen(decimal);
-      memcpy(amount + at, decimal, fraction);
-      at += fraction;
-    }
+    for (size_t i = 0; i < whole; ++i) { amount[at++] = value[i]; if (i + 1 < whole && (whole - i - 1) % 3 == 0) amount[at++] = ','; }
+    if (decimal) { const size_t fraction = strlen(decimal); memcpy(amount + at, decimal, fraction); at += fraction; }
     amount[at] = '\0';
-  }
-  void drawAmount(int16_t baseline, uint16_t color) {
-    band.setFont(amountFont);
-    band.setTextSize(amountScale);
-    band.setTextWrap(false);
-    band.setTextColor(color);
-    band.setCursor(textX(amountWidth) - amountBearing, baseline - bandY);
-    band.print(amount);
-    band.setTextSize(1);
-    band.setFont(nullptr);
   }
 };

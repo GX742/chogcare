@@ -1,17 +1,29 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
+import { flushSync } from "react-dom";
 import type HlsType from "hls.js";
-import { ArrowLeft, ArrowRight, ArrowUpRight, Check, Copy, Broadcast, X, XLogo } from "@phosphor-icons/react";
+import { ArrowRight, ArrowUpRight, Check, Copy, Broadcast, ChatCircle, X, XLogo } from "@phosphor-icons/react";
+import { useGSAP } from "@gsap/react";
+import gsap from "gsap";
 import PaymentCheckout from "./PaymentCheckout";
-import HeartField from "./HeartField";
+import ChangeInitiative from "./ChangeInitiative";
+import SunsetScene from "./SunsetScene";
+import GivingExplainer from "./GivingExplainer";
+import { landingPositioned, transitionLanding } from "./landing-transition";
 import { GIVETH_PROJECT_URL } from "./route";
-import { checkoutChanged, checkoutSelection, rememberMode } from "./checkout-session";
+import { checkoutChanged, checkoutSelection, rememberMode, savedCheckoutModes } from "./checkout-session";
 import CheckoutRecovery from "./CheckoutRecovery";
 import CheckoutSizeTransition from "./CheckoutSizeTransition";
 import Leaderboard from "./Leaderboard";
-import { createLiveLoadState, createLiveResumeSync, createLiveRetryBudget, liveHlsConfig, livePlaybackStrategy, liveSegmentSeconds, recoverLiveNetwork, DEFAULT_LIVE_SEGMENT_SECONDS, type LiveLoadState } from "./live-player";
+import SupportDialog from "./SupportDialog";
+import type { SupportContext } from "./support-model";
+import { createLiveLoadState, createLiveResumeSync, createLiveRetryBudget, liveHlsConfig, livePlaybackStrategy, liveSegmentSeconds, portraitFrameAspect, recoverLiveNetwork, DEFAULT_LIVE_SEGMENT_SECONDS, type LiveLoadState } from "./live-player";
 import { broadcastStreamUrl } from "./broadcast-source";
 
 import "./station-redesign.css";
+import "./sunset-redesign.css";
+import "./payment-entry.css";
+import "./payment-invoice.css";
+import "./leaderboard-impact.css";
 
 type Initiative = {
   id: string;
@@ -21,6 +33,7 @@ type Initiative = {
   image: string;
   imageAlt: string;
   summary: string;
+  cardSummary?: string;
   details: string;
   raised: number | null;
   archived?: boolean;
@@ -54,22 +67,10 @@ const initiatives: Initiative[] = [
     image: "https://giveth.mypinata.cloud/ipfs/QmfZ6YaqHL6FnS3WSXrhAZv1ukahK4JUacZvX7phofqiFg",
     imageAlt: "Basic school supplies and crypto education initiative on Giveth",
     summary: "Helps children in Nigeria stay in school with essential learning supplies. The initiative also teaches communities how to use cryptocurrency.",
-    details: "Basic school supplies and crypto education initiative is a verified Giveth project by Helpers Social Development Foundation. It brings together school supplies and crypto education. The foundation supports access to education for vulnerable children in Nigeria. Explore its project page for updates and donation history. ChogCare supports CHOG donations and NFT-pool grants; checkout checks the worker, funds and current quote before issuing a QR.",
+    cardSummary: "School supplies for children in Nigeria, alongside community crypto education.",
+    details: "Basic school supplies and crypto education initiative is a verified Giveth project by Helpers Social Development Foundation. It brings together school supplies and crypto education. The foundation supports access to education for vulnerable children in Nigeria. Explore its project page for updates and donation history. ChogCare supports $CHOG donations and NFT-pool grants; checkout checks the worker, funds and current quote before issuing a QR.",
     raised: 9516.85,
     givethUrl: "https://giveth.io/project/basic-school-supplies-and-crypto-education-initiative?tab=donations",
-    live: true,
-  },
-  {
-    id: "solar-foundation",
-    name: "The Solar Foundation",
-    category: "Clean energy",
-    location: "Global",
-    image: "https://giveth.mypinata.cloud/ipfs/QmccBU7Xwx4cjAgrArNT9TVRffGDnaZpxgRZynrZq3bhs2",
-    imageAlt: "The Solar Foundation project on Giveth",
-    summary: "Funds off-grid solar power and useful appliances in underserved communities, helping people rely less on kerosene and diesel.",
-    details: "The Solar Foundation funds access to off-grid solar energy and productive appliances for underserved communities in emerging markets. It works with local organizations to support reliable power for schools, community spaces and farming projects, reducing reliance on kerosene and diesel. The project is verified on Giveth. ChogCare supports CHOG donations and NFT-pool grants when the payment worker is ready.",
-    raised: 6587.22,
-    givethUrl: "https://giveth.io/project/the-solar-foundation?tab=donations",
     live: true,
   },
   {
@@ -80,9 +81,24 @@ const initiatives: Initiative[] = [
     image: "https://giveth.mypinata.cloud/ipfs/QmcStBE4boayqj8rweKLikbBVyesDxfkDharb3V8rT7mQP",
     imageAlt: "The Vida Verde environmental community in Venezuela",
     summary: "A Venezuelan collective restoring the local environment through community action, environmental education and art near Caracas.",
+    cardSummary: "Community-led environmental restoration, education and art near Caracas.",
     details: "+Vida +Verde is a Venezuelan collective using education, art and community action to restore the environment. Its work is rooted in a rural area near Caracas and turns local participation into practical conservation. The project is verified on Giveth and regularly publishes updates.",
     raised: 3965.65,
     givethUrl: "https://giveth.io/project/vida-verde-venezuela",
+    live: true,
+  },
+  {
+    id: "solar-foundation",
+    name: "The Solar Foundation",
+    category: "Clean energy",
+    location: "Global",
+    image: "/solar-foundation-community.jpg",
+    imageAlt: "Community members holding solar-powered lights from The Solar Foundation",
+    summary: "Funds off-grid solar power and useful appliances in underserved communities, helping people rely less on kerosene and diesel.",
+    cardSummary: "Off-grid solar power and practical appliances for underserved communities.",
+    details: "The Solar Foundation funds access to off-grid solar energy and productive appliances for underserved communities in emerging markets. It works with local organizations to support reliable power for schools, community spaces and farming projects, reducing reliance on kerosene and diesel. The project is verified on Giveth. ChogCare supports $CHOG donations and NFT-pool grants when the payment worker is ready.",
+    raised: 6587.22,
+    givethUrl: "https://giveth.io/project/the-solar-foundation?tab=donations",
     live: true,
   },
   {
@@ -93,7 +109,8 @@ const initiatives: Initiative[] = [
     image: "/animal-ethics-mark.png",
     imageAlt: "Animal Ethics logo",
     summary: "Researches animal suffering and shares practical knowledge about helping animals, including those living in the wild. Supports education and public outreach.",
-    details: "Animal Ethics works through research, education and public outreach to reduce animal suffering, including suffering in the wild. ChogCare exchanges CHOG into the organization's accepted donation currency and delivers it to its published address. The checkout verifies the donation receipt before showing success. This is an independent organization, not a Giveth-listed initiative or a ChogCare partner.",
+    cardSummary: "Research and education to reduce animal suffering, including in the wild.",
+    details: "Animal Ethics works through research, education and public outreach to reduce animal suffering, including suffering in the wild. ChogCare exchanges $CHOG into the organization's accepted donation currency and delivers it to its published address. The checkout verifies the donation receipt before showing success. This is an independent organization, not a Giveth-listed initiative or a ChogCare partner.",
     raised: null,
     external: false,
     externalLabel: "Official donation instructions",
@@ -119,8 +136,10 @@ function shortAddress(address: string) {
 
 function Brand({ footer = false, onHome }: { footer?: boolean; onHome?: () => void }) {
   return <a href="#top" onClick={event => { if (onHome) { event.preventDefault(); onHome(); } }} className={`brand${footer ? " footer-brand" : ""}`} aria-label="ChogCare home">
-    <img src="/chogcare-sunset.png" width="64" height="64" alt="ChogCare logo" />
-    <span className="brand-titles"><span className="brand-name">Chog<span className="brand-care">Care</span></span><span className="brand-collab"><span aria-label="in collaboration with">×</span><span className="collab-name">Chogathon 2026</span></span></span>
+    {footer ? <img className="care-brand-icon" src="/chogcare-care-logo.png" width="1254" height="1254" alt="ChogCare logo" /> : <>
+      <img className="care-header-icon" src="/chogcare-care-logo.png" width="1254" height="1254" alt="" />
+      <img className="care-header-wordmark" src="/chogcare-wordmark.png" width="610" height="200" alt="ChogCare" />
+    </>}
   </a>;
 }
 
@@ -137,14 +156,14 @@ function owncastStreamUrl() {
   return broadcastStreamUrl(import.meta.env.VITE_OWNCAST_URL?.trim(), window.location.origin);
 }
 
-function NativeLivePlayer({ src, onReady, onWaiting }: { src: string; onReady: () => void; onWaiting: () => void }) {
+function NativeLivePlayer({ src, onReady, onWaiting, onAspect }: { src: string; onReady: () => void; onWaiting: () => void; onAspect: (ratio: number | undefined) => void }) {
   const videoRef = useRef<HTMLVideoElement>(null);
-  const callbacks = useRef({ onReady, onWaiting });
+  const callbacks = useRef({ onReady, onWaiting, onAspect });
   const playAction = useRef<(() => void) | null>(null);
   const [loadState, setLoadState] = useState<LiveLoadState>("loading");
   const [attempt, setAttempt] = useState(0);
 
-  useEffect(() => { callbacks.current = { onReady, onWaiting }; }, [onReady, onWaiting]);
+  useEffect(() => { callbacks.current = { onReady, onWaiting, onAspect }; }, [onReady, onWaiting, onAspect]);
 
   useEffect(() => {
     const video = videoRef.current;
@@ -192,7 +211,12 @@ function NativeLivePlayer({ src, onReady, onWaiting }: { src: string; onReady: (
       resumeSync.request();
       startPlayback();
     };
-    const metadata = () => { resumeSync.request(); startPlayback(); };
+    const metadata = () => {
+      // Adapt to the real portrait camera, but keep landscape offline screens
+      // contained in the established frame instead of cropping them again.
+      callbacks.current.onAspect(portraitFrameAspect(video.videoWidth, video.videoHeight));
+      resumeSync.request(); startPlayback();
+    };
     const canPlay = () => { resumeSync.update(); };
     const visibility = () => {
       if (document.hidden) { wasHidden = true; loadMonitor.suspend(); return; }
@@ -284,6 +308,7 @@ function NativeLivePlayer({ src, onReady, onWaiting }: { src: string; onReady: (
     />
     {loadState !== "playing" && <div className="lp-broadcast-loading lp-broadcast-state" role="status" aria-live="polite">
       {loadState === "loading" ? <><i aria-hidden="true"/><span>Loading live broadcast…</span></> : <>
+        <span className="care-broadcast-state-icon" aria-hidden="true"><Broadcast size={30} weight="light" /></span>
         <strong>{loadState === "blocked" ? "Ready when you are." : "Broadcast unavailable"}</strong>
         <span>{loadState === "blocked" ? "Your browser needs a tap to start the video." : "We couldn’t load the stream. You can try again."}</span>
         <button type="button" onClick={() => { if (loadState === "blocked") playAction.current?.(); else setAttempt(value => value + 1); }}>{loadState === "blocked" ? "Play broadcast" : "Retry broadcast"}</button>
@@ -292,19 +317,19 @@ function NativeLivePlayer({ src, onReady, onWaiting }: { src: string; onReady: (
   </>;
 }
 
-function BroadcastPanel({ headingId }: { headingId: string }) {
+function BroadcastPanel({ headingId, portraitAspect, onAspect }: { headingId: string; portraitAspect: number | undefined; onAspect: (ratio: number | undefined) => void }) {
   const [playerLoaded, setPlayerLoaded] = useState(false);
   const owncastUrl = owncastStreamUrl();
   const twitchUrl = twitchChannel
     ? `https://player.twitch.tv/?channel=${encodeURIComponent(twitchChannel)}&parent=${encodeURIComponent(window.location.hostname)}&muted=true&autoplay=true`
     : null;
 
-  return <div className="care-stream">
+  return <div className="care-stream" data-camera-fit={portraitAspect ? "portrait" : "fallback"} style={portraitAspect ? { aspectRatio: portraitAspect } : undefined}>
     <section className="lp-broadcast-frame" aria-labelledby={headingId}>
       <div className="lp-broadcast-interior">
         {owncastUrl || twitchUrl ? <>
           <h2 id={headingId} className="sr-only">ChogCare live broadcast</h2>
-          {owncastUrl ? <NativeLivePlayer src={owncastUrl} onReady={() => setPlayerLoaded(true)} onWaiting={() => setPlayerLoaded(false)} /> : <iframe
+          {owncastUrl ? <NativeLivePlayer src={owncastUrl} onReady={() => setPlayerLoaded(true)} onWaiting={() => setPlayerLoaded(false)} onAspect={onAspect} /> : <iframe
               className={`lp-broadcast-player${playerLoaded ? " is-ready" : ""}`}
               src={twitchUrl ?? undefined}
               title="ChogCare live broadcast"
@@ -314,8 +339,8 @@ function BroadcastPanel({ headingId }: { headingId: string }) {
               allowFullScreen
               onLoad={() => setPlayerLoaded(true)}
             />}
-          <span className="lp-broadcast-live" role="status" aria-label="Live broadcast">
-            <i aria-hidden="true" />LIVE
+          <span className={`lp-broadcast-live${playerLoaded ? "" : " is-waiting"}`} role="status" aria-label={playerLoaded ? "Live broadcast" : "Broadcast not playing"}>
+            <i aria-hidden="true" />{playerLoaded ? "LIVE" : "STREAM"}
           </span>
           {!owncastUrl && <span className={`lp-broadcast-loading${playerLoaded ? " is-hidden" : ""}`} aria-hidden="true">
             <i />Loading live broadcast…
@@ -332,17 +357,26 @@ function BroadcastPanel({ headingId }: { headingId: string }) {
 
 export default function App() {
   const appRef = useRef<HTMLDivElement>(null);
+  const heroRef = useRef<HTMLElement>(null);
+  const bridgeRef = useRef<HTMLDivElement>(null);
   const dialogRef = useRef<HTMLDialogElement>(null);
   const [copied, setCopied] = useState(false);
   const [copyError, setCopyError] = useState(false);
+  const [support, setSupport] = useState<SupportContext | null>(null);
   const [initialSelection] = useState(() => {
     try { return checkoutSelection(); }
     catch { return { mode: "chog" as const, initiativeId: "burundi", outstanding: true }; }
   });
   const [mode, setMode] = useState<"nft" | "chog">(initialSelection.mode);
+  const [savedMethods, setSavedMethods] = useState(() => {
+    try { return savedCheckoutModes(); } catch { return { chog: false, nft: false }; }
+  });
   const [stationOpen, setStationOpen] = useState(initialSelection.outstanding);
   const [exitTarget, setExitTarget] = useState<string | null>(null);
   const [returnedToLanding, setReturnedToLanding] = useState(false);
+  // Keep the observed camera ratio across checkout navigation so its delayed
+  // metadata cannot resize the hero and shift the destination after returning.
+  const [portraitAspect, setPortraitAspect] = useState<number | undefined>();
   const [recoveryVersion, setRecoveryVersion] = useState(0);
   const [resumeNotice, setResumeNotice] = useState(false);
   const stationRef = useRef<HTMLElement>(null);
@@ -350,7 +384,31 @@ export default function App() {
   const [openInitiative, setOpenInitiative] = useState<Initiative | null>(null);
   const token = import.meta.env.VITE_CHOG_TOKEN_ADDRESS || "0x350035555E10d9AfAF1566AaebfCeD5BA6C27777";
   const selected = initiatives.find(item => item.id === selectedId) ?? initiatives[0];
+  useGSAP(() => {
+    // Returning from checkout is navigation, not a fresh entrance. The previous
+    // context has reverted, so every landing panel is already fully visible.
+    if (stationOpen || returnedToLanding || !appRef.current) return;
+    const media = gsap.matchMedia();
+    media.add("(prefers-reduced-motion: no-preference)", () => {
+      const hero = heroRef.current;
+      if (hero && hero.getBoundingClientRect().bottom > 0) {
+        gsap.from(".care-intro-copy > *", { y: 20, opacity: 0, duration: .85, stagger: .09, ease: "power3.out", clearProps: "opacity,transform" });
+        gsap.from(".care-intro-broadcast", { y: 26, opacity: 0, duration: 1, ease: "power3.out", clearProps: "opacity,transform" });
+      }
+      const stage = appRef.current!.querySelector(".care-lower-stage");
+      const block = appRef.current!.querySelector(".care-lower-world");
+      if (stage && block) {
+        const reveal = gsap.timeline({ defaults: { ease: "power3.out" }, scrollTrigger: { trigger: stage, start: "clamp(top 95%)", once: true } });
+        // Move the complete panel together. Never hide its content behind an
+        // already opaque, full-page surface, even during a fast anchor jump.
+        reveal.from(block, { y: 24, duration: .65, clearProps: "transform" }, 0);
+      }
+      gsap.from(".care-support-strip", { y: 18, duration: .55, ease: "power3.out", clearProps: "transform", scrollTrigger: { trigger: ".care-support-strip", start: "clamp(top 95%)", once: true } });
+    }, appRef);
+    return () => media.revert();
+  }, { scope: appRef, dependencies: [stationOpen, returnedToLanding], revertOnUpdate: true });
   const leaveStation = (target: string) => {
+    if (exitTarget) return;
     if (!stationOpen) {
       window.location.hash = target;
       document.getElementById(target)?.scrollIntoView({ behavior: window.matchMedia("(prefers-reduced-motion: reduce)").matches ? "instant" : "smooth", block: "start" });
@@ -360,39 +418,41 @@ export default function App() {
   };
   useEffect(() => {
     if (!exitTarget) return;
-    const finish = () => {
-      window.location.hash = exitTarget;
+    let active = true;
+    const transition = transitionLanding(() => flushSync(() => {
+      // Update the URL without letting native anchor scrolling race the still
+      // hidden destination. The layout effect positions it before first paint.
+      window.history.pushState(window.history.state, "", `#${exitTarget}`);
       setReturnedToLanding(true);
       setStationOpen(false);
-      setExitTarget(null);
-    };
-    const reducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)");
-    if (reducedMotion.matches) { finish(); return; }
-    const timer = window.setTimeout(finish, 220);
-    return () => window.clearTimeout(timer);
+    }));
+    void transition.finished.then(() => { if (active) setExitTarget(null); });
+    return () => { active = false; transition.cancel(); };
   }, [exitTarget]);
   useEffect(() => {
     const changed = () => {
       try {
-        const saved = checkoutSelection();
+        const saved = checkoutSelection(selectedId, mode);
+        setSavedMethods(savedCheckoutModes());
         if (saved.outstanding) { setSelectedId(saved.initiativeId); setMode(saved.mode); }
         else { setResumeNotice(false); }
       } catch { setResumeNotice(true); }
     };
     window.addEventListener(checkoutChanged, changed);
     return () => window.removeEventListener(checkoutChanged, changed);
-  }, []);
-  useEffect(() => {
+  }, [selectedId, mode]);
+  useLayoutEffect(() => {
     if (stationOpen) {
       stationRef.current?.focus({ preventScroll: true });
       stationRef.current?.scrollIntoView({ block: "start", behavior: "instant" });
     } else {
-      // The destination was hidden until this render, so native hash scrolling
-      // alone can run too early when returning from checkout.
+      // Reveal and position the destination in one painted frame: a passive
+      // effect allows the hero to flash before this scroll on checkout return.
       const target = window.location.hash.slice(1);
       if (["top", "causes", "how-it-works", "leaderboard"].includes(target)) {
         document.getElementById(target)?.scrollIntoView({ block: "start", behavior: "instant" });
         if (returnedToLanding) document.getElementById(target)?.focus({ preventScroll: true });
+        window.dispatchEvent(new Event(landingPositioned));
       }
     }
   }, [stationOpen, selectedId, returnedToLanding]);
@@ -441,98 +501,76 @@ export default function App() {
   };
 
   return <>
-    <HeartField paused={false} />
     <a className="skip-link" href="#main">Skip to content</a>
-    <div className="site-frame app-layout landing-page" id="top" ref={appRef} tabIndex={-1}>
+    <div className={`site-frame app-layout landing-page sunset-page${stationOpen ? " has-open-checkout" : ""}`} id="top" ref={appRef} tabIndex={-1}>
       <header className="site-header">
         <div className="care-header-inner">
         <Brand onHome={() => leaveStation("top")} />
-        <nav aria-label="Main navigation">
-          <a href="#causes" onClick={event => { event.preventDefault(); leaveStation("causes"); }}>The causes</a><a href="#how-it-works" onClick={event => { event.preventDefault(); leaveStation("how-it-works"); }}>How it works</a><a href="#leaderboard" onClick={event => { event.preventDefault(); leaveStation("leaderboard"); }}>Leaderboard</a><a href="#causes" onClick={event => { event.preventDefault(); leaveStation("causes"); }} className="lp-nav-donate">Choose a cause <ArrowUpRight size={15} /></a>
+        <nav className="care-header-nav" aria-label="Main navigation">
+          <a href="#causes" onClick={event => { event.preventDefault(); leaveStation("causes"); }}>Causes</a>
+          <a href="#how-it-works" onClick={event => { event.preventDefault(); leaveStation("how-it-works"); }}>How it works</a>
+          <a href="#leaderboard" onClick={event => { event.preventDefault(); leaveStation("leaderboard"); }}>Leaderboard</a>
         </nav>
-        <div className="creator"><img src="/gx-avatar.png" alt="GX avatar" width="36" height="36" /><span><small>CREATED BY</small>GX</span><a className="creator-x" href="https://x.com/GxOlympus" target="_blank" rel="noopener noreferrer" aria-label="GX on X (opens in a new tab)"><XLogo size={21} weight="bold" /></a></div>
+        <div className="creator"><img src="/gx-avatar.png" alt="GX avatar" width="36" height="36" /><span><small>Creator</small>GX</span><a className="creator-x" href="https://x.com/GxOlympus" target="_blank" rel="noopener noreferrer" aria-label="GX on X (opens in a new tab)"><XLogo size={21} weight="bold" /></a></div>
         </div>
       </header>
 
       <main id="main" className="lp-main">
-        <div hidden={stationOpen} className={returnedToLanding ? "care-landing-return" : undefined}>
-          <section className="care-intro" aria-labelledby="hero-heading">
-            <div className="care-intro-broadcast">{!stationOpen && <BroadcastPanel headingId="intro-broadcast-heading" />}</div>
+        <div hidden={stationOpen}>
+          <section ref={heroRef} className="care-intro" aria-labelledby="hero-heading">
+            <div className="care-intro-broadcast">{!stationOpen && <BroadcastPanel headingId="intro-broadcast-heading" portraitAspect={portraitAspect} onAspect={setPortraitAspect} />}</div>
             <div className="care-intro-copy">
-              <h1 id="hero-heading">Donate with $CHOG.</h1>
-              <p>Choose a charity and send CHOG by QR. We handle the exchange and deliver your donation.</p>
-              <p className="care-intro-context">The broadcast and your payment stay side by side. No wallet connection to this site.</p>
-              <a href="#causes" className="button primary">Choose a cause <ArrowRight size={20} /></a>
+              <h1 id="hero-heading">Your $CHOG.<br/><span>Real-world care.</span></h1>
+              <p>Give to a cause. Watch the care station light up.</p>
+              <div className="care-hero-actions"><a href="#causes" className="button primary">Choose a cause <ArrowRight size={20} /></a></div>
+            </div>
+            <div className="care-hero-signature" aria-label="$CHOG to charity">
+              <span className="care-signature-line" aria-hidden="true"/>
+              <span className="care-signature-path"><span>$CHOG</span><ArrowRight size={22} weight="bold" aria-hidden="true"/><span>CHARITY</span></span>
+              <span className="care-signature-line" aria-hidden="true"/>
             </div>
           </section>
 
-          <section id="how-it-works" tabIndex={-1} className="care-mechanics" aria-label="How ChogCare works">
-            <article className="care-mechanic care-token-mechanic" aria-labelledby="token-mechanic-title">
-              <div className="care-mechanic-art care-coin-art"><img src="/chog-donation-coin.png" alt="Purple CHOG coin" width="1324" height="1188" loading="lazy" /></div>
-              <div className="care-mechanic-copy">
-                <span className="care-mechanic-label">Give with CHOG</span>
-                <h2 id="token-mechanic-title"><span>CHOG</span><ArrowRight size={24} aria-hidden="true" /><span className="care-charity-word">Charity</span></h2>
-                <p>You send CHOG.<br />We deliver your donation to the charity.</p>
-                <span className="care-mechanic-note">Your cause amount stays intact. 10% is added for the NFT community pool.</span>
-              </div>
-            </article>
-            <article className="care-mechanic care-nft-mechanic" aria-labelledby="nft-mechanic-title">
-              <div className="care-mechanic-art care-nft-art"><img src="/chog-holder-nft.png" alt="CHOG NFT with a blue hat and purple laser eyes" width="1000" height="1000" loading="lazy" /></div>
-              <div className="care-mechanic-copy">
-                <div className="care-mechanic-label-row"><span className="care-mechanic-label">For NFT holders</span><span className="care-soon">Daily pool</span></div>
-                <h2 id="nft-mechanic-title" className="care-nft-title">$1<span>/ day</span></h2>
-                <p>Hold a CHOG NFT. Choose a cause.<br />The pool donates on your behalf.</p>
-                <span className="care-mechanic-note">Three holders a day. $3 daily pool.<br />One donation per wallet and NFT.</span>
-              </div>
-            </article>
-          </section>
-
-          <section className="care-giving-trust" aria-label="Transparent payment split and project sources">
-            <div className="care-contribution-rule">
-              <div className="care-trust-labels"><span>Transparent split</span><span>0% service fee</span></div>
-              <strong>+10%</strong>
-              <div><h2>One donation. More daily impact.</h2><p>Your cause amount stays intact. The extra 10% funds the NFT community pool.</p></div>
-              <div className="care-split-meter" aria-label="100 percent to your cause plus 10 percent to the NFT pool"><span><b>100%</b> your cause</span><span><b>+10%</b> NFT pool</span></div>
-            </div>
-            <div className="care-source-list">
-              <a className="care-source-row" href="https://giveth.io/" target="_blank" rel="noopener noreferrer"><img src="/giveth-mark.png" alt="" width="48" height="48" loading="lazy"/><span><small>Verified project pages</small><strong>Giveth-listed causes</strong></span><ArrowUpRight size={18}/></a>
-              <a className="care-source-row" href="https://www.animal-ethics.org/cryptocurrencies/" target="_blank" rel="noopener noreferrer"><img className="is-animal" src="/animal-ethics-mark.png" alt="" width="48" height="48" loading="lazy"/><span><small>Official donation address</small><strong>Animal Ethics</strong></span><ArrowUpRight size={18}/></a>
-            </div>
-            <p className="care-giving-terms">Before the QR, you see the full CHOG total and live dollar estimate. Network costs still apply. NFT verification uses a separate 1 MON donation.</p>
-          </section>
+          <div ref={bridgeRef} className="care-scene-bridge" aria-hidden="true"/>
+          <div className="care-lower-stage"><div className="care-lower-world"><div className="care-lower-content">
+          <GivingExplainer />
           <section id="causes" tabIndex={-1} className="care-causes" aria-labelledby="causes-heading">
-            <h2 id="causes-heading">Choose your cause<span>.</span></h2>
-            <p>Choose who you want to help. Your broadcast and donation options open together.</p>
+            <h2 id="causes-heading">Choose where <span>care goes.</span></h2>
+            <p>One donation. A cause you believe in.</p>
             <div className="care-cause-buttons">
               {initiatives.filter(item => !item.archived).map(item => <button type="button" className={`care-cause-button${item.live ? " has-checkout" : ""}`} key={item.id} onClick={() => chooseCause(item.id)} aria-label={"Choose " + item.name} aria-describedby={`cause-status-${item.id}`}>
                 <CauseImage initiative={item} />
                 <span className="care-cause-body">
                   <span className="care-cause-meta"><span>{item.category}</span><span>{item.location}</span></span>
                   <strong>{item.name}</strong>
-                  <span className="care-cause-summary">{item.summary}</span>
+                  <span className="care-cause-summary">{item.cardSummary ?? item.summary}</span>
                   <span className="care-cause-bottom">
-                    <span className="care-cause-action">Choose project <ArrowRight size={18} aria-hidden="true" /></span>
-                    <span className="care-cause-status" id={`cause-status-${item.id}`}>{item.live ? item.holderLive===false ? "CHOG donation" : "CHOG · NFT holder" : "Payments under review"}</span>
+                    <span className="care-cause-action">Give with $CHOG <ArrowRight size={18} aria-hidden="true" /></span>
+                    <span className="care-cause-status" id={`cause-status-${item.id}`}>{item.live ? item.holderLive===false ? "$CHOG donation" : "$CHOG · NFT holder" : "Payments under review"}</span>
                   </span>
                 </span>
               </button>)}
             </div>
           </section>
+          </div></div></div>
+          {!stationOpen && <Leaderboard/>}
         </div>
 
         <section id="station" ref={stationRef} tabIndex={-1} hidden={!stationOpen} inert={exitTarget !== null} className={`care-station${exitTarget ? " is-leaving" : ""}`} aria-label="Broadcast and donation checkout">
-          <div className="care-station-toolbar"><button className="lp-text-button" onClick={() => leaveStation("causes")}><ArrowLeft size={17} /> Change initiative</button></div>
-          {resumeNotice && <p className="care-resume-note" role="status">Your existing payment stays with {selected.name} and its original payment method. Resume it before starting another payment.</p>}
+          <div className="care-station-toolbar"><ChangeInitiative key={mode + recoveryVersion} mode={mode} onChange={() => { setRecoveryVersion(value => value + 1); setResumeNotice(false); leaveStation("causes"); }}/></div>
+          {resumeNotice && <p className="care-resume-note" role="status">This checkout keeps its original initiative: {selected.name}. Switching methods never replaces a saved invoice.</p>}
           <div className="care-station-grid">
-            <div className="care-stream-column">
-              {stationOpen && <BroadcastPanel headingId="broadcast-heading" />}
+            <div className="care-stream-column" id="care-livestream" tabIndex={-1}>
+              <div className="care-station-stream-heading"><h3>Care station</h3><p>The broadcast stays here while you give.</p></div>
+              {stationOpen && <BroadcastPanel headingId="broadcast-heading" portraitAspect={portraitAspect} onAspect={setPortraitAspect} />}
             </div>
             <div className="care-checkout-column">
               <div className="care-selected"><img src={selected.image} alt={selected.imageAlt} width="76" height="76" /><div><span>{selected.category} · {selected.location}</span><h2>{selected.name}</h2><button className="lp-text-button" onClick={() => setOpenInitiative(selected)}>About this initiative <ArrowUpRight size={14} /></button></div></div>
             <div className="lp-payment">
               <div className="lp-payment-tabs" role="tablist" aria-label="Donation method">{(["chog", "nft"] as const).map((item, index) => <button key={item} id={"tab-" + item} role="tab" aria-controls={"panel-" + item} aria-selected={mode === item} tabIndex={mode === item ? 0 : -1} onClick={() => chooseMode(item)} onKeyDown={event => {
                 if (["ArrowRight", "ArrowLeft", "Home", "End"].includes(event.key)) { event.preventDefault(); const next = event.key === "Home" ? "chog" : event.key === "End" ? "nft" : index === 0 ? "nft" : "chog"; document.getElementById("tab-" + chooseMode(next))?.focus(); }
-              }}>{item === "chog" ? <><img className="payment-tab-art payment-tab-coin" src="/chog-donation-coin.png" alt="" width="34" height="34"/> Give with CHOG</> : <><img className="payment-tab-art payment-tab-nft" src="/chog-holder-nft.png" alt="" width="32" height="32"/> NFT holder <small>$1</small></>}</button>)}</div>
+              }}><img className={`payment-tab-art ${item === "chog" ? "payment-tab-coin" : "payment-tab-nft"}`} src={item === "chog" ? "/chog-donation-coin.png" : "/chog-holder-nft.png"} alt="" width="32" height="32"/><span className="payment-tab-copy"><strong>{item === "chog" ? "$CHOG" : "NFT holder"}</strong><small>{item === "chog" ? "Your amount" : "$1 from pool"}</small></span></button>)}</div>
+              {savedMethods[mode === "chog" ? "nft" : "chog"] && <p className="checkout-help" role="status">Your {mode === "chog" ? "NFT" : "$CHOG"} checkout is saved in the other tab. You can switch back to track it. Do not pay the same invoice twice.</p>}
               <CheckoutSizeTransition>
               <div id="panel-chog" role="tabpanel" aria-labelledby="tab-chog" hidden={mode !== "chog"}>
                 {mode === "chog" && <PaymentCheckout key={selectedId + "-chog-" + recoveryVersion} mode="chog" initiativeId={selectedId} initiativeName={selected.name} onViewLeaderboard={()=>leaveStation("leaderboard")} />}
@@ -547,22 +585,13 @@ export default function App() {
           </div>
         </section>
 
-        {!stationOpen&&<Leaderboard/>}
 
-        <section className="lp-section lp-faq" hidden={stationOpen} aria-labelledby="faq-heading">
-          <div><h2 id="faq-heading">Before you donate.</h2></div>
-          <div className="lp-faq-list">
-            <details><summary>Do I need a CHOG NFT to donate?<span>+</span></summary><p>No. Anyone can donate 300–1,000,000 CHOG when the processor is available. NFT holders can reserve a separate $1 pool donation when funded claims are open at checkout. Three holders can claim each day.</p></details>
-            <details><summary>Do I need to connect my wallet?<span>+</span></summary><p>No connection to this website is required. Once payments are enabled, you will scan a payment QR or copy the dedicated deposit address and confirm a transfer inside your own wallet. Never share your private key or seed phrase.</p></details>
-            <details><summary>How does NFT verification work?<span>+</span></summary><p>Enter the wallet address holding your CHOG NFT. We find the NFT automatically. Reserve $1 and send exactly 1 MON once to your single-use verification address on Monad. The 1 MON is a non-refundable donation held by ChogCare, separate from wallet gas. After verifying your transfer and NFT, the pool donates $1 to your cause on your behalf. One claim per wallet and NFT per UTC day, with three claims and $3 total daily. Only pay an active checkout invoice.</p></details>
-            <details><summary>When is my donation complete?<span>+</span></summary><p>Donation received means we verified the charity's donation receipt. Final confirmation continues in the background; the receipt is not yet irreversible. Donation delivered means finality is confirmed. A CHOG deposit alone is not delivery. Keep the invoice to follow its status.</p></details>
-            <details><summary>Who processes the funds?<span>+</span></summary><p>ChogCare controls each dedicated deposit address during processing. Nad.fun and Uniswap handle the exchanges; Relay handles the bridge. A failed or late transfer may require manual recovery. Save your invoice ID and never send a second payment to fix a pending one.</p></details>
-          </div>
-        </section>
+        <section className="care-support-strip" hidden={stationOpen} aria-labelledby="support-heading"><div className="care-support-symbol"><ChatCircle size={34} weight="duotone"/></div><div><span>We’re here to help</span><h2 id="support-heading">A little help, when you need it.</h2><p>Questions about a donation? Write to ChogCare.</p></div><button type="button" className="care-support-button" onClick={() => setSupport({})}><ChatCircle size={20}/>Support<ArrowUpRight size={20}/></button></section>
 
       </main>
+      <SunsetScene checkout={stationOpen} heroRef={heroRef} bridgeRef={bridgeRef}/>
 
-      <footer className="lp-footer"><div className="lp-footer-top"><Brand footer onHome={() => leaveStation("top")} /><p>An independent community project.<br />Built for Chogathon 2026.</p><a href="https://giveth.io/" target="_blank" rel="noreferrer">Explore Giveth <ArrowUpRight size={16} /></a></div><div className="lp-footer-bottom"><span>© 2026 ChogCare · Created by GX</span><button onClick={copyToken} aria-label="Copy CHOG token address">CHOG <span>{shortAddress(token)}</span>{copied ? <Check size={16} /> : <Copy size={16} />}<span aria-live="polite">{copied ? "Copied" : ""}</span></button><a href="#top" onClick={event => { event.preventDefault(); leaveStation("top"); }}>Back to top ↑</a></div>{copyError && <p className="copy-error">Copy manually: {token}</p>}</footer>
+      <footer className="lp-footer"><div className="lp-footer-top"><Brand footer onHome={() => leaveStation("top")} /><p>An independent community project.<br />Built for Chogathon 2026.</p><a href="https://giveth.io/" target="_blank" rel="noreferrer">Explore Giveth <ArrowUpRight size={16} /></a></div><div className="lp-footer-bottom"><span>© 2026 ChogCare · Created by GX</span><button onClick={copyToken} aria-label="Copy $CHOG token address">$CHOG <span>{shortAddress(token)}</span>{copied ? <Check size={16} /> : <Copy size={16} />}<span aria-live="polite">{copied ? "Copied" : ""}</span></button><a href="#top" onClick={event => { event.preventDefault(); leaveStation("top"); }}>Back to top ↑</a></div>{copyError && <p className="copy-error">Copy manually: {token}</p>}</footer>
     </div>
 
     <dialog ref={dialogRef} className="lp-project-dialog" onCancel={() => setOpenInitiative(null)} onClose={() => setOpenInitiative(null)} onClick={event => { if (event.target === event.currentTarget) setOpenInitiative(null); }} aria-labelledby="project-dialog-title">
@@ -579,5 +608,6 @@ export default function App() {
         </div>
       </article>}
     </dialog>
+    <SupportDialog context={support} onClose={() => setSupport(null)}/>
   </>;
 }

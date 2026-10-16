@@ -6,10 +6,39 @@ import { createStationController, parseStationArgs, stationWorkerHealthy, validS
 const donation = { v: 1, type: "donation", id: "a".repeat(24), nick: "GX", amount: "300" };
 function controller() {
   let clock = 1000;
-  const wires = [], completed = [], faults = [];
-  const device = createStationController({ write: line => wires.push(JSON.parse(line)), done: id => completed.push(id), onFault: () => faults.push(true), now: () => clock });
-  return { device, wires, completed, faults, advance(value) { clock += value; } };
+  const wires = [], completed = [], faults = [], tests = [];
+  const device = createStationController({ write: line => wires.push(JSON.parse(line)), done: id => completed.push(id), onFault: () => faults.push(true), onTestState: state => tests.push(state), now: () => clock });
+  return { device, wires, completed, faults, tests, advance(value) { clock += value; } };
 }
+
+test("explicit hardware test requires a recent device response but no unlocked payment worker",()=>{
+  const f=controller();assert.equal(f.device.test(),"not-ready");f.device.receive({v:1,type:"pong"});
+  f.advance(5001);assert.equal(f.device.test(),"not-ready");f.device.receive({v:1,type:"pong"});
+  assert.equal(f.device.test(),"accepted");f.device.tick(false);
+  const payload=f.wires.at(-1);assert.equal(payload.type,"donation");assert.equal(payload.amount,"300");assert.equal(payload.nick,"TEST - NO PAYMENT");
+  assert.match(payload.id,/^[a-f0-9]{24}$/);assert.deepEqual(f.tests,["running"]);assert.equal(f.device.test(),"busy");
+  f.device.receive({v:1,type:"ack",id:payload.id,status:"accepted"});assert.deepEqual(f.tests,["running"]);
+  f.device.receive({v:1,type:"ack",id:payload.id,status:"done"});assert.deepEqual(f.tests,["running","done"]);
+  assert.deepEqual(f.completed,[],"test acknowledgement must never complete a real ledger event");assert.equal(f.device.pendingId,null);
+  assert.equal(f.device.test(),"busy");f.advance(5000);f.device.receive({v:1,type:"pong"});assert.equal(f.device.test(),"accepted");
+  assert.notEqual(f.device.pendingId,payload.id);
+});
+
+test("screen test cannot replace or interrupt a real pending gratitude",()=>{
+  const f=controller();f.device.receive({v:1,type:"hello",last:""});f.device.offer(donation);
+  assert.equal(f.device.test(),"busy");f.device.tick(false);assert.equal(f.wires.filter(x=>x.type==="donation").length,0);
+  f.device.tick(true);assert.deepEqual(f.wires.at(-1),donation);f.device.receive({v:1,type:"ack",id:donation.id,status:"done"});assert.deepEqual(f.completed,[donation.id]);
+});
+
+test("test and real acknowledgements stay separate through reboot, fault and reconnect",()=>{
+  const f=controller();f.device.receive({v:1,type:"pong"});f.device.test();const id=f.device.pendingId;
+  assert.equal(f.device.offer(donation),false);f.device.receive({v:1,type:"hello",last:id});
+  assert.deepEqual(f.completed,[]);assert.deepEqual(f.tests,["running","done"]);
+  f.advance(5000);f.device.receive({v:1,type:"pong"});f.device.test();f.device.receive({v:1,type:"fault"});
+  assert.equal(f.tests.at(-1),"error");assert.equal(f.device.pendingId,null);assert.equal(f.device.test(),"not-ready");
+  f.device.resetConnection();f.device.receive({v:1,type:"pong"});f.device.offer(donation);f.device.tick(true);
+  f.device.receive({v:1,type:"ack",id:donation.id,status:"done"});assert.deepEqual(f.completed,[donation.id]);
+});
 
 test("USB bridge requires device handshake and healthy worker before a donation command", () => {
   const f = controller(); f.device.offer(donation); f.device.tick(true);
@@ -76,6 +105,30 @@ test("USB controller permits one immutable gratitude event at a time", () => {
 
 test("device protocol rejects malformed messages and unknown fields", () => {
   for (const message of [null, [], { v: 2, type: "pong" }, { v: 1, type: "hello" }, { v: 1, type: "ack", id: "A".repeat(24), status: "done" }, { v: 1, type: "ack", id: donation.id, status: "success" }, { v: 1, type: "pong", extra: true }, { v: 1, type: "fault", debug: true }]) assert.equal(validStationDeviceMessage(message), false);
+});
+
+test("initiative scenes are negotiated without breaking old device schemas", () => {
+  const payload = { ...donation, cause: "solar-foundation" };
+  const old = controller(); old.device.receive({v:1,type:"pong"}); old.device.offer(payload); old.device.tick(true);
+  assert.deepEqual(old.wires.at(-1), donation);
+  const fresh = controller(); fresh.device.receive({v:1,type:"hello",last:"",scenes:2}); fresh.device.offer(payload); fresh.device.tick(true);
+  assert.deepEqual(fresh.wires.at(-1), payload);
+  fresh.device.resetConnection(); fresh.device.receive({v:1,type:"pong"}); fresh.device.tick(true);
+  assert.deepEqual(fresh.wires.at(-1), donation, "reconnecting to legacy firmware drops only display metadata");
+  for (const scenes of [0,1,3,"2",null,true]) assert.equal(validStationDeviceMessage({v:1,type:"pong",scenes}),false);
+});
+
+test("scene tests rotate allowlisted initiative photos and always carry a test marker", () => {
+  const f = controller(), causes = [];
+  for (let index = 0; index < 6; index++) {
+    f.advance(6000); f.device.receive({v:1,type:"pong",scenes:2});
+    assert.equal(f.device.test(),"accepted"); f.device.tick(false);
+    const wire = f.wires.at(-1); causes.push(wire.cause);
+    assert.equal(wire.test,true); assert.equal(wire.nick,"TEST - NO PAYMENT");
+    f.device.receive({v:1,type:"ack",id:wire.id,status:"done"});
+  }
+  assert.deepEqual(causes,["school-supplies","vida-verde","solar-foundation","animal-ethics","burundi","school-supplies"]);
+  assert.deepEqual(f.completed,[]);
 });
 
 test("health probe is hardcoded to loopback and fails closed", async () => {

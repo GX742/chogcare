@@ -20,6 +20,7 @@ export default function HeartField({ paused }: { paused: boolean }) {
     const header = document.querySelector<HTMLElement>(".site-header");
     let width = 0, height = 0, columns = 0, rows = 0, frame = 0, previous = 0;
     let topInset = 0;
+    let pitchX = PITCH_X, pitchY = PITCH_Y;
     let cells: Cell[] = [];
     let hovered = -1;
     let lastPoint: { x: number; y: number } | null = null;
@@ -71,8 +72,8 @@ export default function HeartField({ paused }: { paused: boolean }) {
     const litSprites = Array.from({ length: COLOR_FRAMES }, (_, i) => makeSprite(i / COLOR_FRAMES, true));
     const cellAt = (x: number, y: number) => {
       if (y < topInset) return -1;
-      const column = Math.round((x - PITCH_X / 2) / PITCH_X);
-      const row = Math.round((y - topInset - FIRST_ROW_CENTER) / PITCH_Y);
+      const column = Math.round((x - pitchX / 2) / pitchX);
+      const row = Math.round((y - topInset - FIRST_ROW_CENTER) / pitchY);
       return column >= 0 && column < columns && row >= 0 && row < rows ? row * columns + column : -1;
     };
     const paint = (delta = 0) => {
@@ -126,14 +127,18 @@ export default function HeartField({ paused }: { paused: boolean }) {
       const nextHeight = compact.matches ? canvas.getBoundingClientRect().height : window.innerHeight;
       if (compact.matches && width === nextWidth && height === nextHeight) return;
       width = nextWidth; height = nextHeight;
+      // The actual glyph is about 23 × 22 px including its outline. Leave
+      // clear gutters on small screens instead of overlapping adjacent rows.
+      pitchX = compact.matches ? 26 : PITCH_X;
+      pitchY = compact.matches ? 25 : PITCH_Y;
       topInset = compact.matches ? 0 : Math.max(0, header?.getBoundingClientRect().bottom ?? 0);
       const ratio = Math.min(window.devicePixelRatio || 1, 2);
       canvas.width = Math.round(width * ratio); canvas.height = Math.round(height * ratio);
       ctx.setTransform(ratio, 0, 0, ratio, 0, 0);
-      columns = Math.ceil(width / PITCH_X); rows = Math.ceil(height / PITCH_Y);
+      columns = Math.ceil(width / pitchX); rows = Math.ceil(height / pitchY);
       cells = Array.from({ length: columns * rows }, (_, i) => {
-        const x = (i % columns) * PITCH_X + PITCH_X / 2;
-        const y = Math.floor(i / columns) * PITCH_Y + FIRST_ROW_CENTER;
+        const x = (i % columns) * pitchX + pitchX / 2;
+        const y = Math.floor(i / columns) * pitchY + FIRST_ROW_CENTER;
         return { x, y, phase: x / 920 + y / 710, heat: 0 };
       });
       hovered = -1; lastPoint = null;

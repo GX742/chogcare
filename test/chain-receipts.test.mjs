@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { encodeEventTopics, encodeAbiParameters, erc20Abi } from "viem";
-import { verifyChogDeposit, verifyPoolFunding, verifyPoolPayout } from "../server/chain-receipts.mjs";
+import { verifyChogDeposit, verifyPoolFunding, verifyPoolPayout, inspectReceipt, finalizedReceipt, AwaitingFinalityError } from "../server/chain-receipts.mjs";
 import { CHOG, ETHEREUM_USDC } from "../src/route.ts";
 
 const from = "0x1111111111111111111111111111111111111111";
@@ -21,6 +21,20 @@ function fixture(token = CHOG, units = amount, chainId = 143) {
     getBlock: async args => args.blockTag ? { number: 110n } : block };
   return { rpc, receipt, log, block };
 }
+
+test("an already observed receipt avoids one RPC read but still verifies chain, canonical block and fresh finality",async()=>{
+  const f=fixture();let reads=0;
+  f.rpc.getTransactionReceipt=async()=>{reads++;throw new Error("Receipt must not be fetched twice");};
+  assert.equal((await inspectReceipt(f.rpc,143,hash,f.receipt)).finalized,true);
+  assert.equal(reads,0);
+  f.rpc.getBlock=async args=>args.blockTag?{number:99n}:f.block;
+  await assert.rejects(finalizedReceipt(f.rpc,143,hash,f.receipt),AwaitingFinalityError);
+  f.block.hash=hash;await assert.rejects(inspectReceipt(f.rpc,143,hash,f.receipt),/not canonical/);
+  f.block.hash=blockHash;f.receipt.transactionHash=blockHash;
+  await assert.rejects(inspectReceipt(f.rpc,143,hash,f.receipt),/Successful receipt/);
+  f.receipt.transactionHash=hash;f.rpc.getChainId=async()=>10;
+  await assert.rejects(inspectReceipt(f.rpc,143,hash,f.receipt),/Wrong RPC/);
+});
 
 test("CHOG proof validates canonical finalized Transfer from the actual CHOG contract", async () => {
   const result = await verifyChogDeposit(fixture().rpc, invoice, hash, 2);

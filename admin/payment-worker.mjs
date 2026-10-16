@@ -1,9 +1,9 @@
-import { startPaymentWorker } from "../scripts/start-payments.mjs";
+import { startPaymentWorker, PAYMENT_STARTUP_FAILURES } from "../scripts/start-payments.mjs";
 import { pathToFileURL } from "node:url";
 import { resolve } from "node:path";
 
 const validPassword = value => typeof value === "string" && value.length >= 16 && value.length <= 256 && !/[\x00-\x1f\x7f]/.test(value);
-const knownCodes = new Set(["ready", "stopped", "integrity-locked", "busy", "startup-failed", "chog-network", "nft-network"]);
+const knownCodes = new Set(["ready", "stopped", "integrity-locked", "busy", "startup-failed", "chog-network", "nft-network", "backup-saved", "backup-verified", "backup-failed", ...Object.keys(PAYMENT_STARTUP_FAILURES)]);
 
 // This module is never an HTTP service. Its only credential channel is the
 // inherited IPC pipe created by the trusted, local Electron main process.

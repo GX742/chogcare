@@ -30,7 +30,9 @@
 .checkout-amount-input { display: flex; align-items: center; gap: 12px; background: #100b18; border: 1px solid #baa1d54d; border-radius: 10px; padding: 17px; }
 .checkout-amount-input:focus-within { border-color: #c2a8ff; box-shadow: 0 0 0 3px #c2a8ff24; }
 .checkout-amount-input input { min-width: 0; width: 100%; border: 0; outline: none; background: none; color: #f2eaff; font: 500 30px/1.2 "Manrope Variable", sans-serif; font-variant-numeric: tabular-nums; }
-.checkout-amount-input input:focus-visible { outline: none; }
+/* The compound field owns the focus ring; do not draw a second square
+   around its inner textbox when the general checkout input rule applies. */
+.checkout .checkout-amount-input input:focus-visible { outline: none; }
 .checkout-amount-input input::placeholder { color: #9d8fae; }
 .checkout-amount-unit { display: grid; justify-items: end; gap: 3px; flex-shrink: 0; color: #cfb6f5; }
 .checkout-amount-unit strong { font-size: 13px; font-weight: 650; }

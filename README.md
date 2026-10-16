@@ -64,7 +64,9 @@ npm run dev
 
 Open `http://127.0.0.1:4173`.
 
-Payment API binds only to `127.0.0.1:4174`; Vite proxies `/api/payments`. Node 25 is used locally (native TypeScript stripping and `node:sqlite`). `vite preview` only serves static files and does not provide this API. Public deployment needs a separate API deployment/reverse proxy and a security review; do not expose the dev server.
+Payment API binds only to `127.0.0.1:4174`; Vite proxies `/api/payments`. The tested runtime is **Node 24.22+ LTS (24.x only)**, pinned in `.node-version`. On Windows, `scripts/install-payment-runtime.ps1` installs a hash-verified portable runtime without replacing system Node. The updated desktop controller prefers that runtime. A running worker is not upgraded until a coordinated restart with local custody unlock. `vite preview` only serves static files and does not provide this API. Do not expose the dev server.
+
+The updated worker creates encrypted `.chogbackup` recovery bundles at startup, hourly between ticks, and on graceful shutdown. Each bundle contains both SQLite snapshots (including committed WAL data), the encrypted vault and the matching checkpoint. Startup checks a restored snapshot in a separate folder without signing or replacing live files. Backup failures are warnings, not a switch that interrupts paid transfers. Keep an encrypted copy **off this computer**; local copies alone do not cover disk loss. During a planned offline maintenance window, `npm run payments:backup` creates and verifies a bundle, and `npm run payments:backup:verify -- <filename.chogbackup>` checks an existing bundle in `work/payments/backups`. Enter the existing password only in the local hidden prompt. A restore drill does not authorize rolling back live custody: reconcile all transactions since the snapshot before resuming signing.
 
 ## Historical wallet-route notes
 

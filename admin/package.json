@@ -1,6 +1,6 @@
 {
   "name": "chogcare-admin",
-  "version": "1.0.0",
+  "version": "1.0.3",
   "private": true,
   "type": "module",
   "main": "main.mjs",
@@ -21,7 +21,7 @@
       "onlyLoadAppFromAsar": true
     },
     "directories": { "output": "../work/admin-release" },
-    "files": ["main.mjs", "preload.cjs", "security.mjs", "controller.mjs", "renderer-dist/**/*", "assets/**/*", "package.json"],
+    "files": ["main.mjs", "preload.cjs", "security.mjs", "controller.mjs", "runtime-policy.mjs", "renderer-dist/**/*", "assets/**/*", "package.json"],
     "win": { "target": [{ "target": "nsis", "arch": ["x64"] }], "icon": "assets/coin.png", "signExecutable": false },
     "nsis": { "oneClick": false, "perMachine": false, "allowToChangeInstallationDirectory": true, "createDesktopShortcut": true, "createStartMenuShortcut": true, "shortcutName": "ChogCare Admin", "artifactName": "ChogCare-Admin-Setup-${version}.${ext}" }
   }

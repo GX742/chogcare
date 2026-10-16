@@ -13,6 +13,9 @@ test("public broadcast proxy is loopback-only and exposes only HLS and payment r
   assert.match(config, /client_max_body_size 4k;/);
   assert.match(config, /limit_except GET \{ deny all; \}/);
   assert.match(config, /limit_except GET POST \{ deny all; \}/);
+  const paymentRoute=config.slice(config.indexOf("location ^~ /api/payments/"),config.indexOf("location / {"));
+  assert.match(paymentRoute,/proxy_set_header Host chogcare\.xyz;/);
+  assert.doesNotMatch(paymentRoute,/proxy_set_header Host chogcare\.vercel\.app;/);
 });
 
 test("security headers cover rejected public paths without location inheritance gaps", () => {

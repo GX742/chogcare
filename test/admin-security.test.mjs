@@ -38,7 +38,8 @@ test("admin IPC requires its exact trusted main frame", () => {
   assert.equal(trustedSender({sender:webContents,senderFrame:frame},window),false);
 });
 test("external links are fixed destinations, never ticket or renderer supplied URLs",()=>{
-  assert.equal(safeExternalTarget("dashboard"),"https://chogcare.vercel.app/dashboard");
+  assert.equal(safeExternalTarget("dashboard"),"https://chogcare.xyz/dashboard");
+  assert.equal(safeExternalTarget("website"),"https://chogcare.xyz");
   for(const value of ["https://evil.test","file:///C:/Windows/System32/cmd.exe","mailto:user@example.com","website?x=1",null,{},"Dashboard"])assert.throws(()=>safeExternalTarget(value));
 });
 

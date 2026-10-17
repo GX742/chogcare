@@ -403,7 +403,16 @@ export function createChogProcessor({ filename, vault, root, checkpoint=()=>{}, 
     leaderboardDonation(id){return closed||!/^[a-f0-9]{64}$/.test(id??"")?null:verifiedLeaderboardDonation(load(id),id);},
     refreshReadiness,
     track:trackPending,
-    publicStatus(){const networkReady=!closed&&readinessNow()-healthyAt<60_000;return {paymentsEnabled:networkReady&&gasBalance>=OPERATOR_READY_BALANCE,chogReadiness:!networkReady?"network-unavailable":gasBalance<OPERATOR_READY_BALANCE?"gas-needed":"ready",paymentMode:"local-pilot",workerVersion:"2026-10-16-local-fast-v11",destinationChainId:newDestinationChainId,supportedModes:["chog"],supportedInitiatives:[...CHOG_INITIATIVES],poolContributionPercent:10,poolContributionMode:"added-on-top",poolContributionBatchMinimumUsdc:"5.00",poolContributionPendingUsdc:formatUnits(poolPendingUsdc,6)};},
+    publicStatus(){const networkReady=!closed&&readinessNow()-healthyAt<60_000,queueFull=!closed&&db.prepare("SELECT COUNT(*) AS n FROM chog_invoices WHERE state IN ('awaiting-payment','processing','bridging','confirming')").get().n>=3;return {paymentsEnabled:networkReady&&gasBalance>=OPERATOR_READY_BALANCE&&!queueFull,chogQueueFull:queueFull,chogReadiness:!networkReady?"network-unavailable":gasBalance<OPERATOR_READY_BALANCE?"gas-needed":queueFull?"queue-full":"ready",paymentMode:"local-pilot",workerVersion:"2026-10-18-queue-recovery-v12",destinationChainId:newDestinationChainId,supportedModes:["chog"],supportedInitiatives:[...CHOG_INITIATIVES],poolContributionPercent:10,poolContributionMode:"added-on-top",poolContributionBatchMinimumUsdc:"5.00",poolContributionPendingUsdc:formatUnits(poolPendingUsdc,6)};},
+    cancelUnpaidChog(id){
+      if(closed||!/^[a-f0-9]{64}$/.test(id??"")||activeInvoices.has(id))throw Error("Payment observation is in progress. Retry the same cancellation.");
+      const x=load(id);
+      if(!x||!["awaiting-payment","expired"].includes(x.state)||x.depositHash||x.depositProof||x.bridgeHash||x.destinationHash||x.observedDestinationHash)throw Error("This payment may have received funds and cannot be cancelled.");
+      // Release only the checkout slot. Keep the address, original payment
+      // deadline/cursor and journal so an already-sent transfer is still found.
+      if(x.state==="awaiting-payment"){x.state="expired";x.cancelledAt=Date.now();save(x);}
+      return publicInvoice(x);
+    },
     canRetryUnissuedChog(id){return !closed && /^[a-f0-9]{64}$/.test(id) && !load(id) && !db.prepare("SELECT 1 FROM deposit_addresses WHERE invoice_id=?").get(id);},
     async issue(input, requestId) {
       if(requestId!==undefined && !/^[a-f0-9]{64}$/.test(requestId))throw new Error("Invalid internal request ID.");
@@ -414,6 +423,7 @@ export function createChogProcessor({ filename, vault, root, checkpoint=()=>{}, 
           return publicInvoice(existing);
         }
       }
+      if(this.publicStatus().chogQueueFull)throw new Error("Three payments are already active. Please wait.");
       if(!this.publicStatus().paymentsEnabled)throw new Error("Payment worker is locked, offline or needs MON for gas.");
       if(input.mode!=="chog"||!acceptsNewChog(input.initiativeId)||typeof input.amount!=="string"||!/^\d{1,7}(\.\d{1,18})?$/.test(input.amount))throw new Error("Unsupported CHOG donation.");
       const invoiceChain=initiativeChain(input.initiativeId,newDestinationChainId);

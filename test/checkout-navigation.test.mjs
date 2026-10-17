@@ -12,7 +12,7 @@ function invoice(mode){
   const shared={kind:"payment",id:mode==="chog"?chogId:nftId,mode,state:"awaiting-payment",chainId:143,destinationChainId:10,initiativeId:"school-supplies",recipient:chogBeneficiary("school-supplies",10),depositAddress:address,expiresAt:Date.now()+600000,depositHash:null,destinationHash:null,observedDestinationHash:null,message:null};
   return mode==="chog"?{...shared,asset:"CHOG",amount:"330",donationAmount:"300",poolContributionAmount:"30",contributionPercent:10,poolContributionState:"pending",minUsdc:"200000",minimumUsd:"200000",destinationAsset:"USDC",destinationDecimals:6,bridgeHash:null,paymentUri:`ethereum:${CHOG}@143/transfer?address=${getAddress(address)}&uint256=${parseUnits("330",18)}`}:{...shared,asset:"MON",amount:"1",subsidyUsdc:"1.00",tokenId:"7",holderAddress:"0x2222222222222222222222222222222222222222",claimDay:"2026-10-16",paymentUri:`ethereum:${address}@143?value=1000000000000000000`};
 }
-const response=data=>async(_url,init)=>{assert.notEqual(init?.method,"POST");assert.equal(init.cache,"no-store");return Response.json(data);};
+const response=data=>async(url,init)=>{assert.equal(init.cache,"no-store");if(url.endsWith("/config"))return Response.json({});if(init?.method==="POST"){assert.equal(data.mode,"chog");assert.equal(url,`/api/payments/invoices/${data.id}/cancel`);assert.deepEqual(JSON.parse(init.body),{mode:"chog"});return Response.json({...data,state:"expired"});}return Response.json(data);};
 for(const mode of ["chog","nft"])test(`${mode}: confirmed unpaid initiative change archives the old invoice and preserves the other mode`,async()=>{
   const store=memory(),x=invoice(mode),other=mode==="chog"?"nft":"chog";
   rememberInvoice(mode,x.id,store,"school-supplies");rememberInvoice(other,invoice(other).id,store,"solar-foundation");
@@ -27,6 +27,15 @@ test("unresolved QR creation cannot be cancelled or replaced by navigation",asyn
   const store=memory(),pending=beginCreation({mode:"chog",amount:"300",holderAddress:"",initiativeId:"school-supplies"},store);
   await assert.rejects(inspectCheckoutForChange("chog",()=>{throw Error("must not request");},store),/unresolved/);
   assert.deepEqual(pendingCreation("chog",store),pending);
+});
+
+test("failed or ambiguous server cancellation keeps the original recovery reference",async()=>{
+  const x=invoice("chog"),store=memory();rememberInvoice("chog",x.id,store,x.initiativeId);
+  for(const failure of [async()=>new Response("",{status:409}),async()=>{throw Error("timeout");},async()=>Response.json(x)]){
+    const request=async(url,init)=>init.method==="POST"?failure():response(x)(url,init);
+    await assert.rejects(closeCheckoutForChange("chog",x.id,request,store));
+    assert.equal(savedInvoice("chog",store),x.id);
+  }
 });
 test("no invoice permits immediate navigation without any request",async()=>{
   assert.equal(await inspectCheckoutForChange("chog",()=>{throw Error("must not request");},memory()),null);

@@ -50,3 +50,17 @@ test("proof ledger prevents tx replay and a second daily claim after NFT transfe
     assert.throws(() => store.savePreview({ kind: "live", id: "x", depositAddress: "0x123" }));
   } finally { store.close(); }
 });
+
+test("CHOG cancellation requires an application session and explicit mode, then checkpoints before reply",async t=>{
+  const store=openInvoiceStore(":memory:"),id="a".repeat(64);let cancelled=0,checkpoints=0,fail=false;
+  const processor={publicStatus:()=>({integrityLocked:false}),cancelUnpaidChog(value){assert.equal(value,id);cancelled++;return{id,state:"expired"};},checkpoint(){checkpoints++;if(fail)throw Error("private details");}};
+  const service=createPaymentService(store,"http://127.0.0.1:4173",true,processor);service.listen(0,"127.0.0.1");await once(service,"listening");
+  t.after(async()=>{await new Promise(ok=>service.close(ok));store.close();});
+  const base=`http://127.0.0.1:${service.address().port}`,url=base+`/api/payments/invoices/${id}/cancel`;
+  const post=(cookie,mode="chog",origin="http://127.0.0.1:4173")=>fetch(url,{method:"POST",headers:{Origin:origin,"Content-Type":"application/json",...(cookie?{Cookie:cookie}:{})},body:JSON.stringify({mode})});
+  assert.equal((await post()).status,403);
+  const config=await fetch(base+"/api/payments/config"),cookie=config.headers.get("set-cookie").split(";")[0];
+  assert.equal((await post(cookie,"nft")).status,400);assert.equal((await post(cookie,"chog","https://attacker.invalid")).status,403);assert.equal(cancelled,0);
+  assert.equal((await post(cookie)).status,200);assert.equal(cancelled,1);assert.equal(checkpoints,1);
+  fail=true;const rejected=await post(cookie);assert.equal(rejected.status,409);assert.equal((await rejected.text()).includes("private details"),false);
+});

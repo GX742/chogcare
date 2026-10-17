@@ -2,8 +2,9 @@ import { useState } from "react";
 import { validateNftInvoice } from "./nft-invoice";
 import { validatePayableInvoice } from "./payable-invoice";
 import { assertUnpaidCheckout } from "./checkout-session";
+import { cancelUnpaidChog } from "./cancel-unpaid";
 
-// Close only the UI. The processor retains the invoice and can recover late funds.
+// Release unpaid CHOG capacity but retain the record and late-fund observation.
 export default function CancelCheckout({ id, mode, onClose }: { id: string; mode: "chog" | "nft"; onClose: () => void }) {
   const [confirm, setConfirm] = useState(false), [busy, setBusy] = useState(false), [error, setError] = useState("");
   async function close() {
@@ -13,7 +14,8 @@ export default function CancelCheckout({ id, mode, onClose }: { id: string; mode
       if (!response.ok) throw new Error("Could not check this payment. Keep it open and try again.");
       const data = await response.json();
       const invoice = mode === "nft" ? validateNftInvoice(data) : validatePayableInvoice(data);
-      assertUnpaidCheckout(id, invoice);
+      assertUnpaidCheckout(id, invoice, { allowExpired: true });
+      if (mode === "chog") await cancelUnpaidChog(id);
       onClose();
     } catch (problem) { setError(problem instanceof Error ? problem.message : "Could not close checkout."); }
     finally { setBusy(false); }

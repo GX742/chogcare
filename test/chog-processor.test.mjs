@@ -403,6 +403,37 @@ test("confirming payments still consume an active invoice slot",async t=>{
   await assert.rejects(f.issue(),/already active/);
 });
 
+test("unpaid cancellation releases checkout capacity without deleting its address or deadline",async t=>{
+  const f=await harness(t),first=await f.issue();await f.issue();await f.issue();
+  assert.equal(f.processor.publicStatus().chogQueueFull,true);
+  assert.equal(f.processor.publicStatus().paymentsEnabled,false);
+  const cancelled=f.processor.cancelUnpaidChog(first.id);
+  assert.equal(cancelled.state,"expired");assert.equal(cancelled.depositAddress,first.depositAddress);assert.equal(cancelled.expiresAt,first.expiresAt);
+  assert.deepEqual(f.processor.cancelUnpaidChog(first.id),cancelled,"lost-response retry is idempotent");
+  assert.equal(f.processor.publicStatus().paymentsEnabled,true);
+  const next=await f.issue();assert.notEqual(next.depositAddress,first.depositAddress);
+  assert.equal(f.broadcasts.length,0);
+});
+
+test("a transfer already sent to a cancelled checkout is still recovered exactly once",async t=>{
+  const f=await harness(t),invoice=await f.issue();f.processor.cancelUnpaidChog(invoice.id);
+  f.deposit(invoice);f.delivery();await f.advance();
+  assert.equal(f.processor.get(invoice.id).state,"delivered");
+  const sent=f.broadcasts.length;
+  assert.throws(()=>f.processor.cancelUnpaidChog(invoice.id),/cannot be cancelled/);
+  await f.advance();assert.equal(f.broadcasts.length,sent);
+});
+
+test("cancellation cannot race an in-flight deposit observation",async t=>{
+  const f=await harness(t),invoice=await f.issue(),original=f.source.getContractEvents;
+  let release,entered;const watching=new Promise(ok=>{entered=ok;});
+  f.source.getContractEvents=async input=>{entered();await new Promise(ok=>{release=ok;});return original(input);};
+  f.deposit(invoice);const tick=f.processor.tick();await watching;
+  try{assert.throws(()=>f.processor.cancelUnpaidChog(invoice.id),/observation is in progress/);}
+  finally{f.source.getContractEvents=original;release();await tick;}
+  assert.notEqual(f.processor.get(invoice.id).state,"expired");
+});
+
 test("accepted transaction + transport timeout + restart does not double send",async t=>{
   const f=await harness(t), invoice=await f.issue();f.deposit(invoice);f.timeout();
   await f.advance(1);assert.equal(f.broadcasts.length,7,"the original receipt resolves an ambiguous broadcast in the same tick");

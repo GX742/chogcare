@@ -2,6 +2,7 @@ import type { CheckoutMode } from "./checkout.ts";
 import { assertUnpaidCheckout, checkoutSelection, closeSavedInvoice, currentStore, pendingCreation, savedInvoice, validInvoiceId } from "./checkout-session.ts";
 import { validateNftInvoice } from "./nft-invoice.ts";
 import { validatePayableInvoice } from "./payable-invoice.ts";
+import { cancelUnpaidChog } from "./cancel-unpaid.ts";
 
 type Store = ReturnType<typeof currentStore>;
 export async function inspectCheckoutForChange(mode: CheckoutMode, request: typeof fetch = fetch, storage: Store = currentStore()) {
@@ -28,5 +29,7 @@ export async function closeCheckoutForChange(mode: CheckoutMode, expectedId: str
   const invoice = await inspectCheckoutForChange(mode, request, storage);
   if (!invoice || invoice.id !== expectedId) throw new Error("The saved checkout changed. Nothing was cancelled.");
   if (invoice.state !== "delivered") assertCanChangeUnpaid(invoice);
+  if (mode === "chog" && invoice.state === "awaiting-payment") await cancelUnpaidChog(invoice.id, request);
+  if (savedInvoice(mode, storage) !== expectedId || pendingCreation(mode, storage)) throw Error("The saved checkout changed. Nothing was closed.");
   closeSavedInvoice(mode, storage);
 }

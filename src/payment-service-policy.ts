@@ -20,7 +20,7 @@ export function paymentAvailabilityNotice(config: { paymentsEnabled?: unknown; n
     case "gas-needed": return "The service needs a network-fee top-up from the operator. You do not need to send extra funds. Availability is checked automatically.";
     case "funding-needed": return "The NFT pool needs verified funding before it can accept another donation. Do not send MON until your own active invoice is available.";
     case "daily-limit": return "Today's NFT pool places are reserved. Availability resets at 00:00 UTC; existing reservations are kept.";
-    case "queue-full": return "All NFT checkout slots are reserved. Availability is checked automatically; keep your existing invoice.";
+    case "queue-full": return mode === "nft" ? "All NFT checkout slots are reserved. Availability is checked automatically; keep your existing invoice." : "The payment queue is currently full. Finish or cancel your unpaid checkout; existing transfers continue to be tracked.";
     default: return "";
   }
 }

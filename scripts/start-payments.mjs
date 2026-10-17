@@ -147,6 +147,7 @@ try {
       finally {checkpoint();} // Persist the address/state BEFORE returning a QR.
     },
       get(id){return nftProcessor.get(id)??processor.get(id);},
+      cancelUnpaidChog(id){if(stopping||integrity.locked||integrityFault)throw new PaymentIntegrityError();try{return processor.cancelUnpaidChog(id);}finally{checkpoint();}},
       canRetryUnissuedNft(id){return !stopping&&!integrity.locked&&!integrityFault&&nftProcessor.canRetryUnissuedNft(id);},
       canRetryUnissuedChog(id){return !stopping&&!integrity.locked&&!integrityFault&&processor.canRetryUnissuedChog(id);},
     checkpoint,

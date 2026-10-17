@@ -166,10 +166,16 @@ test("sanitized Windows worker environment supports real private operations ACL 
   try {
     await f.admin.action({ type: "payments.start", password: SECRET });
     const launch = f.calls.find(item => item.fork).fork;
-    const source = "import { initLocalOpsDirectory } from './server/local-ops-storage.mjs'; for (let repeat = 0; repeat < 2; repeat++) for (const kind of ['support', 'admin']) initLocalOpsDirectory(process.argv[1], kind);";
+    const source = `import { initLocalOpsDirectory } from './server/local-ops-storage.mjs';
+      import { execFileSync } from 'node:child_process';
+      const run = (file, args, options) => {
+        try { return execFileSync(file, args, options); }
+        catch (error) { console.error('Isolated ACL probe:', JSON.stringify({code:error.code, status:error.status, signal:error.signal})); throw error; }
+      };
+      for (let repeat = 0; repeat < 2; repeat++) for (const kind of ['support', 'admin']) initLocalOpsDirectory(process.argv[1], kind, {run});`;
     assert.doesNotThrow(() => execFileSync(process.execPath, ["--input-type=module", "-e", source, f.workspace], {
       cwd: resolve("."), env: launch.options.env, shell: false, windowsHide: true,
-      timeout: 60000, stdio: "ignore",
+      timeout: 60000, stdio: ["ignore", "ignore", "inherit"],
     }));
   } finally { await f.dispose(); }
 });

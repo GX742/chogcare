@@ -14,7 +14,7 @@ $created = $null
 $priorTemp = $env:TEMP; $priorTmp = $env:TMP
 try {
   $created = New-LocalUser -Name $ciName -Password $ciPassword -AccountNeverExpires -Description 'Disposable ChogCare CI test identity'
-  Add-LocalGroupMember -SID 'S-1-5-32-545' -Member $created.SID
+  Add-LocalGroupMember -SID 'S-1-5-32-545' -Member $created
   $acl = Get-Acl -LiteralPath $workspace
   $acl.AddAccessRule([Security.AccessControl.FileSystemAccessRule]::new($created.SID, 'Modify', 'ContainerInherit,ObjectInherit', 'None', 'Allow'))
   Set-Acl -LiteralPath $workspace -AclObject $acl

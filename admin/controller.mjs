@@ -141,6 +141,10 @@ function safeWorkerEnvironment(workspace, nodePath) {
   if (process.platform === "win32") environment.OS = "Windows_NT";
   const systemRoot = process.env.SystemRoot ?? "C:\\Windows";
   environment.PATH = [dirname(nodePath), join(systemRoot, "System32"), join(systemRoot, "System32", "WindowsPowerShell", "v1.0")].join(";");
+  // Only built-in PowerShell modules are needed by the storage/serial helpers.
+  // Avoid scanning unrelated installed SDKs or loading per-user modules when
+  // Windows reconstructs a missing PSModulePath in the sanitized environment.
+  environment.PSModulePath = join(systemRoot, "System32", "WindowsPowerShell", "v1.0", "Modules");
   environment.CHOGCARE_PUBLIC_ORIGIN = "https://chogcare.xyz";
   // No NODE_OPTIONS/NODE_PATH, proxy variables, password, API keys or renderer
   // data are inherited. The workspace is conveyed through trusted cwd only.

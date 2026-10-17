@@ -147,6 +147,7 @@ test("one-use custody IPC waits for the child's preflight request, never argv/en
     assert.equal(JSON.stringify(launch).includes(SECRET), false);
     for (const name of ["NODE_OPTIONS", "NODE_PATH", "HTTP_PROXY", "HTTPS_PROXY", "ELECTRON_RUN_AS_NODE"]) assert.equal(launch.options.env[name], undefined);
     assert.equal(launch.options.env.OS, process.platform === "win32" ? "Windows_NT" : undefined);
+    assert.equal(launch.options.env.PSModulePath, join(process.env.SystemRoot ?? "C:\\Windows", "System32", "WindowsPowerShell", "v1.0", "Modules"));
     assert.equal(launch.options.env.CHOGCARE_PUBLIC_ORIGIN,"https://chogcare.xyz");
     assert.deepEqual(child.sent, [{ type: "secret", password: SECRET }]);
     child.emit("message", { type: "secret-request" });

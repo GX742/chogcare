@@ -19,6 +19,7 @@ async function harness(t, issue, store = openInvoiceStore(":memory:")) {
   const processor = {
     publicStatus: () => ({ paymentsEnabled: true, nftPaymentsEnabled: true }),
     get: id => invoices.get(id) ?? null,
+    preflightNft: async () => {},
     async issue(payload, id) {
       calls++;
       if (issue) return issue(payload, id, invoices);

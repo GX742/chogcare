@@ -1,5 +1,7 @@
 # ChogCare security review — 18 October 2026
 
+> Superseded by the [final security and privacy review](FINAL-SECURITY-PRIVACY-2026-10-18.md). The later review found personal email in public GitHub commit-author metadata and corrected additional availability weaknesses. The early contact-privacy verdict and test counts below must not be treated as the final result.
+
 ## Verdict and scope
 
 No confirmed exposed custody credential, personal contact detail, private financial file or exploitable critical/high application finding was identified in the checked source, reachable Git history, public HTTP boundaries and GitHub material. This is a bounded internal engineering review, not proof that every vulnerability is absent or an independent production financial audit.

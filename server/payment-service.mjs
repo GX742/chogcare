@@ -259,12 +259,30 @@ export function createPaymentService(store, allowedOrigin = "http://127.0.0.1:41
           if(input.mode==="chog"&&!acceptsNewChog(input.initiativeId)) return rejectBeforeCreation(503,"Recipient verification is pending. No new payment was started.","RECIPIENT_REVIEW");
           if (input.mode === "nft" ? !status.nftPaymentsEnabled : !status.paymentsEnabled) return rejectBeforeCreation(503, "This payment route is temporarily unavailable. No new payment was started.", "PAYMENTS_NOT_READY");
           if (preparing >= 4 || preparingModes.has(input.mode)) { res.setHeader("Retry-After", "5"); return respond(429, { code: "RATE_LIMITED", error: "The service is preparing other payments. Retry the same request.", retryAfterSeconds: 5 }); }
-          const entry = store.requests.claim(key, digest);
-          if (entry.digest !== digest) return respond(409, { code: "IDEMPOTENCY_CONFLICT", error: "This request key belongs to another payment." });
-          if (!entry.fresh && !canRetryUnissued(entry.invoice_id)) return pending();
+          let entry;
           preparing++;
           preparingModes.add(input.mode);
           try {
+            // Reject fresh ineligible requests before spending an immutable
+            // journal key. This check cannot allocate or reserve anything. The
+            // worker repeats eligibility after the intent is checkpointed;
+            // preflight never authorizes an address or a transfer.
+            if (input.mode === "nft" && !existing) {
+              if (typeof processor.preflightNft !== "function") return rejectBeforeCreation(503, "NFT eligibility checks are temporarily unavailable. No payment was started.", "NFT_ELIGIBILITY_UNAVAILABLE");
+              try { await processor.preflightNft(input); }
+              catch (error) {
+                if (profileIntegrityHeld()) return integrityHold();
+                if (["NFT_NOT_OWNED", "NFT_DAILY_LIMIT"].includes(error?.code)) return rejectBeforeCreation(422, "NFT eligibility check failed before any payment address was allocated.", error.code);
+                return rejectBeforeCreation(503, "NFT eligibility checks are temporarily unavailable. No payment was started.", "NFT_ELIGIBILITY_UNAVAILABLE");
+              }
+              if (req.aborted || res.writableEnded || res.destroyed) return;
+              const checked = processor.publicStatus();
+              if (checked.integrityLocked) return integrityHold();
+              if (!checked.nftPaymentsEnabled) return rejectBeforeCreation(503, "This payment route is temporarily unavailable. No new payment was started.", "PAYMENTS_NOT_READY");
+            }
+            entry = store.requests.claim(key, digest);
+            if (entry.digest !== digest) return respond(409, { code: "IDEMPOTENCY_CONFLICT", error: "This request key belongs to another payment." });
+            if (!entry.fresh && !canRetryUnissued(entry.invoice_id)) return pending();
             // Count the in-flight request before checkpoint I/O so concurrent
             // connections cannot all slip through the preparation admission cap.
             // A journal write is checkpointed BEFORE custody work starts.
@@ -274,6 +292,7 @@ export function createPaymentService(store, allowedOrigin = "http://127.0.0.1:41
             if (!issued || issued.id !== entry.invoice_id) throw new Error("Worker request binding mismatch.");
             return await replyWithInvoice(entry.invoice_id, issued);
           } catch (error) {
+            if (!entry) throw error;
             // A worker may have committed before throwing or losing its reply.
             // Recover the original ID, never retry issuance with another ID.
             const recovered = processor.get(entry.invoice_id);

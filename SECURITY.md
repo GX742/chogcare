@@ -17,4 +17,4 @@ Do not put custody keys, seed phrases, passwords, encrypted vaults, financial da
 - CI runs isolated regression tests, the production build and npm audits for the website, payment runtime and desktop package.
 - GitHub Dependabot and native scanning add advisory coverage where enabled; their availability does not replace local review.
 
-The [dated security review](docs/SECURITY-AUDIT-2026-10-18.md) records verification evidence and the limits of these checks. No scan or test suite establishes that every vulnerability is absent.
+The [final dated security and privacy review](docs/FINAL-SECURITY-PRIVACY-2026-10-18.md) records verification evidence, a confirmed author-metadata privacy issue and the limits of these checks. No scan or test suite establishes that every vulnerability is absent.

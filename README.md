@@ -4,7 +4,7 @@
 
 ChogCare connects a donation website to a physical care station: a NodeMCU, a colour display and a green LED, visible through a live camera. A verified donation becomes a thank-you on the device.
 
-[Open ChogCare](https://chogcare.xyz) · [Judge access](docs/JUDGE-ACCESS.md) · [Security review](docs/SECURITY-AUDIT-2026-10-18.md)
+[Open ChogCare](https://chogcare.xyz) · [Judge access](docs/JUDGE-ACCESS.md) · [Security review](docs/FINAL-SECURITY-PRIVACY-2026-10-18.md)
 
 ## For judges
 
@@ -17,7 +17,7 @@ The website runs on Vercel. The live camera, payment worker and USB station run 
 - **Charity selection:** choose education, clean energy, environmental or animal-welfare initiatives.
 - **CHOG checkout:** an invoice pins the amount, destination chain and charity recipient. A separate 10% community-pool contribution is shown before payment.
 - **Verified delivery:** included transactions, finalized delivery and failed or uncertain processing remain distinct states.
-- **Physical response:** after finalized CHOG delivery, the display shows the initiative, amount and thanks. The external LED pulses for the 15-second scene, then turns off.
+- **Physical response:** after a verified CHOG destination receipt, the display shows the initiative, amount and thanks. The external LED pulses for the 15-second scene, then turns off. The idle screen also rotates public donor NFT cards.
 - **Mobile broadcast:** a lightweight portrait stream, native Safari playback and refreshing camera previews cover the initial video connection period. Autoplay can still require a tap under browser restrictions.
 - **Operator tools:** a local Windows app manages owned services, private support messages and the USB bridge. A separate public dashboard is read-only.
 - **NFT community pool:** verified CHOG NFT holders can use the configured daily grant while the funded worker is ready. Eligibility and daily limits persist across restarts.
@@ -59,7 +59,7 @@ The public website cannot execute local admin commands, edit recipients, list su
 
 ## Security and privacy
 
-The [18 October review](docs/SECURITY-AUDIT-2026-10-18.md) records the checks, fixes and remaining risks. CI runs source guards, full-history secret scanning, regression tests, builds and dependency audits. Published source excludes environment files, keys, encrypted custody backups, financial databases, support messages and local work artifacts.
+The [final 18 October review](docs/FINAL-SECURITY-PRIVACY-2026-10-18.md) records the checks, fixes and remaining risks, including a confirmed personal-email disclosure in GitHub author metadata and remaining anonymous-reservation abuse. CI runs source guards, full-history credential scanning, regression tests, builds and dependency audits. Published source excludes environment files, keys, encrypted custody backups, financial databases, support messages and local work artifacts. Credential scanning alone does not establish that author metadata is private.
 
 This remains an **owner-operated payment pilot**, with signing keys unlocked locally during processing. A compromised operator account or computer, third-party protocols and RPC failures remain material risks. Passing checks is not an independent financial audit or a guarantee against every vulnerability. Live blockchain transactions and optional public NFT avatars can reveal identity through correlation.
 
@@ -68,7 +68,7 @@ Do not send passwords, seed phrases, private keys, encrypted backups or private 
 ## Documentation
 
 - [Judge access and a walkthrough without making a payment](docs/JUDGE-ACCESS.md)
-- [Current security review](docs/SECURITY-AUDIT-2026-10-18.md)
+- [Current security and privacy review](docs/FINAL-SECURITY-PRIVACY-2026-10-18.md)
 - [Windows operator guide](docs/CHOGCARE-ADMIN.md)
 - [Payment operations and recovery](docs/PAYMENTS-LOCAL-PILOT.md)
 - [NFT pool operations](docs/NFT-POOL-OPERATIONS.md)

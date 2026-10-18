@@ -4,15 +4,17 @@
 #include <string.h>
 
 namespace StationProtocol {
-enum class Type : uint8_t { Ping, Donation };
+enum class Type : uint8_t { Ping, Donation, Board, Pixels, BoardShow, BoardClear };
 struct Command {
   Type type = Type::Ping;
   char id[25] = {};
   char nick[97] = {};
-  char amount[27] = {};
+  char amount[111] = {};
   char cause[20] = {};
+  char rank[3] = {}, offset[5] = {}, data[257] = {};
   bool test = false;
   bool live = false;
+  bool image = false;
 };
 
 inline bool validId(const char *value) {
@@ -64,6 +66,50 @@ inline bool validNickname(const char *value) {
   return count > 0;
 }
 
+inline bool decimalNumber(const char *value, uint16_t maximum) {
+  if (!value[0] || (value[0] == '0' && value[1])) return false;
+  uint32_t number = 0;
+  for (const char *p = value; *p; ++p) {
+    if (*p < '0' || *p > '9') return false;
+    number = number * 10 + (*p - '0');
+    if (number > maximum) return false;
+  }
+  return true;
+}
+
+inline bool validBoardAmount(const char *value) {
+  if (!strcmp(value, "<0.01")) return true;
+  uint8_t group = 0, fraction = 0;
+  bool comma = false, positive = false;
+  const char *p = value;
+  if (value[0] == '0' && value[1] != '.') return false;
+  while (*p && *p != '.') {
+    if (*p == ',') {
+      if (!group || (!comma && group > 3) || (comma && group != 3)) return false;
+      comma = true; group = 0;
+    } else {
+      if (*p < '0' || *p > '9' || group >= 110) return false;
+      positive = positive || *p != '0'; ++group;
+    }
+    ++p;
+  }
+  if (!group || (comma && group != 3)) return false;
+  if (*p == '.') {
+    ++p;
+    while (*p >= '0' && *p <= '9') { positive = positive || *p != '0'; ++fraction; ++p; }
+    if (!fraction || fraction > 2) return false;
+  }
+  return !*p && positive;
+}
+
+inline bool validPixels(const char *value) {
+  const size_t count = strlen(value);
+  if (!count || count > 256 || count % 4) return false;
+  for (size_t i = 0; i < count; ++i)
+    if (!((value[i] >= '0' && value[i] <= '9') || (value[i] >= 'a' && value[i] <= 'f'))) return false;
+  return true;
+}
+
 // The PC emits a tiny flat JSON schema. No dynamic allocation, recursive JSON,
 // partial strings or input echo. Unknown/duplicate keys fail closed. Unicode is
 // sent as UTF-8; \u escapes are intentionally outside this protocol.
@@ -73,11 +119,11 @@ class Parser {
   bool decode(Command &out) {
     Command result;
     char key[12], type[12];
-    uint8_t seen = 0;
+    uint16_t seen = 0;
     if (!take('{')) return false;
     do {
       if (!string(key, sizeof(key)) || !take(':')) return false;
-      uint8_t bit = 0;
+      uint16_t bit = 0;
       if (!strcmp(key, "v")) {
         bit = 1;
         skip();
@@ -89,6 +135,10 @@ class Parser {
         if (!string(type, sizeof(type))) return false;
         if (!strcmp(type, "ping")) result.type = Type::Ping;
         else if (!strcmp(type, "donation")) result.type = Type::Donation;
+        else if (!strcmp(type, "board")) result.type = Type::Board;
+        else if (!strcmp(type, "pixels")) result.type = Type::Pixels;
+        else if (!strcmp(type, "boardshow")) result.type = Type::BoardShow;
+        else if (!strcmp(type, "boardclear")) result.type = Type::BoardClear;
         else return false;
       } else if (!strcmp(key, "id")) {
         bit = 4; if (!string(result.id, sizeof(result.id))) return false;
@@ -110,6 +160,17 @@ class Parser {
         if (!strncmp(cursor, "true", 4)) { cursor += 4; result.live = true; }
         else if (!strncmp(cursor, "false", 5)) cursor += 5;
         else return false;
+      } else if (!strcmp(key, "rank")) {
+        bit = 256; if (!string(result.rank, sizeof(result.rank))) return false;
+      } else if (!strcmp(key, "image")) {
+        bit = 512; skip();
+        if (!strncmp(cursor, "true", 4)) { cursor += 4; result.image = true; }
+        else if (!strncmp(cursor, "false", 5)) cursor += 5;
+        else return false;
+      } else if (!strcmp(key, "offset")) {
+        bit = 1024; if (!string(result.offset, sizeof(result.offset))) return false;
+      } else if (!strcmp(key, "data")) {
+        bit = 2048; if (!string(result.data, sizeof(result.data))) return false;
       } else return false;
       if (seen & bit) return false;
       seen |= bit;
@@ -122,8 +183,17 @@ class Parser {
     if (*cursor) return false;
     if (result.type == Type::Ping) {
       if (seen != 3 && seen != 131) return false;
-    } else if ((seen & 128) || (seen & 31) != 31 || !validId(result.id) ||
-               !validAmount(result.amount) || !validNickname(result.nick)) return false;
+    } else if (result.type == Type::Donation) {
+      if ((seen & ~uint16_t(127)) || (seen & 31) != 31 || !validId(result.id) ||
+          !validAmount(result.amount) || !validNickname(result.nick)) return false;
+    } else if (result.type == Type::Board) {
+      if (seen != 799 || !validId(result.id) || !validNickname(result.nick) ||
+          !validBoardAmount(result.amount) || !decimalNumber(result.rank, 20) || !strcmp(result.rank, "0")) return false;
+    } else if (result.type == Type::Pixels) {
+      if (seen != 3079 || !validId(result.id) || !decimalNumber(result.offset, 4096) || !validPixels(result.data)) return false;
+    } else if (result.type == Type::BoardShow) {
+      if (seen != 7 || !validId(result.id)) return false;
+    } else if (seen != 3) return false;
     out = result;
     return true;
   }

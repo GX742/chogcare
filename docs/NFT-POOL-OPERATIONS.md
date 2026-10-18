@@ -23,6 +23,28 @@ The worker verifies the canonical finalized MON payment, ownerOf at the payment 
 
 ## Limits and recovery
 
+Funding history is read in pages of at most 50 finalized Optimism blocks per
+worker tick. Each completely verified page advances the existing durable cursor;
+a failed page is retried from the same block. Downtime never causes a jump to
+the latest head. Previously verified funding is not inferred again from a token
+balance, and the unique funding-event key prevents duplicate credits.
+
+The pinned Optimism RPC set is PublicNode, Tenderly's public gateway and dRPC.
+Read fallbacks remember their preference per method, so an archive restriction
+does not redirect every healthy balance heartbeat to the historical provider.
+Known provider range restrictions can fall back for `eth_getLogs`; invalid
+parameters, reverts and ambiguous signed submissions remain errors. Public
+gateways have limits; Tenderly documents its keyless gateway and result/data
+limits in the [Node RPC documentation](https://docs.tenderly.co/node-rpc/overview#public-endpoint-limits).
+
+If `nftReadiness` reports `network-unavailable`, keep existing invoices and wait
+for automatic retries. Do not reset the funding cursor, ledger or integrity
+checkpoint. To activate a backend code update in the local desktop installation,
+use **Stop payments**, wait for a graceful stop, then **Start payments** in
+ChogCare Admin and enter the existing custody password only in its local prompt.
+A website deployment cannot reload an already running payment process. Version
+`2026-10-18-rpc-pages-v11` identifies this paged scanner in public config.
+
 - One new reservation per wallet AND per NFT per UTC day, independent of owner changes. The durable key is collection + canonical token ID + UTC date, not the current owner's address. Transferring that NFT cannot unlock another grant that day, including across worker restarts. Holding a different NFT does not unlock another grant for the same wallet. These checks cannot prove that different wallets with different NFTs belong to different human beings.
 - New grants are $1 each, at most three daily recipients: a $3/day reservation budget and a separate $3/day submission budget, both also capped at three claims. All reservations count, including outstanding legacy grants. Unresolved reservations remain funded across midnight. Expiry is shortened near midnight; new requests close for the final two minutes. There is no repeat-holder exception for new grants.
 - On first startup after the policy change, migration creates a local database backup and preserves old reservations, proofs and signed transactions. Existing $0.50 invoices remain $0.50; they are never silently increased, redirected or charged again. The browser gates new requests until the worker reports the new $1 / three-claim policy. Restart the owner-run worker to activate it; deploying the website alone is not enough.

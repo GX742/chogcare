@@ -11,7 +11,7 @@ The four active initiatives use owner-supplied artwork, converted to lossless We
 
 Generation happens locally in the browser using fixed same-origin artwork. Images and filenames contain no invoice recovery ID, wallet address, nickname, NFT identifier or transaction hash. There is no upload endpoint or new server dependency. Blob download URLs are revoked on cleanup; loading failure leaves sharing available and offers a retry.
 
-After a profile is published, its invoice moves into the existing private session history. **Your donation images** remains available above the main content, including after reloading that same tab. It automatically opens the newest saved donation, verifies its receipt and matches the initiative artwork and exact amount without manual selection. Legacy v1 history is supported. Viewing an image never reactivates or replaces an outstanding payment. Nothing is fetched until the button is opened; closing the dialog releases the generated image.
+After a profile is published, its invoice moves into the existing private session history. **Your donation images** remains available above the main content, including after reloading that same tab. It automatically verifies the current or latest saved received donation and matches the initiative artwork and exact amount without manual selection. Unpaid or expired checkouts are skipped. Legacy v1 history is supported. Viewing an image never reactivates or replaces an outstanding payment. Nothing is fetched until the button is opened; closing the dialog releases the generated image.
 
 ## Validation
 
@@ -19,4 +19,4 @@ After a profile is published, its invoice moves into the existing private sessio
 
 Browser QA used synthetic, validated paid invoices with all non-GET API requests blocked: Chromium and WebKit; 1440, 390 and 320 pixel viewports; all four templates; a one-million CHOG donation; an 18-place decimal; current and historical NFT grants; archived Burundi; failed artwork loading and retry. Downloaded files decoded as full-size PNGs. For the four original CHOG templates, pixel comparisons confirmed that all changes stayed inside the amount inset and the rest of the artwork was preserved.
 
-Receipt-history QA additionally covers profile completion followed by reload, old session history with a different active checkout, automatic matching of the latest receipt, native downloads, network failure/retry, identity substitution rejection, Escape/focus handling, and unchanged session storage throughout viewing. Tests make no real payments or profile publications.
+Receipt-history QA additionally covers profile completion followed by reload, old session history with a different active checkout, automatic matching of a received receipt, native downloads, network failure/retry, identity substitution rejection, Escape handling, and unchanged session storage throughout viewing. Tests make no real payments or profile publications.

@@ -13,3 +13,11 @@ export async function loadDonationImageReceipt(reference: { mode: CheckoutMode; 
   if (invoice.id !== reference.id || invoice.mode !== reference.mode) throw new Error("Saved donation identity mismatch.");
   return { state: invoice.state, mode: invoice.mode, initiativeId: invoice.initiativeId, amount: invoice.mode === "nft" ? invoice.subsidyUsdc : invoice.donationAmount ?? invoice.amount };
 }
+
+export async function loadLatestDonationImage(references: { mode: CheckoutMode; id: string }[], signal: AbortSignal, request: typeof fetch = fetch): Promise<DonationCardInput | null> {
+  for (const reference of references) {
+    const receipt = await loadDonationImageReceipt(reference, signal, request);
+    if (["confirming", "delivered"].includes(receipt.state)) return receipt;
+  }
+  return null;
+}

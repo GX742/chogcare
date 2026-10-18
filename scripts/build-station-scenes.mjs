@@ -16,6 +16,18 @@ export const SCENE_ART = [
 ];
 export const SCENE_PHOTO_WIDTH = 192, SCENE_PHOTO_HEIGHT = 144;
 
+export async function readScenePhotoResponse(response, maximum = 10_000_000) {
+  if (!Number.isSafeInteger(maximum) || maximum < 1 || maximum > 10_000_000 || !response.ok || !response.body || Number(response.headers.get("content-length")) > maximum) throw Error("Project image unavailable.");
+  const chunks = []; let length = 0;
+  for await (const chunk of response.body) {
+    length += chunk.byteLength;
+    if (length > maximum) throw Error("Project image is too large.");
+    chunks.push(Buffer.from(chunk));
+  }
+  if (length === 0) throw Error("Project image is empty.");
+  return Buffer.concat(chunks, length);
+}
+
 export async function buildStationScenes(sharpDirectory, check = false) {
   const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
   const require = createRequire(sharpDirectory ? resolve(sharpDirectory, "package.json") : import.meta.url);
@@ -31,11 +43,10 @@ export async function buildStationScenes(sharpDirectory, check = false) {
     catch (error) {
       if (check || !asset.url || error.code !== "ENOENT") throw error;
       const response = await fetch(asset.url, { signal: AbortSignal.timeout(30000), redirect: "error" });
-      if (!response.ok || Number(response.headers.get("content-length")) > 10_000_000) throw new Error("Project image unavailable.");
-      input = Buffer.from(await response.arrayBuffer());
-      if (input.length > 10_000_000) throw new Error("Project image is too large.");
-      // Decode before persisting. Only this offline builder touches the network.
-      await sharp(input, { limitInputPixels: 40_000_000 }).metadata();
+      input = await readScenePhotoResponse(response);
+      // Persist a decoded JPEG with metadata stripped, never the original
+      // upstream body. Only this offline builder touches the network.
+      input = await sharp(input, { limitInputPixels: 40_000_000 }).rotate().jpeg({ quality: 90 }).toBuffer();
       await writeFile(target, input);
     }
     const pixels = await sharp(input, { limitInputPixels: 40_000_000 })

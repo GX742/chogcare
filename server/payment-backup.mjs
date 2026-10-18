@@ -1,9 +1,10 @@
 import { createCipheriv, createDecipheriv, createHash, randomBytes, scryptSync } from "node:crypto";
 import { DatabaseSync } from "node:sqlite";
-import { readFileSync, writeFileSync, mkdirSync, mkdtempSync, lstatSync, rmSync, realpathSync, openSync, fsyncSync, closeSync, statfsSync } from "node:fs";
+import { writeFileSync, mkdirSync, mkdtempSync, lstatSync, rmSync, realpathSync, openSync, fsyncSync, closeSync, statfsSync } from "node:fs";
 import { resolve, join, dirname, basename } from "node:path";
 import { paymentStateDigest, openPaymentIntegrity } from "./payment-integrity.mjs";
 import { publicDepositNode } from "./custody-vault.mjs";
+import { readRegularFileSync } from "./regular-file.mjs";
 
 const FILES = ["processor.sqlite", "preview.sqlite", "vault.json", "checkpoint.json"];
 const MAX_BYTES = 64 * 1024 * 1024;
@@ -14,9 +15,7 @@ function derive(password, salt) {
   return scryptSync(password, salt, 32, { N: 32768, r: 8, p: 1, maxmem: 64 * 1024 * 1024 });
 }
 function regular(path, maximum = MAX_BYTES) {
-  const stat = lstatSync(path);
-  if (!stat.isFile() || stat.isSymbolicLink() || stat.nlink !== 1 || stat.size > maximum) throw Error("Unsafe recovery file.");
-  return readFileSync(path);
+  return readRegularFileSync(path, maximum);
 }
 function privateDirectory(path) {
   mkdirSync(path, { recursive: true, mode: 0o700 });

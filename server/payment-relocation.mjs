@@ -1,7 +1,8 @@
 import {createHash} from "node:crypto";
-import {existsSync,lstatSync,readFileSync,mkdirSync,openSync,writeFileSync,fsyncSync,closeSync} from "node:fs";
+import {existsSync,lstatSync,mkdirSync,openSync,writeFileSync,fsyncSync,closeSync} from "node:fs";
 import {resolve,dirname} from "node:path";
 import {paymentStateDigest,PaymentIntegrityError} from "./payment-integrity.mjs";
+import {readRegularFileSync} from "./regular-file.mjs";
 
 const digest=rows=>createHash("sha256").update(JSON.stringify(rows)).digest("hex");
 
@@ -12,9 +13,9 @@ const digest=rows=>createHash("sha256").update(JSON.stringify(rows)).digest("hex
 export function relocatePaymentCheckpoint({database,requestJournal,sourceCheckpoint,targetCheckpoint}){
   const paths=[database,requestJournal,sourceCheckpoint,targetCheckpoint].map(path=>resolve(path));
   if(new Set(paths).size!==4||existsSync(paths[3]))throw new PaymentIntegrityError();
-  const metadata=lstatSync(paths[2]);
-  if(!metadata.isFile()||metadata.isSymbolicLink()||metadata.size>4096)throw new PaymentIntegrityError();
-  const old=JSON.parse(readFileSync(paths[2],"utf8"));
+  let old;
+  try { old=JSON.parse(readRegularFileSync(paths[2],4096).toString("utf8")); }
+  catch { throw new PaymentIntegrityError(); }
   if(old.version!==1||typeof old.database!=="string"||!old.database||!Array.isArray(old.companions)||old.companions.length!==1||typeof old.companions[0]!=="string"||old.companions[0]===old.database||!/^[a-f0-9]{64}$/.test(old.digest)||!Number.isSafeInteger(old.generation)||old.generation<0||old.generation>=Number.MAX_SAFE_INTEGER)throw new PaymentIntegrityError();
   const state=paths.slice(0,2).map(paymentStateDigest);
   if(digest([[old.database,state[0]],[old.companions[0],state[1]]])!==old.digest)throw new PaymentIntegrityError();

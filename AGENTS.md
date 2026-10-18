@@ -1,0 +1,7 @@
+# Public-repository privacy and release checks
+
+- Keep financial databases, custody material, support content, private invoice references and runtime artifacts out of Git and command output.
+- Use a GitHub `users.noreply.github.com` author email for local commits. The project owner's verified public noreply address is `210770890+GX742@users.noreply.github.com`.
+- GitHub squash merges can select the account's personal email even when the source commits use noreply. When merging an authorized, fully checked PR, explicitly pass `--author-email 210770890+GX742@users.noreply.github.com` and `--match-head-commit <checked SHA>` to `gh pr merge`. Verify the resulting public commit author email is noreply without printing any unexpected personal value.
+- A clean secret scan does not establish that commit-author metadata is private. Check both source and public commit metadata when auditing publication.
+- Do not automatically delete ambiguous payment intents, reset integrity checkpoints, rewrite public history, change public identity or weaken paid-claim/replay checks to resolve an availability problem. Prepare a reviewed fix; public history replacement requires the owner's explicit approval and an exact-ref backup/lease plan.

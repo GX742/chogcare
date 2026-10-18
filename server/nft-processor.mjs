@@ -29,7 +29,6 @@ const hash = x => typeof x === "string" && /^0x[\da-f]{64}$/i.test(x);
 const ACTIVE_STATES = "'awaiting-payment','verifying','verified','paying','confirming','manual-review'";
 const ACTIVE_LIMIT = 3;
 const NEW_INVOICE_WINDOW_MS = 5 * 60_000;
-const MAX_UNPAID_EXPIRIES_PER_DAY = 2;
 const MAX_PROOF_FAILURES = 8;
 const FUNDING_SCAN_BLOCKS = 50n;
 
@@ -87,11 +86,10 @@ export function createNftProcessor({ filename, vault, root, checkpoint = () => {
     if (db.prepare("SELECT 1 FROM pool_reservations WHERE day=? AND (holder_address=? OR (collection=? AND token_id=?))").get(today,holder,PAYMENT_POLICY.nftCollection,token)) {
       throw Object.assign(new Error("This wallet or NFT already has a grant reserved for today."),{code:"NFT_DAILY_LIMIT"});
     }
-    for (const [field,value] of [["holderAddress",holder],["tokenId",token]]) {
-      const count = db.prepare(`SELECT COUNT(*) AS n FROM nft_invoices WHERE state='expired'
-        AND json_extract(document,'$.claimDay')=? AND lower(json_extract(document,'$.${field}'))=?`).get(today,value).n;
-      if (count >= MAX_UNPAID_EXPIRIES_PER_DAY) throw new Error("Too many unpaid NFT invoices today. Try again after the UTC reset.");
-    }
+    // An expired unpaid request never proves who created it. Counting it against
+    // the public holder/NFT would let someone else ban that identity for a day.
+    // Active/ambiguous reservations above still block duplicate checkouts, and
+    // the retained paid reservation still enforces the genuine daily claim.
   };
   const grantUnits = x => {const row=db.prepare("SELECT units FROM pool_reservations WHERE invoice_id=?").get(x.id);return row?.units??Number(x.subsidyUnits??500_000);};
   const publicInvoice = x => ({kind:"payment",mode:"nft",id:x.id,state:x.state,amount:"1",asset:"MON",chainId:143,destinationChainId:10,
@@ -99,6 +97,30 @@ export function createNftProcessor({ filename, vault, root, checkpoint = () => {
     depositAddress:x.depositAddress,paymentUri:x.paymentUri,expiresAt:x.expiresAt,claimDay:x.claimDay,depositHash:x.depositHash??null,
     destinationHash:x.destinationHash??null,observedDestinationHash:x.observedDestinationHash??null,message:x.message??null});
   const healthy = () => !closed && now()-healthyAt<60000;
+
+  // Eligibility is read-only. The HTTP layer may call it before reserving a
+  // request-journal slot, but issuance always reruns it against fresh chain and
+  // ledger state before allocating a deposit address. Never cache authorization.
+  async function eligibleInput(input) {
+    if(input.mode!=="nft"||input.amount!=="1"||!supportsNft(input.initiativeId)||!isAddress(input.holderAddress)||same(input.holderAddress,zeroAddress)||input.tokenId!==undefined&&(typeof input.tokenId!=="string"||!/^\d{1,78}$/.test(input.tokenId)||BigInt(input.tokenId)>=2n**256n))throw new Error("Invalid holder invoice.");
+    const [created,sourceChain]=await Promise.all([source.getBlock({blockTag:"finalized"}),source.getChainId()]);
+    if(sourceChain!==143)throw new Error("Wrong source chain.");
+    if(input.tokenId===undefined) {
+      const tokens=await source.readContract({address:PAYMENT_POLICY.nftCollection,abi:nftAbi,functionName:"tokensOfOwner",args:[input.holderAddress],blockNumber:created.number});
+      if(!Array.isArray(tokens)||tokens.length>1969||tokens.some(t=>typeof t!=="bigint"||t<0n||t>=2n**256n))throw new Error("Invalid NFT lookup response.");
+      if(!tokens.length)throw Object.assign(new Error("No CHOG NFT found."),{code:"NFT_NOT_OWNED"});
+      const token=tokens.find(t=>canRepeatNftGrant(input.holderAddress)||!db.prepare("SELECT 1 FROM pool_reservations WHERE collection=? AND token_id=? AND day=?").get(PAYMENT_POLICY.nftCollection,String(t),day(now())));
+      if(token===undefined)throw Object.assign(new Error("Daily NFT grants already used."),{code:"NFT_DAILY_LIMIT"});
+      input={...input,tokenId:String(token)};
+    }
+    assertIdentityAdmission(input);
+    const owner=await source.readContract({address:PAYMENT_POLICY.nftCollection,abi:nftAbi,functionName:"ownerOf",args:[BigInt(input.tokenId)],blockNumber:created.number});
+    if(!same(owner,input.holderAddress))throw Object.assign(new Error("Address does not own this NFT."),{code:"NFT_NOT_OWNED"});
+    const createdAt=now(),midnight=Date.parse(`${day(createdAt)}T00:00:00Z`)+86400000;
+    if(midnight-createdAt<120000)throw new Error("Wait for the daily reset before starting.");
+    assertIdentityAdmission(input);
+    return {input,created,createdAt,midnight};
+  }
 
   function deferProof(x,error) {
     const count = Number.isSafeInteger(x.proofFailures) ? x.proofFailures + 1 : 1;
@@ -293,32 +315,22 @@ export function createNftProcessor({ filename, vault, root, checkpoint = () => {
     publicStatus() {
       const s=ledger.summary(now());
       const availableCheckoutSlots=Math.max(0,ACTIVE_LIMIT-activeCount());
-      return {nftWorkerVersion:"2026-10-18-owner-repeat-v12",nftReadiness:!healthy()?"network-unavailable":gas<NFT_POOL_GAS_MIN?"gas-needed":usdc<pendingUnits()+BigInt(SUBSIDY_UNITS)||s.fundedAvailableUnits<SUBSIDY_UNITS?"funding-needed":s.availableClaims<=0?"daily-limit":availableCheckoutSlots<=0?"queue-full":"ready",nftSupported:true,nftPaymentsEnabled:healthy()&&gas>=NFT_POOL_GAS_MIN&&usdc>=pendingUnits()+BigInt(SUBSIDY_UNITS)&&s.availableClaims>0&&availableCheckoutSlots>0,
+      return {nftWorkerVersion:"2026-10-18-security-preflight-v13",nftReadiness:!healthy()?"network-unavailable":gas<NFT_POOL_GAS_MIN?"gas-needed":usdc<pendingUnits()+BigInt(SUBSIDY_UNITS)||s.fundedAvailableUnits<SUBSIDY_UNITS?"funding-needed":s.availableClaims<=0?"daily-limit":availableCheckoutSlots<=0?"queue-full":"ready",nftSupported:true,nftPaymentsEnabled:healthy()&&gas>=NFT_POOL_GAS_MIN&&usdc>=pendingUnits()+BigInt(SUBSIDY_UNITS)&&s.availableClaims>0&&availableCheckoutSlots>0,
         nftSupportedInitiatives:[...NFT_INITIATIVES],poolChainId:10,poolTreasury:wallet.address,poolUsdc:network.usdc,poolFunder:NFT_POOL_FUNDER,poolFunders:[...NFT_POOL_FUNDERS],poolFunded:s.fundedAvailableUnits>=SUBSIDY_UNITS,
         availableClaims:s.availableClaims,availableCheckoutSlots,nftQueueFull:availableCheckoutSlots===0,reservedTodayUsdc:(s.reservedTodayUnits/1000000).toFixed(2),poolGasReady:gas>=NFT_POOL_GAS_MIN,poolHealthy:healthy()};
+    },
+    async preflight(input) {
+      if(!this.publicStatus().nftPaymentsEnabled)throw new Error("NFT pool is not ready.");
+      await eligibleInput(input);
     },
     async issue(input, requestId) {
       if (requestId !== undefined && (typeof requestId !== "string" || !/^[a-f0-9]{64}$/.test(requestId))) throw new Error("Invalid internal request ID.");
       if(issuing)throw new Error("Another invoice is being prepared.");issuing=true;
       try {
         if(!this.publicStatus().nftPaymentsEnabled)throw new Error("NFT pool is not ready.");
-        if(input.mode!=="nft"||input.amount!=="1"||!supportsNft(input.initiativeId)||!isAddress(input.holderAddress)||same(input.holderAddress,zeroAddress)||input.tokenId!==undefined&&(typeof input.tokenId!=="string"||!/^\d{1,78}$/.test(input.tokenId)||BigInt(input.tokenId)>=2n**256n))throw new Error("Invalid holder invoice.");
-        const [created,sourceChain]=await Promise.all([source.getBlock({blockTag:"finalized"}),source.getChainId()]);
-        if(sourceChain!==143)throw new Error("Wrong source chain.");
-        if(input.tokenId===undefined) {
-          const tokens=await source.readContract({address:PAYMENT_POLICY.nftCollection,abi:nftAbi,functionName:"tokensOfOwner",args:[input.holderAddress],blockNumber:created.number});
-          if(!Array.isArray(tokens)||tokens.length>1969||tokens.some(t=>typeof t!=="bigint"||t<0n||t>=2n**256n))throw new Error("Invalid NFT lookup response.");
-          if(!tokens.length)throw Object.assign(new Error("No CHOG NFT found."),{code:"NFT_NOT_OWNED"});
-          const token=tokens.find(t=>canRepeatNftGrant(input.holderAddress)||!db.prepare("SELECT 1 FROM pool_reservations WHERE collection=? AND token_id=? AND day=?").get(PAYMENT_POLICY.nftCollection,String(t),day(now())));
-          if(token===undefined)throw Object.assign(new Error("Daily NFT grants already used."),{code:"NFT_DAILY_LIMIT"});
-          input={...input,tokenId:String(token)};
-        }
-        assertIdentityAdmission(input);
-        const owner=await source.readContract({address:PAYMENT_POLICY.nftCollection,abi:nftAbi,functionName:"ownerOf",args:[BigInt(input.tokenId)],blockNumber:created.number});
-        if(!same(owner,input.holderAddress))throw Object.assign(new Error("Address does not own this NFT."),{code:"NFT_NOT_OWNED"});
-        const createdAt=now(), midnight=Date.parse(`${day(createdAt)}T00:00:00Z`)+86400000;
-        if(midnight-createdAt<120000)throw new Error("Wait for the daily reset before starting.");
-        assertIdentityAdmission(input);
+        const eligible=await eligibleInput(input);
+        input=eligible.input;
+        const {created,createdAt,midnight}=eligible;
         const id=requestId ?? randomBytes(32).toString("hex"),allocation=allocator.allocate(id);
         const x={id,initiativeId:input.initiativeId,state:"awaiting-payment",holderAddress:input.holderAddress,tokenId:String(BigInt(input.tokenId)),subsidyUnits:SUBSIDY_UNITS,depositAddress:allocation.address,createdAt,claimDay:day(createdAt),
           createdBlock:String(created.number),cursor:String(created.number),expiresAt:Math.min(createdAt+NEW_INVOICE_WINDOW_MS,midnight-60000),paymentUri:paymentRequestUri({mode:"nft",depositAddress:allocation.address,amount:"1",chainId:143})};

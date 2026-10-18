@@ -291,11 +291,13 @@ test("paged backup scans are bounded in both range and total elapsed time", asyn
   assert.equal(pages,3,"an oversized scan must not create RPC calls");
 });
 
-test("real HTTP transport handles HTML 403 and a bounded timeout before fallback", async t => {
+test("real HTTP transport handles HTML 403 and a bounded timeout before fallback", {timeout:10_000}, async t => {
   let failure = "403";
+  const requests=[];
   const server = createServer(async (req, res) => {
     let body = ""; for await (const chunk of req) body += chunk;
     const input = JSON.parse(body);
+    requests.push({path:req.url,method:input.method});
     if (req.url === "/bad") {
       if (failure === "timeout") return;
       res.writeHead(403, { "Content-Type": "text/html" }); res.end("Forbidden"); return;
@@ -305,9 +307,15 @@ test("real HTTP transport handles HTML 403 and a bounded timeout before fallback
   });
   server.listen(0, "127.0.0.1"); await once(server, "listening");
   t.after(() => { server.closeAllConnections(); return new Promise(resolve => server.close(resolve)); });
-  const fakeHttp = url => http(`http://127.0.0.1:${server.address().port}/${url === urls[0] ? "bad" : "good"}`, { retryCount: 0, timeout: 50 });
+  // Only the intentionally hung endpoint needs a tiny timeout. A healthy local
+  // backup must not fail merely because parallel crypto/build tests busy the CPU.
+  const fakeHttp = (url,options) => http(`http://127.0.0.1:${server.address().port}/${url === urls[0] ? "bad" : "good"}`, { ...options,retryCount:0,timeout:url === urls[0] ? options.timeout : 2_000 });
   for (failure of ["403", "timeout"]) {
+    requests.length=0;
     const rpc = paymentRpcTransport({ chainId: 10, urls, timeout: 50 }, { http: fakeHttp })({ chain: optimism });
     assert.equal(await rpc.request(balance), "0x123");
+    assert.ok(requests.some(value=>value.path==="/bad"),"the unavailable primary must actually be attempted");
+    assert.ok(requests.some(value=>value.path==="/good"&&value.method==="eth_chainId"),"the fallback must be checked for the pinned chain");
+    assert.ok(requests.some(value=>value.path==="/good"&&value.method===balance.method),"the balance must come from the verified fallback");
   }
 });

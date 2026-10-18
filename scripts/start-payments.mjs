@@ -140,6 +140,12 @@ try {
     publicChogRate(){return processor.publicChogRate();},
     profileNfts(id){return processor.profileNfts(id);},
     leaderboardDonation(id){return stopping||integrity.locked||integrityFault?null:processor.leaderboardDonation(id);},
+    async preflightNft(input){
+      if(stopping || integrity.locked || integrityFault)throw new PaymentIntegrityError();
+      if(!nftInitialized)throw new Error("NFT funding verification is not ready. No payment was started.");
+      await nftProcessor.preflight(input);
+      if(stopping || integrity.locked || integrityFault)throw new PaymentIntegrityError();
+    },
     async issue(input,requestId){
       if(stopping || integrity.locked || integrityFault)throw new PaymentIntegrityError();
       if(input.mode==="nft"&&!nftInitialized)throw new Error("NFT funding verification is not ready. No payment was started.");

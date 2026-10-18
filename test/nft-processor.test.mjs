@@ -27,6 +27,12 @@ function transfer(token,from,to,value,txHash,number) {
   return {address:token,transactionHash:txHash,blockNumber:number,blockHash:h(number),logIndex:0,removed:false,
     topics:encodeEventTopics({abi:erc20Abi,eventName:"Transfer",args:{from,to}}),data:encodeAbiParameters([{type:"uint256"}],[value])};
 }
+function financialSnapshot(filename) {
+  const db=new DatabaseSync(filename,{readOnly:true});
+  try {
+    return Object.fromEntries(["custody_branch","deposit_addresses","nft_invoices","nft_pool_meta","pool_funding","pool_reservations","pool_payout_days","nft_proofs","pool_outbox"].map(table=>[table,db.prepare(`SELECT * FROM ${table} ORDER BY rowid`).all()]));
+  } finally {db.close();}
+}
 async function fixture(t, { checkpoint = () => {}, holderAddress = holder, initialTick = true } = {}) {
   const holder=holderAddress;
   const dir=mkdtempSync(join(tmpdir(),"chogcare-nft-test-")),filename=join(dir,"processor.sqlite");
@@ -267,6 +273,37 @@ test("NFT discovery rejects no holdings without allocating an address",async t=>
   assert.equal(f.worker.publicStatus().availableClaims,3);
 });
 
+test("NFT preflight verifies current eligibility without allocating or writing financial state",async t=>{
+  const f=await fixture(t);await f.fund();
+  const before=financialSnapshot(f.filename),input=f.input(),read=f.source.readContract;
+  for(let index=0;index<3;index++)assert.equal(await f.worker.preflight(input),undefined);
+  f.source.readContract=async args=>args.functionName==="tokensOfOwner"?[1n]:read(args);
+  const automatic={...input};delete automatic.tokenId;
+  assert.equal(await f.worker.preflight(automatic),undefined);
+  assert.equal(automatic.tokenId,undefined,"read-only lookup must not mutate the caller's request");
+  assert.deepEqual(financialSnapshot(f.filename),before);
+  assert.equal(f.worker.publicStatus().availableClaims,3);
+  assert.equal(f.broadcasts.length,0);
+  f.setOwner(other);
+  await assert.rejects(f.worker.preflight(input),{code:"NFT_NOT_OWNED"});
+  assert.deepEqual(financialSnapshot(f.filename),before);
+});
+
+test("successful NFT preflight is never cached authorization for a later issuance",async t=>{
+  const f=await fixture(t);await f.fund();
+  const input=f.input(),before=financialSnapshot(f.filename);
+  await f.worker.preflight(input);f.setOwner(other);
+  await assert.rejects(f.worker.issue(input),{code:"NFT_NOT_OWNED"});
+  assert.deepEqual(financialSnapshot(f.filename),before);
+  assert.equal(f.broadcasts.length,0);
+  f.setOwner(holder);
+  const first=await f.worker.issue(input);f.deposit(first);await f.worker.tick();await f.settle(true);await f.restart();
+  const paid=financialSnapshot(f.filename);
+  await assert.rejects(f.worker.preflight(f.input("2")),{code:"NFT_DAILY_LIMIT"});
+  assert.deepEqual(financialSnapshot(f.filename),paid);
+  assert.equal(f.broadcasts.length,1);
+});
+
 test("NFT checkout stays closed until verified Optimism funding AND gas; wrong token/sender cannot fund",async t=>{
   const f=await fixture(t);await assert.rejects(f.worker.issue(f.input()));
   f.corruptFunding(ETHEREUM_USDC);await assert.rejects(f.fund());assert.equal(f.worker.publicStatus().poolFunded,false);
@@ -446,15 +483,40 @@ test("public NFT admission bounds identities and reports a full queue separately
   assert.equal(f.worker.publicStatus().nftPaymentsEnabled,true);assert.equal(f.worker.publicStatus().availableClaims,3);
 });
 
-test("expired unpaid identity attempts are bounded per UTC day and across owner changes",async t=>{
+test("unverified unpaid expiries cannot ban a holder for the UTC day, including after restart",async t=>{
   const f=await fixture(t);await f.fund();
   const one=await f.worker.issue(f.input());await f.advance(361000);assert.equal(f.worker.get(one.id).state,"expired");
   const two=await f.worker.issue(f.input());await f.advance(361000);assert.equal(f.worker.get(two.id).state,"expired");
-  await assert.rejects(f.worker.issue(f.input("2")),/Too many unpaid/);
-  f.setOwner(other);await assert.rejects(f.worker.issue({...f.input(),holderAddress:other}),/Too many unpaid/);
-  await f.restart();await assert.rejects(f.worker.issue({...f.input(),holderAddress:other}),/Too many unpaid/);
-  await f.advance(86400000);const next=await f.worker.issue({...f.input(),holderAddress:other});
-  assert.notEqual(next.depositAddress,one.depositAddress);assert.notEqual(next.depositAddress,two.depositAddress);
+  await f.restart();
+  const next=await f.worker.issue(f.input());
+  assert.equal(next.state,"awaiting-payment");
+  assert.equal(new Set([one,two,next].map(invoice=>invoice.depositAddress)).size,3);
+  assert.equal(f.worker.publicStatus().reservedTodayUsdc,"1.00");
+  assert.equal(f.worker.publicStatus().availableClaims,2);
+  assert.equal(f.broadcasts.length,0,"unpaid attempts must never create a payout");
+  await assert.rejects(f.worker.issue(f.input("2")),/already active/);
+  f.deposit(next);await f.worker.tick();await f.settle(true);await f.restart();
+  assert.equal(f.worker.get(next.id).state,"delivered");
+  assert.equal(f.broadcasts.length,1);
+  await assert.rejects(f.worker.issue(f.input("2")),{code:"NFT_DAILY_LIMIT"});
+  f.setOwner(other);
+  await assert.rejects(f.worker.issue({...f.input(),holderAddress:other}),{code:"NFT_DAILY_LIMIT"});
+  assert.equal(f.worker.get(one.id).state,"expired");assert.equal(f.worker.get(two.id).state,"expired");
+});
+
+test("unpaid expiries for a public NFT cannot ban its new rightful owner",async t=>{
+  const f=await fixture(t);await f.fund();const expired=[];
+  for(let index=0;index<2;index++){
+    const invoice=await f.worker.issue(f.input());expired.push(invoice);
+    await f.advance(361000);assert.equal(f.worker.get(invoice.id).state,"expired");
+  }
+  f.setOwner(other);await f.restart();
+  const next=await f.worker.issue({...f.input(),holderAddress:other});
+  assert.equal(next.holderAddress,other);assert.equal(next.tokenId,"1");
+  assert.equal(new Set([...expired,next].map(invoice=>invoice.depositAddress)).size,3);
+  assert.equal(f.worker.publicStatus().reservedTodayUsdc,"1.00");
+  assert.equal(f.broadcasts.length,0);
+  for(const invoice of expired)assert.equal(f.worker.get(invoice.id).state,"expired");
 });
 
 test("persisted NFT payout is never broadcast when durability checkpoint fails, including restart",async t=>{

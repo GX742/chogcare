@@ -228,10 +228,16 @@
 .checkout-thanks-status > span { display:grid; place-items:center; width:24px; height:24px; border:1px solid #be68fb70; border-radius:50%; color:#f0d9ff; background:#7926c62b; }
 .checkout-thanks-main { display:grid; grid-template-columns:minmax(0,1fr) 172px; align-items:center; gap:12px; min-height:174px; margin-top:5px; }
 .checkout-thanks-amount { display:flex; align-items:baseline; flex-wrap:wrap; gap:8px 12px; }
-.checkout-thanks-amount strong { color:#fff4ff; font:750 clamp(62px,6.3vw,90px)/1 "Manrope Variable",sans-serif; letter-spacing:-4px; font-variant-numeric:tabular-nums; overflow-wrap:anywhere; }
+.checkout-thanks-amount strong { color:#fff4ff; font:750 clamp(62px,6.3vw,90px)/1 "Manrope Variable",sans-serif; letter-spacing:-4px; font-variant-numeric:tabular-nums; white-space:nowrap; }
 .checkout-thanks-amount span { color:#eec7ff; font:650 18px/1.3 "Manrope Variable",sans-serif; }
 .checkout-thanks-amount.is-long strong { font-size:clamp(40px,4.8vw,65px); letter-spacing:-2px; }
 .checkout-thanks-note { margin-top:14px; color:#c8b1e0; font-size:15px; line-height:1.5; }
+.checkout-rounded-note { margin-top:8px; color:#bda4cf; font-size:11px; line-height:1.6; }
+.checkout-thanks-actions { margin:0 0 18px; }
+.checkout-donate-again { display:inline-flex; align-items:center; justify-content:center; gap:10px; min-height:46px; padding:11px 18px; border:1px solid #bd7ce28c; border-radius:10px; background:#a34bd21c; color:#f1d8ff; font:650 14px/1.4 "Manrope Variable",sans-serif; cursor:pointer; transition:background .2s ease,border-color .2s ease; }
+.checkout-donate-again:hover { background:#b45ee233; border-color:#e3a9fa; }
+.checkout-donate-again:active { background:#b45ee24d; }
+.checkout-donate-again svg { flex-shrink:0; }
 .checkout-thanks-art { display:block; width:100%; height:174px; object-fit:contain; filter:drop-shadow(0 5px 20px #ce49db2b); }
 .checkout-thanks .checkout-thanks-route { display:flex; align-items:center; gap:12px; margin:7px 0 0; padding:15px 0; border-block:1px solid #bc6af333; font:650 18px/1.4 "Manrope Variable",sans-serif; letter-spacing:-.4px; }
 .checkout-thanks-route > span:first-child { flex-shrink:0; color:#deacff; }

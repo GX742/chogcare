@@ -10,7 +10,7 @@ import SunsetScene from "./SunsetScene";
 import GivingExplainer from "./GivingExplainer";
 import { landingPositioned, transitionLanding } from "./landing-transition";
 import { GIVETH_PROJECT_URL } from "./route";
-import { checkoutChanged, checkoutSelection, rememberMode, savedCheckoutModes } from "./checkout-session";
+import { checkoutChanged, checkoutSelection, rememberMode } from "./checkout-session";
 import CheckoutRecovery from "./CheckoutRecovery";
 import CheckoutSizeTransition from "./CheckoutSizeTransition";
 import Leaderboard from "./Leaderboard";
@@ -427,9 +427,6 @@ export default function App() {
     catch { return { mode: "chog" as const, initiativeId: "burundi", outstanding: true }; }
   });
   const [mode, setMode] = useState<"nft" | "chog">(initialSelection.mode);
-  const [savedMethods, setSavedMethods] = useState(() => {
-    try { return savedCheckoutModes(); } catch { return { chog: false, nft: false }; }
-  });
   const [stationOpen, setStationOpen] = useState(initialSelection.outstanding);
   const [checkoutVisited, setCheckoutVisited] = useState(initialSelection.outstanding);
   useEffect(() => { if (stationOpen) setCheckoutVisited(true); }, [stationOpen]);
@@ -495,7 +492,6 @@ export default function App() {
     const changed = () => {
       try {
         const saved = checkoutSelection(selectedId, mode);
-        setSavedMethods(savedCheckoutModes());
         if (saved.outstanding) { setSelectedId(saved.initiativeId); setMode(saved.mode); }
         else { setResumeNotice(false); }
       } catch { setResumeNotice(true); }
@@ -632,7 +628,6 @@ export default function App() {
               <div className="lp-payment-tabs" role="tablist" aria-label="Donation method">{(["chog", "nft"] as const).map((item, index) => <button key={item} id={"tab-" + item} role="tab" aria-controls={"panel-" + item} aria-selected={mode === item} tabIndex={mode === item ? 0 : -1} onClick={() => chooseMode(item)} onKeyDown={event => {
                 if (["ArrowRight", "ArrowLeft", "Home", "End"].includes(event.key)) { event.preventDefault(); const next = event.key === "Home" ? "chog" : event.key === "End" ? "nft" : index === 0 ? "nft" : "chog"; document.getElementById("tab-" + chooseMode(next))?.focus(); }
               }}><img className={`payment-tab-art ${item === "chog" ? "payment-tab-coin" : "payment-tab-nft"}`} src={item === "chog" ? "/chog-donation-coin.png" : "/chog-holder-nft.png"} srcSet={item === "chog" ? "/chog-donation-coin-256.webp 256w" : "/chog-holder-nft-256.webp 256w"} sizes="32px" loading="lazy" alt="" width="32" height="32"/><span className="payment-tab-copy"><strong>{item === "chog" ? "$CHOG" : "NFT holder"}</strong><small>{item === "chog" ? "Your amount" : "$1 from pool"}</small></span></button>)}</div>
-              {savedMethods[mode === "chog" ? "nft" : "chog"] && <p className="checkout-help" role="status">Your {mode === "chog" ? "NFT" : "$CHOG"} checkout is saved in the other tab. You can switch back to track it. Do not pay the same invoice twice.</p>}
               <CheckoutSizeTransition>
               <div id="panel-chog" role="tabpanel" aria-labelledby="tab-chog" hidden={mode !== "chog"}>
                 {(stationOpen || checkoutVisited) && mode === "chog" && <PaymentCheckout key={selectedId + "-chog-" + recoveryVersion} mode="chog" initiativeId={selectedId} initiativeName={selected.name} onViewLeaderboard={()=>leaveStation("leaderboard")} />}

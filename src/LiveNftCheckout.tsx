@@ -19,7 +19,6 @@ export default function LiveNftCheckout({initiativeId,ready,healthy,availableCla
   const [id,setId]=useState(saved.id),[invoice,setInvoice]=useState<NftInvoice|null>(null);
   const [qr,setQr]=useState(""),[busy,setBusy]=useState(false),[error,setError]=useState(saved.error),[online,setOnline]=useState(false),[now,setNow]=useState(Date.now);
   const previous=useRef<NftInvoice|null>(null);
-  useEffect(()=>{if(invoice?.state==="delivered"){try{closeSavedInvoice("nft");}catch{setError("Could not save your receipt. Keep this checkout open.");}}},[invoice?.state,invoice?.id]);
   useEffect(()=>{
     if(!id)return;
     let disposed=false;let timer:ReturnType<typeof setTimeout>;const abort=new AbortController();

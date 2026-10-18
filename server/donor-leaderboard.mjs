@@ -1,4 +1,5 @@
 import { formatUnits, parseUnits } from "viem";
+import { creditedChogDonationAmount, processingChogUnits } from "./chog-received.mjs";
 
 const invoiceIdPattern = /^[a-f0-9]{64}$/;
 const addressPattern = /^0x[0-9a-fA-F]{40}$/;
@@ -14,12 +15,17 @@ const visibleState = state => state === "confirming" || state === "delivered";
 export function verifiedLeaderboardDonation(invoice, id) {
   if (!matches(invoiceIdPattern, id) || invoice?.id !== id || !visibleState(invoice.state)) return null;
   const proof = invoice.depositProof;
+  let processingUnits, amount;
+  try {
+    processingUnits = processingChogUnits(invoice);
+    amount = creditedChogDonationAmount(invoice);
+  } catch { return null; }
   if (proof?.kind !== "confirmed-chog-transfer" || proof.invoiceId !== id || proof.chainId !== 143 ||
       !matches(addressPattern, proof.sender) || /^0x0{40}$/i.test(proof.sender) ||
       !matches(hashPattern, proof.txHash) || !same(proof.txHash, invoice.depositHash) ||
       !matches(/^\d{1,78}$/, proof.amountUnits) ||
-      proof.amountUnits !== invoice.units) return null;
-  const amount = invoice.donationAmount ?? invoice.amount;
+      proof.amountUnits !== (Object.hasOwn(invoice, "receivedUnits") ? invoice.receivedUnits : invoice.units) ||
+      BigInt(proof.amountUnits) !== processingUnits) return null;
   if (!matches(amountPattern, amount)) return null;
   const units = parseUnits(amount, 18);
   if (units <= 0n || units > BigInt(proof.amountUnits)) return null;

@@ -5,10 +5,11 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createHash } from "node:crypto";
 import { HDNodeWallet, Transaction } from "ethers";
-import { encodeEventTopics, encodeAbiParameters, encodeFunctionData, parseAbi, parseUnits, erc20Abi, keccak256 } from "viem";
+import { encodeEventTopics, encodeAbiParameters, encodeFunctionData, decodeFunctionData, parseAbi, parseUnits, formatUnits, erc20Abi, keccak256 } from "viem";
 import { createChogProcessor, fetchProfileMetadata } from "../server/chog-processor.mjs";
 import { DEPOSIT_BASE_PATH } from "../server/custody-vault.mjs";
-import { CHOG, MONAD_USDC, ETHEREUM_USDC, GIVETH_PROJECT_RECIPIENT, NAD_DEX_ROUTER } from "../src/route.ts";
+import { CHOG, MONAD_USDC, ETHEREUM_USDC, GIVETH_PROJECT_RECIPIENT, NAD_DEX_ROUTER, sellAbi } from "../src/route.ts";
+import { sourceJournal } from "../server/source-journal.mjs";
 import { RELAY_DEPOSITORY } from "../server/relay-route.mjs";
 import { validatePayableInvoice } from "../src/payable-invoice.ts";
 import { createPaymentService } from "../server/payment-service.mjs";
@@ -32,7 +33,7 @@ async function harness(t, destinationChainId=1, expensiveBridge=false, initiativ
   const root=HDNodeWallet.createRandom("",DEPOSIT_BASE_PATH), xpub=root.neuter().extendedKey;
   const vault={version:1,basePath:DEPOSIT_BASE_PATH,xpub,keyId:createHash("sha256").update(xpub).digest("hex")};
   let number=100n, paidLog=null, readyDelivery=false, chainId=143, sourceTimeout=false, destinationFinal=9999n, relayOffline=false, reorg=false, receiptReads=0, holdSource=false, relayGate=null;
-  const receipts=new Map(), broadcasts=[], nonces=new Map();
+  const receipts=new Map(), broadcasts=[], nonces=new Map(),extraLogs=[];
   const solanaRoute=destinationChainId===SOLANA_CHAIN_ID;
   let destLog=solanaRoute?null:event(deliveryNetwork(destinationChainId).usdc,chogBeneficiary(initiativeId,destinationChainId),880_000n,h(9000),900n);
   const block=args=>({number:args.blockNumber??number,hash:h(args.blockNumber??number),timestamp:BigInt(Math.floor(Date.now()/1000))});
@@ -40,7 +41,7 @@ async function harness(t, destinationChainId=1, expensiveBridge=false, initiativ
     getChainId:async()=>chainId,
     getBlock:async args=>args.blockTag==="finalized"&&holdSource?block({blockNumber:number-1n}):block(args),
     getBalance:async args=>args.blockNumber?(broadcasts.find(x=>x.tx.to.toLowerCase()===args.address.toLowerCase()&&x.tx.data==="0x")?.tx.value??5n*10n**18n)+20n*10n**18n-broadcasts.filter(x=>x.tx.from.toLowerCase()===args.address.toLowerCase()).reduce((sum,x)=>sum+x.tx.gasLimit*1_000_000_000n,0n):1000n*10n**18n,
-    getContractEvents:async args=>paidLog && paidLog.blockNumber>=args.fromBlock && paidLog.blockNumber<=args.toBlock && paidLog.topics[2].toLowerCase().endsWith(args.args.to.slice(2).toLowerCase())?[paidLog]:[],
+    getContractEvents:async args=>[paidLog,...extraLogs].filter(log=>log&&log.blockNumber>=args.fromBlock&&log.blockNumber<=args.toBlock&&log.topics[2].toLowerCase().endsWith(args.args.to.slice(2).toLowerCase())),
     getTransactionCount:async args=>nonces.get(args.address.toLowerCase())??0,
     getGasPrice:async()=>1_000_000_000n,estimateGas:async()=>100_000n,
     readContract:async()=>1_000_000n,
@@ -75,6 +76,11 @@ async function harness(t, destinationChainId=1, expensiveBridge=false, initiativ
       db.prepare("UPDATE chog_invoices SET document=? WHERE id=?").run(JSON.stringify(x),issued.id);db.close();return processor.get(issued.id);
     },
     deposit(invoice,value=parseUnits(invoice.amount,18)){number++;paidLog=event(CHOG,invoice.depositAddress,value,h(7000),number);receipts.set(h(7000),{status:"success",transactionHash:h(7000),blockNumber:number,blockHash:h(number),logs:[paidLog]});},
+    additionalDeposit(invoice,value=1n){number++;const hash=h(7100+extraLogs.length),log=event(CHOG,invoice.depositAddress,value,hash,number);extraLogs.push(log);receipts.set(hash,{status:"success",transactionHash:hash,blockNumber:number,blockHash:h(number),logs:[log]});},
+    advanceBlocks(count){number+=BigInt(count);},
+    fixtureInvoice(id){const db=new DatabaseSync(settings.filename);try{return JSON.parse(db.prepare("SELECT document FROM chog_invoices WHERE id=?").get(id).document);}finally{db.close();}},
+    async seedAmountReview(id,message,patch={}){await processor.close();const db=new DatabaseSync(settings.filename);try{const x={...JSON.parse(db.prepare("SELECT document FROM chog_invoices WHERE id=?").get(id).document),...patch,state:"manual-review",message};db.prepare("UPDATE chog_invoices SET state=?,document=? WHERE id=?").run(x.state,JSON.stringify(x),id);}finally{db.close();}processor=createChogProcessor(settings,dependencies);},
+    async recordFixtureJournal(id){const db=new DatabaseSync(settings.filename);try{const x=JSON.parse(db.prepare("SELECT document FROM chog_invoices WHERE id=?").get(id).document),raw=await root.signTransaction({type:2,chainId:143,nonce:0,to:x.depositAddress,value:1_500_000_000_000_000_000n,data:"0x",gasLimit:21_000n,maxFeePerGas:1_000_000_000n,maxPriorityFeePerGas:0n});sourceJournal(db).persist(id,"gas",root.address,0,raw);}finally{db.close();}},
     delivery(value=true){readyDelivery=value;},wrongDestination(){destLog=event(ETHEREUM_USDC,donor,880_000n,h(9000),900n);},
     wrongToken(){destLog=event(ETHEREUM_USDC,GIVETH_PROJECT_RECIPIENT,880_000n,h(9000),900n);},
     unfinalized(){destinationFinal=899n;},finalize(){destinationFinal=9999n;},timeout(){sourceTimeout=true;},wrongChain(){chainId=1;},
@@ -441,9 +447,140 @@ test("accepted transaction + transport timeout + restart does not double send",a
   assert.equal(new Set(f.broadcasts.map(x=>x.hash)).size,7);
 });
 
-test("partial or excessive CHOG never triggers automatic spending",async t=>{
-  const f=await harness(t), invoice=await f.issue();f.deposit(invoice,totalUnits-1n);await f.advance();
+for(const observation of ["receipt-rpc-failure","receipt-not-found","lagging-finality","noncanonical-block"])test(`a temporary donor ${observation} retries the same deposit after restart without duplicate settlement`,async t=>{
+  const f=await harness(t,10,false,"school-supplies"),invoice=await f.issue();
+  f.deposit(invoice);f.delivery();
+  const scanStarts=[],getEvents=f.source.getContractEvents,getReceipt=f.source.getTransactionReceipt,getBlock=f.source.getBlock;
+  f.source.getContractEvents=async args=>{scanStarts.push(args.fromBlock);return getEvents(args);};
+  let failed=false,finalizedReads=0;
+  if(observation.startsWith("receipt-"))f.source.getTransactionReceipt=async args=>{
+    if(args.hash===h(7000)&&!failed){failed=true;const error=new Error("temporary donor receipt observation failure");if(observation==="receipt-not-found")error.name="TransactionReceiptNotFoundError";throw error;}
+    return getReceipt(args);
+  };
+  else f.source.getBlock=async args=>{
+    const block=await getBlock(args);
+    if(observation==="lagging-finality"&&args.blockTag==="finalized"&&++finalizedReads===2){failed=true;return {...block,number:block.number-1n};}
+    if(observation==="noncanonical-block"&&args.blockNumber===101n&&!failed){failed=true;return {...block,hash:h(999)};}
+    return block;
+  };
+  await f.advance(1);
+  assert.equal(failed,true,"the failure must occur while verifying the discovered donor transfer");
+  const waiting=f.processor.get(invoice.id);
+  assert.equal(waiting.state,"awaiting-payment");assert.equal(waiting.depositHash,null);
+  assert.equal(waiting.depositAddress,invoice.depositAddress);assert.equal(waiting.amount,invoice.amount);assert.equal(waiting.expiresAt,invoice.expiresAt);
+  assert.doesNotMatch(waiting.message,/amount or time differs/);
+  assert.doesNotMatch(waiting.message,/temporary donor receipt observation failure/);
+  assert.equal(f.broadcasts.length,0,"unverified observations cannot authorize source spending");
+  await f.restart();await f.advance(3);
+  assert.equal(scanStarts[1],scanStarts[0],"a failed verification must not advance the durable deposit cursor");
+  assert.equal(f.processor.get(invoice.id).state,"delivered");
+  assert.equal(f.processor.get(invoice.id).depositHash,h(7000));
+  assert.equal(f.broadcasts.length,7);
+  const hashes=f.broadcasts.map(row=>row.hash);assert.equal(new Set(hashes).size,7);
+  await f.restart();await f.advance(2);assert.deepEqual(f.broadcasts.map(row=>row.hash),hashes,"restarting a settled invoice must not spend again");
+});
+
+for(const value of [totalUnits-1n])test(`a canonical CHOG deposit of ${value} units remains held without automatic spending`,async t=>{
+  const f=await harness(t),invoice=await f.issue();f.deposit(invoice,value);await f.advance();
   assert.equal(f.processor.get(invoice.id).state,"manual-review");assert.equal(f.broadcasts.length,0);
+  assert.equal(f.processor.get(invoice.id).message,`Received ${formatUnits(value,18)} CHOG. This invoice requires 330 CHOG. Processing is on hold; do not pay again.`);
+  assert.ok(f.processor.get(invoice.id).message.length<=300);
+  await f.restart();await f.advance();assert.equal(f.processor.get(invoice.id).state,"manual-review");assert.equal(f.broadcasts.length,0);
+});
+
+for(const received of [totalUnits+1n,333n*10n**18n])test(`a canonical ${received}-unit overpayment settles the entire received amount once without changing the quote`,async t=>{
+  const quoted=[];
+  const f=await harness(t,10,false,"school-supplies",10,{saleQuote:async(_source,units)=>{quoted.push(units);return {router:NAD_DEX_ROUTER,minMon:String(19n*10n**18n)};}}),invoice=await f.issue();
+  f.deposit(invoice,received);f.delivery();await f.advance(3);
+  const delivered=f.processor.get(invoice.id),originalFields=["amount","donationAmount","poolContributionAmount","contributionPercent","expiresAt","depositAddress","paymentUri","initiativeId","recipient","minUsdc","minimumUsd","destinationChainId"];
+  assert.equal(delivered.state,"delivered");for(const field of originalFields)assert.deepEqual(delivered[field],invoice[field],`${field} must remain the originally issued quote`);
+  assert.equal(delivered.receivedAmount,formatUnits(received,18));assert.equal(delivered.receivedDonationAmount,formatUnits(received*10n/11n,18));assert.equal(delivered.receivedPoolContributionAmount,formatUnits(received-received*10n/11n,18));
+  assert.equal(quoted.at(-1),received,"sale must quote all received CHOG");
+  const approval=decodeFunctionData({abi:erc20Abi,data:f.broadcasts[1].tx.data});assert.equal(approval.functionName,"approve");assert.equal(approval.args[1],received);
+  const sale=decodeFunctionData({abi:sellAbi,data:f.broadcasts[2].tx.data});assert.equal(sale.args[0].amountIn,received);
+  const stored=f.fixtureInvoice(invoice.id);assert.equal(stored.units,String(totalUnits));assert.equal(stored.receivedUnits,String(received));assert.equal(stored.depositProof.amountUnits,String(received));assert.equal(delivered.depositProof,undefined);assert.equal(delivered.receivedUnits,undefined);
+  const hashes=f.broadcasts.map(row=>row.hash);assert.equal(hashes.length,7);await f.restart();await f.advance(3);assert.deepEqual(f.broadcasts.map(row=>row.hash),hashes);
+  f.source.readContract=async({functionName})=>functionName==="tokensOfOwner"?[]:1_000_000n;
+  assert.equal((await f.processor.profileNfts(invoice.id)).amount,delivered.receivedDonationAmount);
+});
+
+test("a canonical overpayment beyond the configured pilot cap remains held without spending",async t=>{
+  const f=await harness(t),invoice=await f.issue();f.deposit(invoice,1_100_000n*10n**18n+1n);await f.advance();
+  assert.equal(f.processor.get(invoice.id).state,"manual-review");assert.match(f.processor.get(invoice.id).message,/processing limit is 1100000 CHOG/);assert.equal(f.broadcasts.length,0);
+  await f.restart();await f.advance();assert.equal(f.processor.get(invoice.id).state,"manual-review");assert.equal(f.broadcasts.length,0);
+});
+
+const oldAmountReview="Deposit amount or time differs from the invoice. Do not pay again.";
+const receivedAmountReview="Received 333 CHOG. This invoice requires 330 CHOG. Processing is on hold; do not pay again.";
+for(const message of [oldAmountReview,receivedAmountReview])test(`an untouched legacy amount hold (${message.startsWith("Received")?"specific":"generic"}) rescans every bounded page and recovers exactly once`,async t=>{
+  const f=await harness(t,10,false,"school-supplies"),invoice=await f.issue();f.deposit(invoice,333n*10n**18n);f.advanceBlocks(4100);
+  await f.seedAmountReview(invoice.id,message);
+  const original=f.fixtureInvoice(invoice.id),ranges=[],events=f.source.getContractEvents;
+  f.source.getContractEvents=async args=>{ranges.push([args.fromBlock,args.toBlock]);return events(args);};
+  f.delivery();await f.advance(3);
+  assert.equal(f.processor.get(invoice.id).state,"delivered");assert.equal(f.processor.get(invoice.id).receivedAmount,"333");
+  assert.deepEqual(ranges.slice(0,3),[[101n,2100n],[2101n,4100n],[4101n,4201n]],"all inbound events through the frozen finalized head must be scanned");
+  const stored=f.fixtureInvoice(invoice.id);for(const field of ["id","index","depositAddress","units","amount","donationAmount","poolContributionAmount","createdBlock","cursor","expiresAt","initiativeId","destinationChainId"])assert.deepEqual(stored[field],original[field],`${field} must not be rewritten during recovery`);
+  assert.equal(stored.depositProof.amountUnits,String(333n*10n**18n));const hashes=f.broadcasts.map(row=>row.hash);assert.equal(hashes.length,7);
+  await f.restart();await f.advance(3);assert.deepEqual(f.broadcasts.map(row=>row.hash),hashes);
+});
+
+test("legacy amount recovery retains its trusted hold across an RPC outage and resumes the original deposit",async t=>{
+  const f=await harness(t,10,false,"school-supplies"),invoice=await f.issue();f.deposit(invoice,333n*10n**18n);await f.seedAmountReview(invoice.id,oldAmountReview);
+  const receipt=f.source.getTransactionReceipt;let failed=false;
+  f.source.getTransactionReceipt=async args=>{if(args.hash===h(7000)&&!failed){failed=true;throw new Error("private RPC detail must not be shown");}return receipt(args);};
+  await f.advance(1);assert.equal(f.processor.get(invoice.id).state,"manual-review");assert.equal(f.processor.get(invoice.id).message,oldAmountReview);assert.equal(f.broadcasts.length,0);
+  f.delivery();await f.advance(4);assert.equal(f.processor.get(invoice.id).state,"delivered");assert.equal(f.broadcasts.length,7);
+});
+
+test("legacy hold recovery detects a second inbound transfer on another page and never processes an ambiguous deposit",async t=>{
+  const f=await harness(t),invoice=await f.issue();f.deposit(invoice,333n*10n**18n);f.advanceBlocks(2100);f.additionalDeposit(invoice);
+  await f.seedAmountReview(invoice.id,oldAmountReview);await f.advance(3);
+  assert.equal(f.processor.get(invoice.id).state,"manual-review");assert.match(f.processor.get(invoice.id).message,/Multiple deposits/);assert.equal(f.broadcasts.length,0);
+});
+
+test("legacy hold recovery never accepts a partial scan beyond its bounded history",async t=>{
+  const f=await harness(t),invoice=await f.issue();f.deposit(invoice,333n*10n**18n);f.advanceBlocks(10_000);
+  await f.seedAmountReview(invoice.id,oldAmountReview);const original=f.fixtureInvoice(invoice.id);let scans=0;
+  f.source.getContractEvents=async()=>{scans++;throw new Error("over-limit history must not be partially scanned");};
+  await f.advance(3);assert.equal(scans,0);assert.deepEqual(f.fixtureInvoice(invoice.id),original);assert.equal(f.broadcasts.length,0);
+});
+
+test("legacy hold recovery respects the active invoice cap and resumes only after a checkout slot is released",async t=>{
+  const f=await harness(t,10,false,"school-supplies"),invoice=await f.issue();await f.seedAmountReview(invoice.id,oldAmountReview);
+  const active=[];for(let i=0;i<3;i++)active.push(await f.issue());f.deposit(invoice,333n*10n**18n);await f.advance(3);
+  assert.equal(f.processor.get(invoice.id).state,"manual-review");assert.equal(f.broadcasts.length,0);
+  f.processor.cancelUnpaidChog(active[0].id);f.delivery();await f.advance(4);
+  assert.equal(f.processor.get(invoice.id).state,"delivered");assert.equal(f.broadcasts.length,7);
+});
+
+test("legacy hold recovery rechecks the source journal after asynchronous chain reads before activation",async t=>{
+  const f=await harness(t),invoice=await f.issue();f.deposit(invoice,333n*10n**18n);await f.seedAmountReview(invoice.id,oldAmountReview);
+  const events=f.source.getContractEvents;let recorded=false;
+  f.source.getContractEvents=async args=>{const logs=await events(args);if(!recorded){recorded=true;await f.recordFixtureJournal(invoice.id);}return logs;};
+  await f.advance(3);assert.equal(recorded,true);assert.equal(f.processor.get(invoice.id).state,"manual-review");assert.equal(f.processor.get(invoice.id).depositHash,null);assert.equal(f.broadcasts.length,0);
+});
+
+for(const hold of ["Bridge needs recovery. No second payment will be sent.","Multiple deposits detected. Operator review required."])test(`legacy recovery cannot release another hold: ${hold}`,async t=>{
+  const f=await harness(t),invoice=await f.issue();f.deposit(invoice,333n*10n**18n);await f.seedAmountReview(invoice.id,hold);await f.advance(3);
+  assert.equal(f.processor.get(invoice.id).state,"manual-review");assert.equal(f.processor.get(invoice.id).message,hold);assert.equal(f.broadcasts.length,0);
+});
+
+test("a canonical late CHOG payment remains held across restart without changing its invoice deadline",async t=>{
+  const f=await harness(t),invoice=await f.issue();f.deposit(invoice);
+  const getBlock=f.source.getBlock;
+  f.source.getBlock=async args=>({...await getBlock(args),...(args.blockNumber===101n?{timestamp:BigInt(Math.floor(invoice.expiresAt/1000)+1)}:{})});
+  await f.advance();assert.equal(f.processor.get(invoice.id).state,"manual-review");assert.equal(f.broadcasts.length,0);
+  assert.equal(f.processor.get(invoice.id).expiresAt,invoice.expiresAt);
+  await f.restart();await f.advance();assert.equal(f.processor.get(invoice.id).state,"manual-review");assert.equal(f.broadcasts.length,0);
+});
+
+test("invalid CHOG transfer provenance in a canonical receipt remains held without spending",async t=>{
+  const f=await harness(t),invoice=await f.issue();f.deposit(invoice);
+  const getReceipt=f.source.getTransactionReceipt;
+  f.source.getTransactionReceipt=async args=>{const receipt=await getReceipt(args);return args.hash===h(7000)?{...receipt,logs:receipt.logs.map(log=>({...log,address:MONAD_USDC}))}:receipt;};
+  await f.advance();assert.equal(f.processor.get(invoice.id).state,"manual-review");assert.equal(f.broadcasts.length,0);
+  await f.restart();await f.advance();assert.equal(f.processor.get(invoice.id).state,"manual-review");assert.equal(f.broadcasts.length,0);
 });
 
 test("wrong Ethereum recipient never produces donation success",async t=>{

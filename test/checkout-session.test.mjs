@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { assertUnpaidCheckout } from "../src/checkout-session.ts";
-import { activeInvoiceKeys, beginCreation, checkoutSelection, closeSavedInvoice, createPaymentRequest, pendingCreation, recoveryBundle, rememberInvoice, rememberMode, savedInvoice, validInvoiceId } from "../src/checkout-session.ts";
+import { activeInvoiceKeys, beginCreation, checkoutSelection, closeSavedInvoice, createPaymentRequest, pendingCreation, recoveryBundle, rememberInvoice, rememberMode, savedInvoice, savedCheckoutModes, validInvoiceId } from "../src/checkout-session.ts";
 
 const chogId = "a".repeat(64), nftId = "b".repeat(64);
 test("cancel guard refuses processing, wrong identity and any detected funds", () => {
@@ -9,7 +9,7 @@ test("cancel guard refuses processing, wrong identity and any detected funds", (
   assert.doesNotThrow(() => assertUnpaidCheckout(chogId, invoice));
   for (const state of ["processing", "bridging", "verifying", "verified", "paying", "confirming", "delivered", "manual-review", "expired"]) assert.throws(() => assertUnpaidCheckout(chogId, { ...invoice, state }));
   assert.throws(() => assertUnpaidCheckout(nftId, invoice));
-  for (const key of ["depositHash", "destinationHash", "observedDestinationHash"]) assert.throws(() => assertUnpaidCheckout(chogId, { ...invoice, [key]: "0x" + "1".repeat(64) }));
+  for (const key of ["depositHash", "bridgeHash", "destinationHash", "observedDestinationHash"]) assert.throws(() => assertUnpaidCheckout(chogId, { ...invoice, [key]: "0x" + "1".repeat(64) }));
 });
 function memory() { const map = new Map(); return { getItem:key=>map.get(key)??null, setItem:(key,value)=>map.set(key,value), removeItem:key=>map.delete(key) }; }
 const chog = { mode:"chog", amount:"300", holderAddress:"", initiativeId:"burundi" };
@@ -19,7 +19,9 @@ for(const initiativeId of ["school-supplies","solar-foundation","vida-verde"])te
   const store=memory();beginCreation({...nft,initiativeId},store);
   assert.equal(pendingCreation("nft",store).input.initiativeId,initiativeId);
   rememberInvoice("nft",nftId,store,initiativeId);
-  assert.equal(checkoutSelection("burundi","chog",store).initiativeId,initiativeId);
+  assert.equal(checkoutSelection("burundi","nft",store).initiativeId,initiativeId);
+  assert.equal(checkoutSelection("burundi","chog",store).mode,"chog");
+  assert.equal(savedInvoice("nft",store),nftId);
   assert.throws(()=>rememberInvoice("nft",nftId,store,"burundi"));
 });
 
@@ -45,9 +47,10 @@ test("archived completed or explicitly closed invoices unlock methods without lo
   }
 });
 
-test("NFT-only restore opens NFT mode and pins the original cause, including legacy v1 IDs", () => {
+test("automatic NFT-only restore pins its cause while explicit CHOG navigation stays independent", () => {
   const store = memory(); store.setItem(activeInvoiceKeys.nft,nftId);
-  assert.deepEqual(checkoutSelection("herd","chog",store),{mode:"nft",initiativeId:"burundi",outstanding:true});
+  assert.deepEqual(checkoutSelection("herd",undefined,store),{mode:"nft",initiativeId:"burundi",outstanding:true});
+  assert.deepEqual(checkoutSelection("school-supplies","chog",store),{mode:"chog",initiativeId:"school-supplies",outstanding:true});
   assert.equal(savedInvoice("nft",store),nftId);
 });
 test("both invoice IDs survive mode switching, pinning, reset and recovery export", () => {
@@ -61,7 +64,7 @@ test("both invoice IDs survive mode switching, pinning, reset and recovery expor
   assert.equal(savedInvoice("nft",store),nftId);
   const recovery=JSON.parse(recoveryBundle(store));
   assert.equal(recovery.nft,nftId); assert.deepEqual(recovery.history,[{mode:"chog",id:chogId}]);
-  assert.equal(checkoutSelection("herd","chog",store).mode,"nft");
+  assert.equal(checkoutSelection("herd","chog",store).mode,"chog");
 });
 test("ambiguous creation retries keep exactly the same key and payload across reloads", async () => {
   const store=memory(), first=beginCreation(chog,store);
@@ -70,7 +73,8 @@ test("ambiguous creation retries keep exactly the same key and payload across re
   assert.deepEqual(restored,first);
   assert.deepEqual(beginCreation(chog,store),first);
   assert.throws(()=>beginCreation({...chog,amount:"500"},store),/not been resolved/);
-  assert.equal(checkoutSelection("heaven","nft",store).mode,"chog");
+  assert.equal(checkoutSelection("heaven","nft",store).mode,"nft");
+  assert.equal(checkoutSelection("heaven","chog",store).initiativeId,"burundi");
   let sent;
   await createPaymentRequest(restored,new AbortController().signal,async(url,init)=>{sent={url,...init}; return new Response(JSON.stringify({id:chogId}),{status:201});});
   assert.equal(sent.headers["Idempotency-Key"],first.key);
@@ -100,8 +104,30 @@ test("only an explicit safe pre-creation rejection unlocks request editing", asy
 });
 test("invalid saved references are not silently erased or substituted", () => {
   const store=memory(); store.setItem(activeInvoiceKeys.nft,"../../config");
-  assert.equal(checkoutSelection("herd","chog",store).initiativeId,"burundi");
+  assert.equal(checkoutSelection("herd","chog",store).initiativeId,"herd");
   assert.throws(()=>closeSavedInvoice("nft",store),/Invalid saved invoice/);
   assert.equal(store.getItem(activeInvoiceKeys.nft),"../../config");
   for(const value of ["../config",nftId+"?query",null,123])assert.equal(validInvoiceId(value),false);
+});
+
+test("independent methods retain different pinned causes and pending idempotency keys across tab changes", () => {
+  const store = memory();
+  const request = beginCreation({ ...nft, initiativeId: "solar-foundation" }, store);
+  rememberInvoice("chog", chogId, store, "animal-ethics");
+  const before = recoveryBundle(store);
+  assert.deepEqual(checkoutSelection("school-supplies", "nft", store), { mode: "nft", initiativeId: "solar-foundation", outstanding: true });
+  assert.deepEqual(checkoutSelection("solar-foundation", "chog", store), { mode: "chog", initiativeId: "animal-ethics", outstanding: true });
+  assert.deepEqual(savedCheckoutModes(store), { chog: true, nft: true });
+  assert.equal(recoveryBundle(store), before);
+  assert.deepEqual(pendingCreation("nft", store), request);
+});
+
+test("choosing an empty CHOG tab survives reload and NFT completion without relabeling or deleting a receipt", () => {
+  const store = memory();
+  rememberInvoice("nft", nftId, store, "solar-foundation");
+  rememberMode("chog", store);
+  assert.equal(checkoutSelection("school-supplies", undefined, store).mode, "chog");
+  closeSavedInvoice("nft", store);
+  assert.deepEqual(checkoutSelection("school-supplies", "chog", store), { mode: "chog", initiativeId: "school-supplies", outstanding: false });
+  assert.deepEqual(JSON.parse(recoveryBundle(store)).history, [{ mode: "nft", id: nftId }]);
 });

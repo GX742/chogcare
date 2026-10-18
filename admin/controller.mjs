@@ -5,6 +5,7 @@ import { randomBytes } from "node:crypto";
 import { lstat, readFile, mkdir, realpath, open, rename } from "node:fs/promises";
 import { resolve, join, dirname, isAbsolute } from "node:path";
 import { pathToFileURL } from "node:url";
+import { defaultPaymentNode, supportedPaymentNode } from "./runtime-policy.mjs";
 
 const COM = /^COM[1-9]\d{0,2}$/;
 const REFERENCES = /^[A-F0-9]{12}$/;
@@ -15,13 +16,25 @@ class SafeAdminError extends Error {}
 const failure = message => new SafeAdminError(message);
 const DESIRED_VIDEO = Object.freeze({ latencyLevel: 0, videoQualityVariants: [{ name: "1080p", videoPassthrough: false, audioPassthrough: false, videoBitrate: 4500, audioBitrate: 128, scaledWidth: 1080, scaledHeight: 0, framerate: 30, cpuUsageLevel: 2 }] });
 const CHILD_EVENTS = Object.freeze({
+  "backup-saved": ["info", "Encrypted payment recovery bundle saved locally. Keep an off-device copy."],
+  "backup-verified": ["info", "Payment recovery bundle passed an isolated restore check. No funds moved."],
+  "backup-failed": ["warning", "Payment recovery backup needs attention. Existing payments continue; check protected storage and free disk space."],
   "ready": ["info", "Service is ready."], "stopped": ["info", "Service stopped gracefully."],
   "busy": ["warning", "Another payment or maintenance worker owns the local ports. It was not stopped."],
   "integrity-locked": ["error", "Payment integrity is locked. Preserve the databases and checkpoint; reconcile before restarting."],
   "startup-failed": ["error", "Payment startup failed. Check the custody password, backup and local network; no new payments were enabled."],
+  "startup-vault-read": ["error", "Could not read the existing custody backup. No keys were unlocked. Preserve the backup file."],
+  "startup-vault-unlock": ["error", "Custody backup could not be unlocked or its branch did not match. Check the existing custody password locally; never recreate the vault."],
+  "startup-chog-init": ["error", "Custody unlocked, but CHOG storage or pinned route initialization failed. Preserve the databases; do not reset integrity."],
+  "startup-nft-init": ["error", "Custody unlocked, but NFT accounting initialization failed. Preserve the existing pool records."],
+  "startup-nft-readiness": ["error", "Initial NFT funding/network verification failed. No new payments were enabled; keep existing invoices."],
+  "startup-operations-init": ["error", "Custody unlocked, but local operations storage or permissions initialization failed. No new payments were enabled; preserve existing records."],
   "chog-network": ["warning", "Payment network readiness failed; the worker will retry."],
   "nft-network": ["warning", "NFT pool readiness failed. New NFT claims stay paused."],
   "station-failed": ["error", "USB bridge failed. Check the COM port and close Serial Monitor; payments were not changed."],
+  "station-test-started": ["info", "Screen test queued: simulated 300 CHOG, labelled TEST - NO PAYMENT. No real payment or leaderboard entry is created."],
+  "station-test-done": ["info", "The device confirmed the screen test finished. No funds moved."],
+  "station-test-failed": ["error", "The device reported a fault during the screen test. Check the USB connection and display."],
   "shutdown-failed": ["error", "Graceful shutdown failed. Keep this app open and inspect the local service; no force termination was attempted."],
 });
 
@@ -123,9 +136,16 @@ async function regularFile(filename, maximum = 65536) {
 function safeWorkerEnvironment(workspace, nodePath) {
   const environment = {};
   for (const key of ["SystemRoot", "WINDIR", "ComSpec", "TEMP", "TMP", "USERPROFILE", "APPDATA", "LOCALAPPDATA"]) if (typeof process.env[key] === "string") environment[key] = process.env[key];
+  // The ACL helper requires this Windows marker. Derive it from the runtime,
+  // not arbitrary inherited environment values, and retain the strict allowlist.
+  if (process.platform === "win32") environment.OS = "Windows_NT";
   const systemRoot = process.env.SystemRoot ?? "C:\\Windows";
   environment.PATH = [dirname(nodePath), join(systemRoot, "System32"), join(systemRoot, "System32", "WindowsPowerShell", "v1.0")].join(";");
-  environment.CHOGCARE_PUBLIC_ORIGIN = "https://chogcare.vercel.app";
+  // Only built-in PowerShell modules are needed by the storage/serial helpers.
+  // Avoid scanning unrelated installed SDKs or loading per-user modules when
+  // Windows reconstructs a missing PSModulePath in the sanitized environment.
+  environment.PSModulePath = join(systemRoot, "System32", "WindowsPowerShell", "v1.0", "Modules");
+  environment.CHOGCARE_PUBLIC_ORIGIN = "https://chogcare.xyz";
   // No NODE_OPTIONS/NODE_PATH, proxy variables, password, API keys or renderer
   // data are inherited. The workspace is conveyed through trusted cwd only.
   return environment;
@@ -189,11 +209,12 @@ const wait = (request, milliseconds, message) => new Promise((ok, bad) => {
 
 // The second argument exists only for isolated backend tests. It is never
 // renderer IPC input and cannot be changed by settings or an action payload.
-export async function createAdminController({ workspacePath, nodePath = "C:\\Program Files\\nodejs\\node.exe", onChange = () => {} }, dependencies = {}) {
+export async function createAdminController({ workspacePath, nodePath, onChange = () => {} }, dependencies = {}) {
   if (typeof workspacePath !== "string" || !isAbsolute(workspacePath) || /^[\\/]{2}/.test(workspacePath)) throw failure("Choose the trusted local ChogCare workspace.");
   const resolvedWorkspace = resolve(workspacePath);
   if (resolvedWorkspace.startsWith("\\\\")) throw failure("Choose the trusted local ChogCare workspace.");
   const workspace = await realpath(resolvedWorkspace);
+  nodePath ??= defaultPaymentNode(workspace);
   if (workspace.startsWith("\\\\")) throw failure("Choose the trusted local ChogCare workspace.");
   const packagePath = join(workspace, "package.json"); await regularFile(packagePath);
   if (JSON.parse(await readFile(packagePath, "utf8")).name !== "chogcare") throw failure("This folder is not the ChogCare workspace.");
@@ -202,7 +223,7 @@ export async function createAdminController({ workspacePath, nodePath = "C:\\Pro
   await regularFile(nodePath, 268435456);
   const exec = dependencies.exec ?? defaultExec, json = dependencies.requestJson ?? readLocalJson;
   const nodeVersion = await exec(nodePath, ["--version"], { cwd: workspace, env: safeWorkerEnvironment(workspace, nodePath) });
-  if (!/^v25\.(?:9|[1-9]\d+)\.\d+\s*$/.test(nodeVersion)) throw failure("Use the installed Node 25.9 or newer Node 25 runtime for the payment worker.");
+  if (!supportedPaymentNode(nodeVersion)) throw failure("Use Node.js 24.22 or newer Node 24 LTS for the payment worker. Node 25 is unsupported.");
   // The trusted workspace helper protects only these two private operations
   // directories. It must finish before reading settings or opening any inbox.
   const initDirectory = dependencies.initDirectory ?? (await import(pathToFileURL(join(workspace, "server/local-ops-storage.mjs")).href)).initLocalOpsDirectory;
@@ -223,7 +244,7 @@ export async function createAdminController({ workspacePath, nodePath = "C:\\Pro
   const quotes = dependencies.quoteService ?? (await import(pathToFileURL(join(workspace, "server/ops-quotes.mjs")).href)).createReadOnlyQuoteService();
   const offlineFactory = dependencies.createOfflineOperationsService ?? (await import(pathToFileURL(join(workspace, "server/operations-runtime.mjs")).href)).createOfflineOperationsService;
   const children = new Map(), events = [], serviceStates = new Map(SERVICES.map(id => [id, { id, state: id === "station" ? "unknown" : "stopped", managed: false, detail: id === "station" ? "External USB bridges are not controlled by this app." : "Not checked yet." }]));
-  let payments = null, checkedAt = Date.now(), closed = false, closing = false, busy = false, refreshing, owncastPasswordSet = false, offlineApi = null, openingOffline, paymentHandoff = false;
+  let payments = null, checkedAt = Date.now(), closed = false, closing = false, busy = false, refreshing, owncastPasswordSet = false, offlineApi = null, openingOffline, paymentHandoff = false, stationTest = "idle";
   const clock = dependencies.clock ?? Date.now, childFork = dependencies.fork ?? fork, isPortBusy = dependencies.portBusy ?? portBusy;
   const notify = () => { if (!closed) { try { onChange(snapshot()); } catch { /* Observer failure cannot mutate a worker. */ } } };
   const event = (service, level, message) => {
@@ -236,7 +257,7 @@ export async function createAdminController({ workspacePath, nodePath = "C:\\Pro
   function snapshot() {
     let summary = { total: 0, new: 0, read: 0 };
     try { summary = support.summary(); } catch { /* Private inbox unavailability does not expose its contents. */ }
-    return structuredClone({ checkedAt, workspacePath: workspace, stationPort, services: SERVICES.map(id => serviceStates.get(id)), payments,
+    return structuredClone({ checkedAt, workspacePath: workspace, stationPort, stationTest, services: SERVICES.map(id => serviceStates.get(id)), payments,
       support: { open: Number.isSafeInteger(summary.new + summary.read) ? summary.new + summary.read : 0, total: Number.isSafeInteger(summary.total) ? summary.total : 0 }, events });
   }
   const settings = () => ({ workspacePath: workspace, stationPort, owncastPasswordSet });
@@ -278,7 +299,7 @@ export async function createAdminController({ workspacePath, nodePath = "C:\\Pro
     if (openingOffline) return openingOffline;
     openingOffline = (async () => {
       if (await isPortBusy(4174) || await isPortBusy(4175) || closed || closing || paymentHandoff || children.has("payments")) return;
-      const server = offlineFactory({ workspacePath: workspace, allowedOrigin: "https://chogcare.vercel.app" });
+      const server = offlineFactory({ workspacePath: workspace, allowedOrigin: "https://chogcare.xyz" });
       try {
         await new Promise((ok, bad) => { server.once("error", bad); server.listen(4174, "127.0.0.1", ok); });
         if (closed || closing || paymentHandoff || children.has("payments")) { await new Promise(ok => server.close(ok)); return; }
@@ -314,6 +335,10 @@ export async function createAdminController({ workspacePath, nodePath = "C:\\Pro
       } else if (message.type === "ready" && Object.keys(message).length === 1 && !worker.stopping) {
         worker.ready = true; password = ""; setService(id, "running", true, "Managed local service is ready."); finishReady();
       } else if (message.type === "event" && Object.keys(message).every(key => ["type", "code", "level"].includes(key)) && CHILD_EVENTS[message.code]) {
+        if (id === "station") {
+          const state = { "station-test-started": "running", "station-test-done": "done", "station-test-failed": "error" }[message.code];
+          if (state) stationTest = state;
+        }
         const [level, text] = CHILD_EVENTS[message.code]; event(id, level, text);
       }
     });
@@ -321,6 +346,7 @@ export async function createAdminController({ workspacePath, nodePath = "C:\\Pro
     const onExit = code => {
       if (worker.finished) return;
       worker.finished = true;
+      if (id === "station") stationTest = "idle";
       password = ""; if (children.get(id) === worker) children.delete(id);
       setService(id, code === 0 ? "stopped" : "error", false, code === 0 ? "Managed service stopped gracefully." : "Managed service exited with an error; check the safe events above.");
       failReady(failure("The managed worker did not finish startup.")); finishExit();
@@ -340,6 +366,29 @@ export async function createAdminController({ workspacePath, nodePath = "C:\\Pro
     if (worker.child.connected) worker.child.send({ type: "stop" }, () => {});
     await wait(worker.exited, dependencies.stopTimeout ?? 60000, "Graceful shutdown is still pending. Keep this app open; no force termination was attempted.");
     event(id, "info", "Managed worker drained and exited. No external process was stopped.");
+  }
+
+  async function testStation() {
+    const worker = children.get("station");
+    if (!worker?.ready || worker.stopping || !worker.child.connected) throw failure("Connect the station from this app before testing its screen.");
+    if (stationTest === "running") throw failure("A screen test is already running. Wait for the device to finish.");
+    const requestId = randomBytes(12).toString("hex");
+    stationTest = "running"; notify();
+    let receive, exited;
+    const result = new Promise((ok, bad) => {
+      receive = message => {
+        if (message?.type !== "test-result" || Object.keys(message).length !== 3 || message.requestId !== requestId) return;
+        if (message.status === "accepted") ok();
+        else if (message.status === "busy") bad(failure("The station is busy showing a donation or checking its queue. Try again in a moment."));
+        else bad(failure("The screen has not answered the USB heartbeat. Check COM6 and the display; no test was confirmed."));
+      };
+      exited = () => bad(failure("The USB bridge disconnected before accepting the test."));
+      worker.child.on("message", receive); worker.child.once("exit", exited);
+      worker.child.send({ type: "test", requestId }, error => { if (error) bad(failure("The screen test could not reach the USB bridge.")); });
+    });
+    try { await wait(result, dependencies.stationTestTimeout ?? 5000, "The screen test request timed out. Check Activity before retrying."); }
+    catch (error) { stationTest = "error"; notify(); throw error; }
+    finally { worker.child.removeListener("message", receive); worker.child.removeListener("exit", exited); }
   }
 
   async function configureBroadcast(password) {
@@ -392,7 +441,7 @@ export async function createAdminController({ workspacePath, nodePath = "C:\\Pro
         input = record(raw, ["type", "password"]);
         if (!PASSWORD(input.password) || raw.type === "payments.start" && input.password.length < 16) throw failure("Enter the correct local service password (custody: 16-256 characters). Do not send it in chat.");
         password = input.password; input.password = ""; break;
-      case "payments.stop": case "station.stop": case "obs.open": case "refresh": input = record(raw, ["type"]); break;
+      case "payments.stop": case "station.stop": case "station.test": case "obs.open": case "refresh": input = record(raw, ["type"]); break;
       case "broadcast.start": case "broadcast.stop": case "gateway.start": input = record(raw, ["type", "confirmed"]); if (input.confirmed !== true) throw failure("Confirm the streaming service change first."); break;
       case "station.start": input = record(raw, ["type", "port"]); if (!COM.test(input.port)) throw failure("Choose a valid COM port, for example COM4."); break;
       case "settings.save":
@@ -410,6 +459,7 @@ export async function createAdminController({ workspacePath, nodePath = "C:\\Pro
         case "payments.stop": await stopChild("payments"); break;
         case "station.start": stationPort = input.port; await launchChild("station", "", stationPort); break;
         case "station.stop": await stopChild("station"); break;
+        case "station.test": await testStation(); break;
         case "broadcast.configure": await configureBroadcast(password); break;
         case "broadcast.start": await systemctl("start", "owncast"); setService("broadcast", "running", true, "Owncast start was explicitly confirmed."); event("broadcast", "info", "Owncast start requested. OBS and payments were not restarted."); break;
         case "broadcast.stop": await systemctl("stop", "owncast"); setService("broadcast", "stopped", false, "Owncast stop was explicitly confirmed."); event("broadcast", "warning", "Owncast stopped after explicit confirmation. OBS and payment services were not stopped."); break;

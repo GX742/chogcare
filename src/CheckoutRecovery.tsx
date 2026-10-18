@@ -27,7 +27,7 @@ export default function CheckoutRecovery({ onRestore }: { onRestore: () => void 
     finally { setBusy(false); }
   };
   return <details className="checkout-disclosure"><summary>Save or recover a payment</summary><div>
-    <p>Save recovery details before closing this tab. Both CHOG and NFT invoices are included. Keep them private; they are not private keys. Never send a second payment to recover the first.</p>
+    <p>Save recovery details before closing this tab. Both $CHOG and NFT invoices are included. Keep them private; they are not private keys. Never send a second payment to recover the first.</p>
     <button type="button" className="checkout-reference" onClick={()=>void copy()}>Copy private recovery details</button>
     <label className="checkout-label" htmlFor="restore-invoice">Restore a saved invoice ID</label>
     <input className="checkout-address-input" id="restore-invoice" value={reference} onChange={event=>setReference(event.target.value)} maxLength={64} autoComplete="off" spellCheck={false} disabled={busy}/>

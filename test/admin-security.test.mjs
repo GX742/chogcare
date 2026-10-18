@@ -38,7 +38,8 @@ test("admin IPC requires its exact trusted main frame", () => {
   assert.equal(trustedSender({sender:webContents,senderFrame:frame},window),false);
 });
 test("external links are fixed destinations, never ticket or renderer supplied URLs",()=>{
-  assert.equal(safeExternalTarget("dashboard"),"https://chogcare.vercel.app/dashboard");
+  assert.equal(safeExternalTarget("dashboard"),"https://chogcare.xyz/dashboard");
+  assert.equal(safeExternalTarget("website"),"https://chogcare.xyz");
   for(const value of ["https://evil.test","file:///C:/Windows/System32/cmd.exe","mailto:user@example.com","website?x=1",null,{},"Dashboard"])assert.throws(()=>safeExternalTarget(value));
 });
 
@@ -58,6 +59,8 @@ test("admin native bootstrap runs after readiness without an ESM top-level readi
 
 test("admin package hardens ASAR and inspector flags without breaking its native Node worker IPC", async () => {
   const pkg = JSON.parse(await readFile(new URL("../admin/package.json", import.meta.url), "utf8"));
+  const application = JSON.parse(await readFile(new URL("../package.json", import.meta.url), "utf8"));
+  assert.equal(pkg.build.electronVersion, application.devDependencies.electron, "The packaged renderer engine must match the reviewed locked dependency");
   const controller = await readFile(new URL("../admin/controller.mjs", import.meta.url), "utf8");
   const schema = JSON.parse(await readFile(new URL("../node_modules/app-builder-lib/scheme.json", import.meta.url), "utf8"));
   assert.equal(pkg.build.asar, true); assert.notEqual(pkg.build.disableAsarIntegrity, true);

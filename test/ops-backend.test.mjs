@@ -270,3 +270,21 @@ test("offline operations remain public/read-only for money and retain support ac
   const reader = openSupportStore(join(directory, "work/support/support.sqlite"));
   assert.equal(reader.summary().total, 1); reader.close();
 });
+
+test("production operations default to chogcare.xyz and reject lookalike and stale origins", async t=>{
+  const directory=mkdtempSync(join(tmpdir(),"chogcare-domain-test-"));
+  const server=createOfflineOperationsService({workspacePath:directory},testOperations);
+  server.listen(0,"127.0.0.1");await once(server,"listening");
+  t.after(async()=>{server.closeAllConnections();await new Promise(resolve=>server.close(resolve));rmSync(directory,{recursive:true,force:true});});
+  const base=`http://127.0.0.1:${server.address().port}`;
+  const bootstrap=await fetch(base+"/api/payments/config",{headers:{Origin:"https://chogcare.xyz"}});
+  assert.equal(bootstrap.status,200);assert.match(bootstrap.headers.get("set-cookie"),/; Secure/);
+  assert.equal((await bootstrap.json()).paymentMode,"offline");
+  const cookie=bootstrap.headers.get("set-cookie").split(";")[0];
+  for(const origin of ["https://chogcare.xyz.evil.test","http://chogcare.xyz","https://chogcare.vercel.app","null"]){
+    const denied=await fetch(base+"/api/payments/support",{method:"POST",headers:{Origin:origin,Cookie:cookie,"Content-Type":"application/json"},body:JSON.stringify(supportInput())});
+    assert.equal(denied.status,403);
+  }
+  const accepted=await fetch(base+"/api/payments/support",{method:"POST",headers:{Origin:"https://chogcare.xyz",Cookie:cookie,"Content-Type":"application/json"},body:JSON.stringify(supportInput())});
+  assert.equal(accepted.status,201);
+});

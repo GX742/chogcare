@@ -2,6 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { parseEther } from "viem";
 import { verifyNftDeposit, isRetryableNftProofError, InvalidNftProofError } from "../server/nft-proof.mjs";
+import { PaymentRpcUnavailableError } from "../server/payment-rpc.mjs";
 
 const holder = "0x1111111111111111111111111111111111111111";
 const deposit = "0x2222222222222222222222222222222222222222";
@@ -47,6 +48,11 @@ test("rejects failed, unfinalized, reorganized and no-longer-owned NFT proofs", 
 test("NFT retry classification is explicit, bounded through causes and never retries invalid proofs", async () => {
   const timeout=Object.assign(new Error("network timeout"),{name:"TimeoutError"});
   assert.equal(isRetryableNftProofError(timeout),true);
+  const rpcOutage=new PaymentRpcUnavailableError(143);
+  assert.equal(isRetryableNftProofError(new Error("wrapped network read",{cause:rpcOutage})),true);
+  const invalidDuringOutage=new InvalidNftProofError("invalid proof");invalidDuringOutage.cause=rpcOutage;
+  assert.equal(isRetryableNftProofError(invalidDuringOutage),false);
+  assert.equal(isRetryableNftProofError(Object.assign(new Error("spoofed error name"),{name:"PaymentRpcUnavailableError"})),false);
   assert.equal(isRetryableNftProofError(new Error("contract call failed",{cause:timeout})),true);
   assert.equal(isRetryableNftProofError(Object.assign(new Error("RPC unavailable"),{code:"ECONNRESET"})),true);
   assert.equal(isRetryableNftProofError(Object.assign(new Error("HTTP limit"),{name:"HttpRequestError",status:429})),true);

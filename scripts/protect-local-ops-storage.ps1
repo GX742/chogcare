@@ -4,20 +4,21 @@ param(
 )
 $ErrorActionPreference = 'Stop'
 if ($env:OS -ne 'Windows_NT') { throw 'Local operations ACL setup requires Windows.' }
-Import-Module (Join-Path $PSHOME 'Modules\Microsoft.PowerShell.Security\Microsoft.PowerShell.Security.psd1') -ErrorAction Stop
+# Use the .NET filesystem/Access APIs directly. No module discovery, shell
+# providers or first-run module-analysis cache is needed to protect these ACLs.
 
 $workspaceDirectory = [IO.Path]::GetFullPath($WorkspacePath)
 if ($workspaceDirectory.StartsWith('\\') -or -not [IO.Path]::IsPathRooted($workspaceDirectory)) { throw 'A local workspace is required.' }
-$workDirectory = Join-Path $workspaceDirectory 'work'
-$storageDirectory = Join-Path $workDirectory $Kind
+$workDirectory = [IO.Path]::Combine($workspaceDirectory, 'work')
+$storageDirectory = [IO.Path]::Combine($workDirectory, $Kind)
 foreach ($directory in @($workspaceDirectory, $workDirectory, $storageDirectory)) {
-  $item = Get-Item -LiteralPath $directory -Force
-  if (-not $item.PSIsContainer -or ($item.Attributes -band [IO.FileAttributes]::ReparsePoint)) { throw 'Linked operations storage is not supported.' }
+  $item = [IO.DirectoryInfo]::new($directory)
+  if (-not $item.Exists -or ($item.Attributes -band [IO.FileAttributes]::ReparsePoint)) { throw 'Linked operations storage is not supported.' }
 }
-$files = @(Get-ChildItem -LiteralPath $storageDirectory -Force)
+$files = @(([IO.DirectoryInfo]::new($storageDirectory)).GetFileSystemInfos())
 foreach ($file in $files) {
   $allowed = if ($Kind -eq 'support') { $file.Name -cmatch '^support\.sqlite(?:-(?:wal|shm|journal))?\z' } else { $file.Name -ceq 'settings.json' -or $file.Name -cmatch '^settings-[a-f0-9]{24}\.tmp\z' }
-  if ($file.PSIsContainer -or ($file.Attributes -band [IO.FileAttributes]::ReparsePoint) -or -not $allowed) { throw 'Unexpected local operations storage item.' }
+  if ($file -isnot [IO.FileInfo] -or ($file.Attributes -band [IO.FileAttributes]::ReparsePoint) -or -not $allowed) { throw 'Unexpected local operations storage item.' }
 }
 
 $currentSid = [Security.Principal.WindowsIdentity]::GetCurrent().User
@@ -58,4 +59,4 @@ function Protect-PrivateDacl([IO.FileSystemInfo]$Item) {
 }
 Protect-PrivateDacl ([IO.DirectoryInfo]::new($storageDirectory))
 foreach ($file in $files) { Protect-PrivateDacl ([IO.FileInfo]::new($file.FullName)) }
-Write-Output 'Local operations storage is restricted to this account, SYSTEM and Administrators.'
+[Console]::Out.WriteLine('Local operations storage is restricted to this account, SYSTEM and Administrators.')

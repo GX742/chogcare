@@ -3,6 +3,9 @@
   "private": true,
   "version": "0.1.0",
   "type": "module",
+  "engines": {
+    "node": ">=24.22 <25"
+  },
   "scripts": {
     "admin:build": "node scripts/prepare-admin-assets.mjs && tsc -b && vite build --config admin/vite.config.ts",
     "admin:start": "electron admin",
@@ -20,14 +23,16 @@
     "payments:storage:protect": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/protect-payment-storage.ps1",
     "payments:integrity:enroll": "node scripts/payment-integrity.mjs --enroll",
     "payments:integrity:check": "node scripts/payment-integrity.mjs --check",
-    "payments:backup": "node scripts/payment-integrity.mjs --backup",
+    "payments:backup": "node scripts/payment-recovery.mjs --create",
+    "payments:backup:verify": "node scripts/payment-recovery.mjs --verify",
     "station": "node scripts/station-bridge.mjs",
     "station:demo": "node scripts/station-bridge.mjs --demo",
     "station:simulate": "node scripts/station-bridge.mjs --simulate",
-    "station:test": "node --test test/station-events.test.mjs test/station-bridge.test.mjs test/station-art.test.mjs",
+    "station:test": "node --test test/station-events.test.mjs test/station-bridge.test.mjs test/station-art.test.mjs test/station-scenes.test.mjs",
     "station:compile": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/check-station-firmware.ps1",
     "payments:test": "node --test test/checkout.test.mjs test/payment-service.test.mjs test/nft-proof.test.mjs test/payment-custody.test.mjs test/pool-ledger.test.mjs test/chain-receipts.test.mjs test/payout-outbox.test.mjs test/web-security.test.mjs test/chog-processor.test.mjs test/relay-route.test.mjs test/source-journal.test.mjs",
     "security:check": "npm run build && npm test && npm audit --audit-level=low",
+    "security:source": "node scripts/check-source-security.mjs",
     "build": "tsc -b && vite build",
     "preview": "vite preview --host 127.0.0.1",
     "contracts:compile": "node scripts/compile-contracts.mjs",
@@ -55,7 +60,7 @@
     "@types/react": "19.2.2",
     "@types/react-dom": "19.2.2",
     "@vitejs/plugin-react": "6.1.2",
-    "electron": "44.7.0",
+    "electron": "44.9.0",
     "electron-builder": "26.15.3",
     "hardhat": "3.18.1",
     "solc": "0.8.37",
@@ -63,7 +68,9 @@
     "vite": "8.3.3"
   },
   "overrides": {
-    "@electron/get@3.1.0": { "global-agent": "4.1.3" },
+    "@electron/get@3.1.0": {
+      "global-agent": "4.1.3"
+    },
     "ws": "8.21.0",
     "tmp": "0.2.7"
   }

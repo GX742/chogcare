@@ -39,7 +39,7 @@ async function harness(t, destinationChainId=1, expensiveBridge=false, initiativ
   const source={
     getChainId:async()=>chainId,
     getBlock:async args=>args.blockTag==="finalized"&&holdSource?block({blockNumber:number-1n}):block(args),
-    getBalance:async args=>args.blockNumber?25n*10n**18n-2n*fee:1000n*10n**18n,
+    getBalance:async args=>args.blockNumber?(broadcasts.find(x=>x.tx.to.toLowerCase()===args.address.toLowerCase()&&x.tx.data==="0x")?.tx.value??5n*10n**18n)+20n*10n**18n-broadcasts.filter(x=>x.tx.from.toLowerCase()===args.address.toLowerCase()).reduce((sum,x)=>sum+x.tx.gasLimit*1_000_000_000n,0n):1000n*10n**18n,
     getContractEvents:async args=>paidLog && paidLog.blockNumber>=args.fromBlock && paidLog.blockNumber<=args.toBlock && paidLog.topics[2].toLowerCase().endsWith(args.args.to.slice(2).toLowerCase())?[paidLog]:[],
     getTransactionCount:async args=>nonces.get(args.address.toLowerCase())??0,
     getGasPrice:async()=>1_000_000_000n,estimateGas:async()=>100_000n,
@@ -82,12 +82,67 @@ async function harness(t, destinationChainId=1, expensiveBridge=false, initiativ
     delayRelay(){let release;relayGate=new Promise(resolve=>{release=resolve;});return ()=>{release();relayGate=null;};},
     holdSource(){holdSource=true;},finalizeSource(){holdSource=false;},
     async restart(){await processor.close();processor=createChogProcessor(settings,dependencies);},
+    async useLegacyGasPlan(id){await processor.close();const db=new DatabaseSync(settings.filename);const x=JSON.parse(db.prepare("SELECT document FROM chog_invoices WHERE id=?").get(id).document);delete x.sourceGasPlanVersion;delete x.gasGrantUnits;db.prepare("UPDATE chog_invoices SET document=? WHERE id=?").run(JSON.stringify(x),id);db.close();processor=createChogProcessor(settings,dependencies);},
     async restartLegacyOnOptimism(id){await processor.close();const db=new DatabaseSync(settings.filename);const x=JSON.parse(db.prepare("SELECT document FROM chog_invoices WHERE id=?").get(id).document);delete x.destinationChainId;db.prepare("UPDATE chog_invoices SET document=? WHERE id=?").run(JSON.stringify(x),id);db.close();settings.newDestinationChainId=10;processor=createChogProcessor(settings,dependencies);},
     async advance(times=8){for(let i=0;i<times;i++)await processor.tick();},
   };
 }
 
 const metadataUri=`ipfs://${"a".repeat(46)}/1130.json`;
+test("a 3.97-MON operator balance enables fully budgeted new invoices, without re-funding legacy ones",async t=>{
+  const f=await harness(t,10,false,"school-supplies");
+  const originalBalance=f.source.getBalance;
+  let depositAddress;
+  f.source.getBalance=async args=>args.blockNumber||args.address===depositAddress?originalBalance(args):3_970_000_000_000_000_000n;
+  const invoice=await f.issue();
+  depositAddress=invoice.depositAddress;
+  assert.equal(f.processor.publicStatus().paymentsEnabled,true);
+  assert.equal(invoice.sourceGasPlanVersion,undefined,"private operational budgets stay out of public invoices");
+  f.deposit(invoice);await f.advance();
+  assert.equal(f.broadcasts[0].tx.value,1_500_000_000_000_000_000n);
+  assert.equal(f.processor.get(invoice.id).state,"bridging");
+});
+
+test("legacy invoice gas funding and sale proceeds survive a restart unchanged",async t=>{
+  const f=await harness(t,10,false,"school-supplies"),invoice=await f.issue();
+  await f.useLegacyGasPlan(invoice.id);f.deposit(invoice);await f.advance();
+  assert.equal(f.broadcasts[0].tx.value,5_000_000_000_000_000_000n);
+  assert.equal(f.broadcasts.find(x=>x.tx.value>0n&&x.tx.data!=="0x").tx.value,20n*10n**18n);
+  assert.equal(f.processor.get(invoice.id).state,"bridging");
+  const count=f.broadcasts.length;await f.restart();await f.advance();
+  assert.equal(f.broadcasts.length,count,"a restart must not re-fund or replace signed transactions");
+});
+
+test("a new-invoice phase estimate beyond the funded ceiling stops before that phase is signed",async t=>{
+  const f=await harness(t,10,false,"school-supplies"),invoice=await f.issue();
+  f.source.estimateGas=async args=>args.data==="0x"?21_000n:200_001n;
+  f.deposit(invoice);await f.advance(1);
+  assert.equal(f.broadcasts.length,1,"only the already-budgeted gas funding was sent; over-budget approval was not signed");
+  assert.equal(f.processor.get(invoice.id).state,"processing");
+  await f.advance(1);assert.equal(f.broadcasts.length,1,"retry does not duplicate the funding transfer");
+});
+
+test("CHOG readiness recovers after network loss without restarting or replacing a saved invoice",async t=>{
+  const f=await harness(t,10,false,"school-supplies");
+  const invoice=await f.issue(),getBalance=f.source.getBalance;
+  assert.equal(f.processor.publicStatus().chogReadiness,"ready");
+  f.source.getBalance=async()=>{throw new Error("temporary network outage");};
+  await assert.rejects(f.processor.refreshReadiness());
+  assert.equal(f.processor.publicStatus().paymentsEnabled,false);
+  assert.equal(f.processor.publicStatus().chogReadiness,"network-unavailable");
+  assert.equal(f.processor.get(invoice.id).depositAddress,invoice.depositAddress);
+  f.source.getBalance=async()=>0n;
+  await f.processor.refreshReadiness();
+  assert.equal(f.processor.publicStatus().chogReadiness,"gas-needed");
+  assert.equal(f.processor.publicStatus().paymentsEnabled,false);
+  f.source.getBalance=getBalance;
+  await f.processor.refreshReadiness();
+  assert.equal(f.processor.publicStatus().paymentsEnabled,true);
+  assert.equal(f.processor.publicStatus().chogReadiness,"ready");
+  assert.equal(f.processor.get(invoice.id).depositAddress,invoice.depositAddress);
+  assert.equal(f.broadcasts.length,0);
+});
+
 test("NFT metadata requests pin the IPFS gateway and prohibit redirects into local services",async()=>{
   let calls=0;
   const metadata=await fetchProfileMetadata(metadataUri,async(url,options)=>{
@@ -276,11 +331,54 @@ test("slow bridge tracking does not block the next invoice's source transaction"
   try {
     // Allow the deterministic async RPC mocks to progress without releasing Relay.
     await new Promise(resolve=>setImmediate(resolve));
-    assert.equal(f.broadcasts.length,8,"second invoice gas funding progresses during bridge wait");
-    assert.equal(f.processor.get(second.id).state,"processing");
+    assert.equal(f.broadcasts.length,14,"the second invoice can finish its source pipeline during bridge wait");
+    assert.equal(f.processor.get(second.id).state,"bridging");
     await f.processor.tick();
-    assert.equal(f.broadcasts.length,8,"overlapping ticks cannot double send");
+    assert.equal(f.broadcasts.length,14,"overlapping ticks cannot double send");
   } finally {release();await tick;}
+});
+
+test("destination receipts continue tracking while a different invoice owns the source lane",async t=>{
+  const f=await harness(t),first=await f.issue();f.deposit(first);await f.advance();
+  const second=await f.issue();f.deposit(second);
+  const getLogs=f.source.getContractEvents;let release;
+  const gate=new Promise(resolve=>{release=resolve;});
+  f.source.getContractEvents=async args=>{if(args.args.to===second.depositAddress)await gate;return getLogs(args);};
+  const tick=f.processor.tick();
+  try{
+    await new Promise(resolve=>setImmediate(resolve));
+    f.delivery();await f.processor.track();
+    assert.equal(f.processor.get(first.id).state,"delivered");
+    assert.equal(f.broadcasts.length,7,"the tracking lane cannot sign transactions");
+    await f.processor.track();assert.equal(f.processor.get(first.id).state,"delivered");
+  }finally{release();await tick;}
+});
+
+test("read-only CHOG readiness remains fresh through a bridge wait longer than its TTL",async t=>{
+  let clock=Date.now();
+  const f=await harness(t,1,false,"burundi",1,{now:()=>clock}),invoice=await f.issue();
+  f.deposit(invoice);await f.advance();assert.equal(f.processor.get(invoice.id).state,"bridging");
+  const release=f.delayRelay(),tick=f.processor.tick();
+  try{
+    await new Promise(resolve=>setImmediate(resolve));clock+=61_000;
+    assert.equal(f.processor.publicStatus().paymentsEnabled,false,"the original health TTL must still expire");
+    const before=f.broadcasts.length;
+    await f.processor.refreshReadiness();
+    assert.equal(f.processor.publicStatus().paymentsEnabled,true);
+    assert.equal(f.broadcasts.length,before,"a readiness heartbeat cannot sign or resend a transaction");
+    f.wrongChain();await assert.rejects(f.processor.refreshReadiness(),/chain mismatch/);
+    assert.equal(f.processor.publicStatus().paymentsEnabled,false,"wrong-chain RPC remains fail closed");
+  }finally{release();await tick;}
+});
+
+test("CHOG readiness probes coalesce, preserve gas gating and never create invoices",async t=>{
+  const f=await harness(t);let release,reads=0;
+  const gate=new Promise(resolve=>{release=resolve;});
+  f.source.getBalance=async()=>{reads++;await gate;return 0n;};
+  const one=f.processor.refreshReadiness(),two=f.processor.refreshReadiness();
+  assert.equal(one,two);release();await Promise.all([one,two]);
+  assert.equal(reads,1);assert.equal(f.processor.publicStatus().paymentsEnabled,false);
+  assert.equal(f.broadcasts.length,0);
 });
 
 test("finalized source receipts are not repeatedly fetched for every subsequent phase",async t=>{
@@ -290,8 +388,11 @@ test("finalized source receipts are not repeatedly fetched for every subsequent 
 });
 
 test("pending source receipts are not cached and do not authorize the next phase",async t=>{
-  const f=await harness(t),invoice=await f.issue();f.deposit(invoice);await f.advance(1);
-  assert.equal(f.broadcasts.length,1);f.holdSource();await f.advance(2);
+  const f=await harness(t),invoice=await f.issue();f.deposit(invoice);
+  const broadcast=f.source.sendRawTransaction;
+  f.source.sendRawTransaction=async args=>{const hash=await broadcast(args);if(f.broadcasts.length===1)f.holdSource();return hash;};
+  await f.advance(1);
+  assert.equal(f.broadcasts.length,1);await f.advance(2);
   assert.equal(f.broadcasts.length,1);assert.match(f.processor.get(invoice.id).message,/source finality/);
   f.finalizeSource();await f.advance();assert.equal(f.broadcasts.length,7);
 });
@@ -302,9 +403,40 @@ test("confirming payments still consume an active invoice slot",async t=>{
   await assert.rejects(f.issue(),/already active/);
 });
 
+test("unpaid cancellation releases checkout capacity without deleting its address or deadline",async t=>{
+  const f=await harness(t),first=await f.issue();await f.issue();await f.issue();
+  assert.equal(f.processor.publicStatus().chogQueueFull,true);
+  assert.equal(f.processor.publicStatus().paymentsEnabled,false);
+  const cancelled=f.processor.cancelUnpaidChog(first.id);
+  assert.equal(cancelled.state,"expired");assert.equal(cancelled.depositAddress,first.depositAddress);assert.equal(cancelled.expiresAt,first.expiresAt);
+  assert.deepEqual(f.processor.cancelUnpaidChog(first.id),cancelled,"lost-response retry is idempotent");
+  assert.equal(f.processor.publicStatus().paymentsEnabled,true);
+  const next=await f.issue();assert.notEqual(next.depositAddress,first.depositAddress);
+  assert.equal(f.broadcasts.length,0);
+});
+
+test("a transfer already sent to a cancelled checkout is still recovered exactly once",async t=>{
+  const f=await harness(t),invoice=await f.issue();f.processor.cancelUnpaidChog(invoice.id);
+  f.deposit(invoice);f.delivery();await f.advance();
+  assert.equal(f.processor.get(invoice.id).state,"delivered");
+  const sent=f.broadcasts.length;
+  assert.throws(()=>f.processor.cancelUnpaidChog(invoice.id),/cannot be cancelled/);
+  await f.advance();assert.equal(f.broadcasts.length,sent);
+});
+
+test("cancellation cannot race an in-flight deposit observation",async t=>{
+  const f=await harness(t),invoice=await f.issue(),original=f.source.getContractEvents;
+  let release,entered;const watching=new Promise(ok=>{entered=ok;});
+  f.source.getContractEvents=async input=>{entered();await new Promise(ok=>{release=ok;});return original(input);};
+  f.deposit(invoice);const tick=f.processor.tick();await watching;
+  try{assert.throws(()=>f.processor.cancelUnpaidChog(invoice.id),/observation is in progress/);}
+  finally{f.source.getContractEvents=original;release();await tick;}
+  assert.notEqual(f.processor.get(invoice.id).state,"expired");
+});
+
 test("accepted transaction + transport timeout + restart does not double send",async t=>{
   const f=await harness(t), invoice=await f.issue();f.deposit(invoice);f.timeout();
-  await f.advance(1);assert.equal(f.broadcasts.length,1);
+  await f.advance(1);assert.equal(f.broadcasts.length,7,"the original receipt resolves an ambiguous broadcast in the same tick");
   await f.restart();await f.advance();assert.equal(f.broadcasts.length,7);
   assert.equal(new Set(f.broadcasts.map(x=>x.hash)).size,7);
 });
@@ -323,6 +455,51 @@ test("RPC chain change immediately disables new invoices",async t=>{
   const f=await harness(t);await f.issue();f.wrongChain();await assert.rejects(f.processor.tick());
   assert.equal(f.processor.publicStatus().paymentsEnabled,false);
   await assert.rejects(f.processor.issue({mode:"chog",amount:"300",initiativeId:"burundi"}));
+});
+
+test("source confirmations reuse the current receipt and diagnostics contain no invoice identifiers",async t=>{
+  const f=await harness(t),invoice=await f.issue();f.deposit(invoice);await f.advance();
+  assert.equal(f.processor.get(invoice.id).state,"bridging");
+  // Seven source transactions: one missing read before each submission and one
+  // included read afterwards, plus the original donor proof. No duplicate read
+  // is needed inside the canonical/finalized validation of each source receipt.
+  assert.equal(f.receiptReads,15);
+  const snapshot=f.processor.diagnostics();assert.equal(snapshot["source-preflight"].count,7);
+  assert.equal(snapshot["source-confirmation"].count,7);
+  assert.doesNotMatch(JSON.stringify(snapshot),new RegExp(`${invoice.id}|${invoice.depositAddress}|${donor}|raw|xpub`,"i"));
+  assert.equal(f.processor.publicStatus().diagnostics,undefined);
+});
+
+test("source orchestration uses the exact simulated native gas limit without reducing contract safety margins",async t=>{
+  const f=await harness(t),invoice=await f.issue();
+  f.source.estimateGas=async args=>args.data==="0x"?21_000n:100_000n;
+  f.deposit(invoice);await f.advance();
+  assert.equal(f.broadcasts.length,7);assert.equal(f.broadcasts[0].tx.gasLimit,21_000n);
+  for(const {tx} of f.broadcasts.slice(1))assert.equal(tx.gasLimit,125_000n);
+  assert.equal(f.processor.get(invoice.id).state,"bridging");
+});
+
+test("a persisted pool contribution must finalize before the charity bridge proceeds",async t=>{
+  const f=await harness(t),invoice=await f.issue();f.deposit(invoice);
+  const broadcast=f.source.sendRawTransaction;
+  f.source.sendRawTransaction=async args=>{const hash=await broadcast(args);if(f.broadcasts.length===5)f.holdSource();return hash;};
+  await f.advance(1);
+  assert.equal(f.broadcasts.length,5); // Gas, approval, sale, swap, contribution.
+  assert.equal(f.processor.get(invoice.id).poolContributionState,"pending","signed bytes alone are not a collected contribution");
+  await f.advance(1);
+  assert.equal(f.processor.get(invoice.id).state,"processing");assert.equal(f.broadcasts.length,5);
+  f.finalizeSource();await f.advance(3);
+  assert.equal(f.broadcasts.length,7);assert.equal(f.processor.get(invoice.id).state,"bridging");
+  assert.equal(f.processor.get(invoice.id).poolContributionState,"collected");
+  assert.equal(f.processor.diagnostics()["source-confirmation"].failed,2);
+});
+
+test("a reverted pool contribution never authorizes a bridge or a replacement contribution",async t=>{
+  const f=await harness(t),invoice=await f.issue();f.deposit(invoice);
+  const original=f.source.getTransactionReceipt;
+  f.source.getTransactionReceipt=async args=>({...await original(args),...(f.broadcasts.length>=5&&args.hash===f.broadcasts[4].hash?{status:"reverted"}:{})});
+  await f.advance(2);assert.equal(f.processor.get(invoice.id).state,"manual-review");
+  assert.equal(f.broadcasts.length,5);await f.restart();await f.advance();assert.equal(f.broadcasts.length,5);
 });
 
 test("concurrent invoice cap and donation bounds are enforced before exposing addresses",async t=>{

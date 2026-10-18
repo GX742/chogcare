@@ -1,0 +1,191 @@
+/* The entry form, QR and receipt share one ink surface and the same violet accents. */
+.sunset-page .care-checkout-column .checkout.is-invoice:not(.is-received) {
+  container: payment-invoice / inline-size;
+  padding: 26px 28px 18px;
+  color: var(--payment-ink);
+  background: transparent;
+}
+.sunset-page .checkout.is-invoice::after { display: none; }
+.sunset-page .care-checkout-column .checkout.is-invoice .checkout-topline,
+.sunset-page .care-checkout-column .checkout.is-invoice .holder-preview-heading {
+  margin: 0 0 22px;
+  color: #c2a8d6;
+  font-size: 13px;
+}
+.invoice-payment-summary { padding-bottom: 22px; border-bottom: 1px solid var(--payment-line); }
+.sunset-page .checkout .invoice-payment-summary h3 { color: #dec3f3; font: 550 15px/1.5 "DM Sans Variable", sans-serif; letter-spacing: 0; }
+.invoice-payment-summary h3:focus { outline: none; }
+.invoice-payment-amount { display: flex; align-items: baseline; flex-wrap: wrap; gap: 8px 12px; margin: 12px 0 16px; }
+.invoice-payment-amount > strong { min-width: 0; max-width: 100%; color: #fff4ff; font: 750 clamp(48px, 5vw, 72px)/1.1 "Manrope Variable", sans-serif; letter-spacing: -.045em; font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
+.invoice-payment-amount > span { color: #dfbdec; font: 600 20px/1.4 "Manrope Variable", sans-serif; }
+.invoice-payment-amount.is-long > strong { font-size: clamp(28px, 3vw, 42px); letter-spacing: -.025em; }
+.invoice-payment-summary > p { max-width: 52ch; color: #bda4cf; font-size: 13px; line-height: 1.8; text-wrap: pretty; }
+.invoice-payment-summary > p strong { color: #e9d3f6; font-weight: 550; }
+.invoice-payment-allocation > span { display: block; }
+/* Processing follows the receipt's amount + mascot composition. */
+.sunset-page .checkout.is-processing .checkout-topline { margin-bottom: 18px; color: #eacfff; font-size: 14px; font-weight: 600; }
+.invoice-processing-mark { width: 19px; height: 19px; border: 2px solid #be68fb35; border-top-color: #e5b6ff; border-right-color: #be68fb; border-radius: 50%; animation: checkoutSpin 1.8s linear infinite; }
+.invoice-processing-mark.is-paused { animation-play-state: paused; }
+.checkout.is-processing .invoice-payment-main { display: grid; grid-template-columns: minmax(0, 1fr) 150px; gap: 12px; align-items: center; min-height: 160px; }
+.invoice-payment-main > div { min-width: 0; }
+.sunset-page .checkout.is-processing .invoice-payment-amount { margin: 9px 0 12px; }
+.sunset-page .checkout.is-processing .invoice-payment-amount > strong { font-size: clamp(56px, 5.8vw, 80px); }
+.sunset-page .checkout.is-processing .invoice-payment-amount.is-long > strong { font-size: clamp(30px, 3.5vw, 46px); }
+.sunset-page .checkout.is-processing .invoice-processing-note { margin: 0; color: #c8b1e0; font-size: 14px; line-height: 1.5; }
+.invoice-processing-art { display: block; width: 100%; height: 160px; object-fit: contain; }
+.sunset-page .checkout.is-processing .invoice-payment-allocation { margin: 18px 0 0; color: #c2a8d6; font-size: 13px; line-height: 1.7; }
+.invoice-payment-allocation > span + span { margin-top: 4px; }
+.sunset-page .checkout.is-processing .invoice-payment-summary { border: 0; padding-bottom: 0; }
+.sunset-page .checkout.is-processing .checkout-progress { gap: 6px; margin: 26px 0 0; padding-bottom: 0; }
+.sunset-page .checkout.is-processing .checkout-progress li { flex-direction: row; justify-content: center; flex-wrap: wrap; gap: 7px; padding: 12px 4px; border-top: 0; border-bottom: 2px solid #b564ed26; color: #a68bbd; font-size: 12px; font-weight: 500; }
+.sunset-page .checkout.is-processing .checkout-progress li > span { width: 22px; height: 22px; background: #291638; font-size: 11px; box-shadow: none; }
+.sunset-page .checkout.is-processing .checkout-progress .complete { color: #dac0ed; border-color: #a55fd1; }
+.sunset-page .checkout.is-processing .checkout-progress .complete > span { background: #3c2055; color: #edcfff; }
+.sunset-page .checkout.is-processing .checkout-progress .current { color: #f7ebff; border-color: #d395f3; background: #211230; border-radius: 8px 8px 0 0; }
+.sunset-page .checkout.is-processing .checkout-progress .current > span { color: #190b28; background: #d7a4f2; font-weight: 700; }
+.sunset-page .checkout .payment-activity-refined { display: block; width: 100%; padding: 28px 0 6px; text-align: left; justify-items: stretch; }
+.payment-activity-heading { display: grid; grid-template-columns: 44px minmax(0, 1fr); align-items: start; gap: 14px; }
+.payment-activity-symbol { display: grid; place-items: center; width: 44px; height: 44px; background: #291638; color: #e2b6fa; border-radius: 12px; }
+.sunset-page .checkout .payment-activity-refined h4 { margin: 0; color: #f7ebff; font: 650 22px/1.35 "Manrope Variable", sans-serif; letter-spacing: -.65px; text-wrap: balance; }
+.sunset-page .checkout .payment-activity-refined .payment-activity-note { max-width: 44ch; margin: 8px 0 0; color: #c2a8d6; font-size: 14px; line-height: 1.6; text-wrap: pretty; }
+.payment-activity-meta { display: flex; align-items: baseline; flex-wrap: wrap; gap: 10px 16px; margin: 22px 0 0 58px; }
+.sunset-page .checkout .payment-activity-refined .payment-activity-clock { display: inline-flex; align-items: center; gap: 7px; color: #bda4cf; font-size: 12px; white-space: nowrap; }
+.payment-activity-clock strong { color: #e6d0f4; font-weight: 550; }
+.sunset-page .checkout .payment-activity-refined .payment-activity-estimate { margin: 0; color: #bda4cf; font-size: 12px; line-height: 1.6; font-variant-numeric: tabular-nums; }
+.sunset-page .checkout .payment-activity-refined .payment-activity-message { display: flex; align-items: start; gap: 10px; max-width: none; margin: 22px 0 0; padding: 13px 14px; border: 0; border-left: 2px solid #c88ee2; border-radius: 0 8px 8px 0; background: #1c102b; color: #ddc5ed; font-size: 13px; line-height: 1.65; text-wrap: pretty; }
+.payment-activity-message > svg { flex: 0 0 auto; margin-top: 2px; }
+.sunset-page .checkout.is-processing .checkout-disclosure { margin-top: 18px; }
+.sunset-page .checkout.is-invoice .checkout-scan-caption { margin: 20px 0; color: #c6afd7; font-size: 14px; line-height: 1.65; text-wrap: pretty; }
+.sunset-page .care-checkout-column .checkout.is-invoice .checkout-payment-details {
+  display: grid;
+  grid-template-columns: 176px minmax(0, 1fr);
+  align-items: center;
+  gap: 24px;
+  margin: 22px 0 0;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  animation: none;
+  box-shadow: none;
+}
+.sunset-page .checkout.is-invoice .checkout-qr { width: 176px; padding: 5px 5px 12px; border-radius: 12px; justify-self: start; }
+.sunset-page .checkout.is-invoice .checkout-qr figcaption { font-size: 9px; letter-spacing: .04em; }
+.checkout-qr-loading { display: grid; place-items: center; aspect-ratio: 1; color: #473258; font-size: 13px; }
+.sunset-page .checkout.is-invoice .checkout-fields { min-width: 0; width: 100%; }
+.sunset-page .checkout.is-invoice .checkout-fields > div { padding: 0 0 18px; }
+.sunset-page .checkout.is-invoice .checkout-fields > div + div { padding: 17px 0 0; border-color: var(--payment-line); }
+.sunset-page .checkout.is-invoice .checkout-fields dt { margin-bottom: 10px; color: #bda4cf; font-size: 13px; }
+.sunset-page .checkout.is-invoice .checkout-fields dd { display: flex; gap: 12px; min-width: 0; align-items: center; }
+.sunset-page .checkout.is-invoice .checkout-exact-amount dd > strong { min-width: 0; color: #f7ebff; font: 650 25px/1.35 "Manrope Variable", sans-serif; letter-spacing: -.025em; overflow-wrap: anywhere; }
+.checkout-exact-amount dd > strong small { color: #d2b5e5; font-size: 13px; font-weight: 550; letter-spacing: 0; white-space: nowrap; }
+.sunset-page .checkout.is-invoice .checkout-deposit-address dd { flex-wrap: wrap; align-items: start; gap: 12px; }
+.sunset-page .checkout.is-invoice .checkout-deposit-address code { flex: 1 1 100%; min-width: 0; color: #ecdbf7; font: 500 13px/1.7 ui-monospace, SFMono-Regular, Consolas, monospace; overflow-wrap: anywhere; }
+.sunset-page .checkout.is-invoice .checkout-copy {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  min-width: 96px;
+  min-height: 44px;
+  padding: 10px 12px;
+  border: 0;
+  border-radius: 8px;
+  color: #e6c8f7;
+  background: #291638;
+  font: 550 13px/1.4 "DM Sans Variable", sans-serif;
+  transition: background .18s, color .18s;
+}
+.sunset-page .checkout.is-invoice .checkout-copy:hover { background: #3c2055; color: #fff4ff; }
+.sunset-page .checkout.is-invoice .checkout-copy:active { background: #4a2865; }
+.checkout-deadline { display: flex; flex-wrap: wrap; gap: 5px; margin: 22px 0 0; color: #c2a8d6; font-size: 13px; line-height: 1.6; }
+.checkout-deadline strong { color: #ead5f8; font-weight: 600; font-variant-numeric: tabular-nums; }
+.checkout-deadline span { flex: 1 1 100%; color: #b69bc8; }
+.sunset-page .checkout.is-invoice .checkout-progress { margin: 26px 0; }
+.sunset-page .checkout.is-invoice .checkout-progress .complete { color: #dfbdec; border-color: #bb75e6; }
+.sunset-page .checkout.is-invoice .checkout-status { gap: 12px; margin-top: 26px; padding: 0 0 4px; align-items: baseline; }
+.sunset-page .checkout.is-invoice .checkout-status-mark { position: relative; top: -1px; width: 7px; height: 7px; margin: 0; background: #d9a6f2; }
+.sunset-page .checkout.is-invoice .checkout-status strong { color: #e9d5f7; font-size: 14px; line-height: 1.5; font-weight: 550; }
+.sunset-page .checkout.is-invoice .checkout-status p { margin-top: 7px; }
+.sunset-page .checkout.is-invoice .checkout-status.is-expired { padding: 16px; }
+.sunset-page .checkout.is-invoice .checkout-cancel { margin-top: 24px; padding-top: 22px; border-color: var(--payment-line); }
+.sunset-page .checkout.is-invoice .checkout-cancel button { font-size: 14px; border-color: #b564ed40; }
+.sunset-page .checkout.is-invoice .checkout-disclosure { border-color: var(--payment-line); }
+.sunset-page .checkout.is-invoice .checkout-disclosure summary { min-height: 50px; color: #bda4cf; font-size: 13px; }
+.checkout-change { width: 100%; }
+.checkout-change > button:disabled { opacity: .6; cursor: wait; }
+.checkout-change-confirm { max-width: 650px; margin: 16px 0 8px; padding: 22px; border: 1px solid #b564ed40; border-radius: 14px; background: #1c102b; }
+.checkout-change-confirm > strong { color: #f7ebff; font: 650 20px/1.4 "Manrope Variable", sans-serif; }
+.checkout-change-confirm p, .checkout-change-error { margin-top: 10px; color: #d4bde5; font-size: 14px; line-height: 1.7; text-wrap: pretty; }
+.checkout-change-error { color: #ffbbc9; max-width: 62ch; }
+.checkout-change-confirm > div { display: flex; flex-wrap: wrap; gap: 10px; margin: 18px 0 12px; }
+.checkout-change-confirm button { min-height: 46px; padding: 12px 16px; border: 1px solid #b564ed40; border-radius: 9px; color: #eddbf8; background: transparent; font-size: 14px; }
+.checkout-change-confirm .checkout-change-accept { background: #8436df; border-color: transparent; color: white; }
+.checkout-change-confirm button:hover:not(:disabled) { background: #3c2055; }
+.checkout-change-confirm .checkout-change-accept:hover:not(:disabled) { background: #9648eb; }
+.checkout-change button:focus-visible { outline: 2px solid #e9b1f5; outline-offset: 3px; }
+.checkout-change-confirm > small { color: #bda4cf; font-size: 12px; line-height: 1.6; }
+@container payment-invoice (max-width: 440px) {
+  .checkout.is-processing .invoice-payment-main { grid-template-columns: minmax(0, 1fr) 104px; gap: 6px; min-height: 140px; }
+  .checkout.is-processing .invoice-payment-main.is-long { grid-template-columns: minmax(0, 1fr) 76px; }
+  .invoice-processing-art { height: 135px; }
+  .sunset-page .checkout.is-processing .invoice-payment-amount { gap: 5px 8px; }
+  .sunset-page .checkout.is-processing .invoice-payment-amount > strong { font-size: 56px; }
+  .sunset-page .checkout.is-processing .invoice-payment-amount.is-long > strong { font-size: 29px; }
+  .sunset-page .checkout.is-processing .invoice-payment-amount > span { font-size: 16px; }
+  .sunset-page .checkout.is-processing .invoice-processing-note { font-size: 13px; }
+  .sunset-page .checkout.is-processing .checkout-progress li { flex-direction: column; gap: 8px; font-size: 11px; }
+  .sunset-page .checkout .payment-activity-refined h4 { font-size: 20px; }
+  .payment-activity-heading { grid-template-columns: 38px minmax(0, 1fr); gap: 12px; }
+  .payment-activity-symbol { width: 38px; height: 38px; border-radius: 10px; }
+  .payment-activity-symbol > svg { width: 22px; height: 22px; }
+  .payment-activity-meta { margin-left: 50px; gap: 8px; }
+  .sunset-page .care-checkout-column .checkout.is-invoice .checkout-payment-details { grid-template-columns: minmax(0, 1fr); gap: 24px; }
+  .sunset-page .checkout.is-invoice .checkout-qr { justify-self: center; width: 200px; }
+  .sunset-page .checkout.is-invoice .checkout-deposit-address dd { flex-wrap: nowrap; align-items: center; }
+  .sunset-page .checkout.is-invoice .checkout-deposit-address code { flex-basis: auto; }
+}
+@media (max-width: 1100px) {
+  .sunset-page .care-checkout-column .checkout.is-invoice:not(.is-received) { padding: 24px 20px 16px; }
+}
+@media (max-width: 400px) {
+  .sunset-page .care-checkout-column .checkout.is-invoice:not(.is-received) { padding: 24px 16px 12px; }
+  .invoice-payment-amount > strong { font-size: 48px; }
+  .invoice-payment-amount.is-long > strong { font-size: 28px; }
+  .invoice-payment-amount > span { font-size: 18px; }
+  .checkout-change-confirm { padding: 18px 16px; }
+  .checkout-change-confirm > div > button { width: 100%; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .invoice-processing-mark { animation: none; }
+  .sunset-page .checkout.is-invoice .checkout-copy { transition: none; }
+}
+
+/* One gradient belongs to the outer payment surface, including the tabs. */
+.sunset-page .care-checkout-column .checkout.is-received { background: transparent; }
+.sunset-page .care-checkout-column .checkout.is-received::after { display: none; }
+.sunset-page .care-checkout-column .checkout-thanks-art,
+.sunset-page .care-checkout-column .invoice-processing-art {
+  height: auto;
+  aspect-ratio: 1;
+  object-fit: cover;
+  border-radius: 18px;
+  filter: none;
+}
+.sunset-page .checkout-thanks-main { margin-block: 18px 20px; }
+.sunset-page .checkout .checkout-thanks-note { color: #edcfff; font-weight: 600; }
+.checkout-thanks-broadcast { padding: 18px 0 0; }
+.sunset-page .checkout .checkout-thanks-broadcast a {
+  display: inline-flex; align-items: center; gap: 9px; min-height: 44px;
+  color: #edcfff; font-size: 14px; font-weight: 650; text-decoration: none;
+}
+.sunset-page .checkout .checkout-thanks-broadcast a:hover { color: #fff4ff; text-decoration: underline; text-underline-offset: 5px; }
+.checkout-thanks-broadcast a:focus-visible { outline: 2px solid #e9b1f5; outline-offset: 4px; border-radius: 4px; }
+.checkout-thanks-broadcast svg { flex-shrink: 0; }
+.sunset-page .checkout .checkout-thanks-broadcast p { margin: 4px 0 0; color: #bda4cf; font-size: 12px; line-height: 1.65; }
+#care-livestream { scroll-margin-top: 90px; }
+@media (max-width: 440px) {
+  .sunset-page .care-checkout-column .checkout-thanks-art,
+  .sunset-page .care-checkout-column .invoice-processing-art { border-radius: 12px; }
+  .sunset-page .checkout .checkout-thanks-broadcast a { font-size: 13px; gap: 7px; }
+}

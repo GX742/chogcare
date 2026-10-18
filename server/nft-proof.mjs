@@ -2,6 +2,7 @@ import { isAddress, parseAbi, parseEther, zeroAddress } from "viem";
 import { PAYMENT_POLICY } from "./policy.mjs";
 import { AwaitingFinalityError } from "./chain-receipts.mjs";
 import { verifyInternalNftTransfer } from "./nft-transfer-trace.mjs";
+import { PaymentRpcUnavailableError } from "./payment-rpc.mjs";
 
 const nftAbi = parseAbi(["function ownerOf(uint256) view returns (address)"]);
 const same = (a, b) => typeof a === "string" && typeof b === "string" && a.toLowerCase() === b.toLowerCase();
@@ -18,7 +19,7 @@ export function isRetryableNftProofError(error) {
   for (let cause = error; cause && typeof cause === "object" && !seen.has(cause) && seen.size < 12; cause = cause.cause) {
     seen.add(cause);
     if (cause instanceof InvalidNftProofError || ["InvalidNftProofError", "ContractFunctionRevertedError", "ExecutionRevertedError"].includes(cause.name)) return false;
-    if (cause instanceof AwaitingFinalityError || ["AwaitingFinalityError", "TimeoutError", "TransactionNotFoundError", "TransactionReceiptNotFoundError", "BlockNotFoundError", "ResourceUnavailableRpcError", "LimitExceededRpcError"].includes(cause.name)) retryable = true;
+    if (cause instanceof AwaitingFinalityError || cause instanceof PaymentRpcUnavailableError || ["AwaitingFinalityError", "TimeoutError", "TransactionNotFoundError", "TransactionReceiptNotFoundError", "BlockNotFoundError", "ResourceUnavailableRpcError", "LimitExceededRpcError"].includes(cause.name)) retryable = true;
     if (["ETIMEDOUT", "ECONNRESET", "ECONNREFUSED", "EPIPE", "EAI_AGAIN", "ENETUNREACH", "UND_ERR_CONNECT_TIMEOUT", "UND_ERR_SOCKET"].includes(cause.code)) retryable = true;
     if (cause.name === "HttpRequestError" && (cause.status === undefined || [408, 429, 500, 502, 503, 504].includes(cause.status))) retryable = true;
   }
@@ -35,10 +36,10 @@ export async function verifyNftDeposit(client, invoice, txHash) {
   if (!/^\d{1,78}$/.test(invoice.tokenId) || BigInt(invoice.tokenId) >= 2n ** 256n) throw new InvalidNftProofError("Invalid NFT token ID.");
   if (typeof invoice.createdBlock !== "bigint" || invoice.createdBlock < 0n || !Number.isSafeInteger(invoice.expiresAt) || invoice.expiresAt <= 0) throw new InvalidNftProofError("Invalid invoice window.");
   if (!/^0x[0-9a-fA-F]{64}$/.test(txHash)) throw new InvalidNftProofError("Invalid transaction hash.");
-  if (await client.getChainId() !== PAYMENT_POLICY.chainId) throw new InvalidNftProofError("RPC is not on Monad.");
-  const [tx, receipt, finalized] = await Promise.all([
-    client.getTransaction({ hash: txHash }), client.getTransactionReceipt({ hash: txHash }), client.getBlock({ blockTag: "finalized" }),
+  const [chainId, tx, receipt, finalized] = await Promise.all([
+    client.getChainId(), client.getTransaction({ hash: txHash }), client.getTransactionReceipt({ hash: txHash }), client.getBlock({ blockTag: "finalized" }),
   ]);
+  if (chainId !== PAYMENT_POLICY.chainId) throw new InvalidNftProofError("RPC is not on Monad.");
   if (typeof finalized.number !== "bigint" || typeof receipt.blockNumber !== "bigint" || finalized.number < 0n || receipt.blockNumber < 0n) throw new InvalidNftProofError("RPC did not provide a finalized block.");
   if (receipt.status !== "success" || !same(receipt.transactionHash, txHash) || !same(tx.hash, txHash)) throw new InvalidNftProofError("Successful transaction not found.");
   if (tx.blockNumber === null || receipt.blockNumber <= invoice.createdBlock) throw new InvalidNftProofError("Payment is outside the confirmed invoice window.");

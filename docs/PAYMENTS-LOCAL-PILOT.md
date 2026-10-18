@@ -28,7 +28,7 @@ The owner chose no wallet connection/signature. Someone knowing a public holder/
 
 Keep custody storage private and back up the vault, databases and integrity checkpoint consistently. The HTTP worker and unlocked signer still share one process/account; malware running as the owner remains a critical risk. Do not expose Vite, Owncast administration or local service ports. No automatic refund or sweeping implementation is available. Retry only original committed transaction bytes; ambiguous, late or incorrect payments need invoice-specific reconciliation.
 
-Use full `npm run security:check` and read [the latest security review](SECURITY-AUDIT-2026-10-11.md). Automated checks are synthetic, not proof of real settlement or an independent audit.
+Use full `npm run security:check` and read [the latest security review](SECURITY-AUDIT-2026-10-18.md). Automated checks are synthetic, not proof of real settlement or an independent audit.
 
 ## Historical operator details from 8 October 2026
 

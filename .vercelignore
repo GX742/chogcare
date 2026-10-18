@@ -1,0 +1,17 @@
+# Publish the frontend and its build inputs only. Never upload local custody,
+# payment storage, credentials, screenshots, firmware, or desktop admin builds.
+*
+!src
+!src/**
+!public
+!public/**
+!server
+!server/web-boundary.ts
+!index.html
+!package.json
+!package-lock.json
+!tsconfig.json
+!tsconfig.app.json
+!tsconfig.node.json
+!vite.config.ts
+!vercel.json

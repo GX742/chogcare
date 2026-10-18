@@ -1,0 +1,160 @@
+/* Match the donor-profile palette with one quiet surface and flat controls. */
+.sunset-page .care-checkout-column .lp-payment {
+  --payment-ink: #f7ebff;
+  --payment-muted: #c2a8d6;
+  --payment-line: #b564ed30;
+  background: radial-gradient(ellipse at 100% 0, #7828c92b, transparent 46%), #10091f;
+  border: 1px solid var(--payment-line);
+  border-radius: 20px;
+  box-shadow: none;
+}
+.sunset-page .care-checkout-column .lp-payment-tabs {
+  margin: 20px 24px 0;
+  padding: 4px;
+  gap: 4px;
+  border: 0;
+  border-radius: 12px;
+  background: #24133466;
+}
+.sunset-page .care-checkout-column .lp-payment-tabs button {
+  min-width: 0;
+  min-height: 64px;
+  padding: 10px 16px;
+  gap: 12px;
+  justify-content: flex-start;
+  border: 0;
+  border-radius: 9px;
+  color: #c2a8d6;
+  background: transparent;
+  box-shadow: none;
+  text-align: left;
+}
+.sunset-page .care-checkout-column .lp-payment-tabs button[aria-selected=true] {
+  color: #f7ebff;
+  background: #3c2055;
+  box-shadow: none;
+}
+.sunset-page .care-checkout-column .lp-payment-tabs button:not([aria-selected=true]):hover { color: #f7ebff; background: #281637; }
+.sunset-page .care-checkout-column .lp-payment-tabs button:focus-visible { outline: 2px solid #e9b1f5; outline-offset: -2px; }
+.sunset-page .care-checkout-column .lp-payment-tabs .payment-tab-art { width: 32px; height: 32px; transform: none; }
+.payment-tab-copy { display: grid; min-width: 0; gap: 4px; }
+.payment-tab-copy strong { font-size: 15px; font-weight: 650; line-height: 1.3; }
+.sunset-page .care-checkout-column .lp-payment-tabs .payment-tab-copy small {
+  display: block;
+  padding: 0;
+  color: #bba0ce;
+  background: none;
+  font-size: 12px;
+  font-weight: 450;
+  line-height: 1.35;
+}
+.sunset-page .lp-payment-tabs button[aria-selected=true] .payment-tab-copy small { color: #dfbdec; }
+.sunset-page .care-checkout-column .checkout.is-entry { padding: 24px 28px 14px; background: transparent; }
+.sunset-page .checkout.is-entry::after { display: none; }
+.checkout-entry-heading { display: flex; align-items: center; justify-content: space-between; gap: 16px; }
+.sunset-page .care-checkout-column .checkout-entry-heading .checkout-label { margin: 0; color: #dec3f3; font-size: 15px; font-weight: 550; }
+.checkout-entry-heading > span { display: inline-flex; align-items: center; gap: 7px; color: #bda0d1; font-size: 13px; }
+.sunset-page .checkout.is-entry .checkout-amount-input {
+  min-height: 92px;
+  padding: 8px 0 10px;
+  gap: 14px;
+  align-items: center;
+  border: 0;
+  border-bottom: 1px solid var(--payment-line);
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+  transition: border-color .2s;
+}
+.sunset-page .checkout.is-entry .checkout-amount-input:focus-within { border-bottom-color: #d58beb; box-shadow: none; }
+.sunset-page .checkout.is-entry .checkout-amount-value {
+  display: inline-grid;
+  grid-template-columns: minmax(0, 1fr);
+  min-width: 1ch;
+  max-width: calc(100% - 104px);
+  font: 700 clamp(56px, 5vw, 72px)/1.15 "Manrope Variable", sans-serif;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -.045em;
+}
+/* Measure the actual glyphs, not the browser's padded input size. The ticker stays beside the amount. */
+.checkout-amount-value > * { grid-area: 1 / 1; }
+.checkout-amount-measure { visibility: hidden; white-space: pre; padding-right: 3px; }
+.sunset-page .checkout.is-entry .checkout-amount-input input { width: 100%; max-width: none; padding: 0; color: #fff4ff; font: inherit; font-variant-numeric: inherit; letter-spacing: inherit; caret-color: #e877d8; }
+.sunset-page .checkout.is-entry .checkout-amount-input.is-long .checkout-amount-value { font-size: clamp(36px, 3.8vw, 52px); }
+.sunset-page .checkout.is-entry .checkout-amount-input.is-precise .checkout-amount-value { font-size: clamp(20px, 2.2vw, 30px); letter-spacing: -.02em; }
+.sunset-page .checkout.is-entry .checkout-amount-unit { justify-items: start; gap: 6px; }
+.sunset-page .checkout.is-entry .checkout-amount-unit strong { color: #dfbdec; font-size: 19px; font-weight: 600; }
+.sunset-page .checkout.is-entry .checkout-amount-unit small { color: #c2a8d6; font-size: 13px; font-weight: 450; }
+.checkout-amount-toolbar { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.sunset-page .checkout.is-entry .checkout-amount-hint { margin: 0; color: #bda4cf; font-size: 12px; line-height: 1.5; }
+.sunset-page .checkout.is-entry .checkout-edit-amount { display: inline-flex; align-items: center; justify-content: center; gap: 6px; min-height: 44px; padding: 6px 0 6px 8px; border: 0; border-radius: 4px; background: none; color: #d9b7ed; font: 550 12px/1.4 "Manrope Variable", sans-serif; white-space: nowrap; }
+.sunset-page .checkout.is-entry .checkout-edit-amount:hover:not(:disabled) { color: #fff0ff; text-decoration: underline; text-underline-offset: 4px; }
+.sunset-page .checkout.is-entry .checkout-edit-amount:disabled { opacity: .5; cursor: not-allowed; }
+.sunset-page .care-checkout-column .checkout.is-entry .checkout-presets { display: grid; grid-template-columns: repeat(auto-fit, minmax(88px, 1fr)); gap: 8px; margin: 0 0 20px; }
+.sunset-page .care-checkout-column .checkout.is-entry .checkout-presets button { min-width: 0; min-height: 44px; padding: 8px 6px; border: 0; border-radius: 8px; color: #ccb3df; background: transparent; white-space: nowrap; }
+.sunset-page .checkout.is-entry .checkout-presets button strong { font-size: 14px; font-weight: 600; }
+.sunset-page .checkout.is-entry .checkout-presets button[aria-pressed=true] { color: #f6dfff; background: #36204d; }
+.sunset-page .checkout.is-entry .checkout-presets button:hover:not(:disabled) { color: #fff; background: #291638; }
+.sunset-page .checkout.is-entry .checkout-presets button[aria-pressed=true]:hover:not(:disabled) { background: #43265c; }
+.sunset-page .care-checkout-column .checkout.is-entry .checkout-contribution { margin: 0; padding: 0; border: 0; border-radius: 0; background: transparent; }
+.sunset-page .care-checkout-column .checkout.is-entry .checkout-contribution > div { min-height: 34px; gap: 16px; padding: 5px 0; border: 0; align-items: baseline; }
+.sunset-page .checkout.is-entry .checkout-contribution > div > span { color: #c2a8d6; font-size: 14px; }
+.sunset-page .checkout.is-entry .checkout-contribution > div > span small { display: inline; margin-left: 6px; color: #e7a3d8; font-size: 12px; white-space: nowrap; }
+.sunset-page .checkout.is-entry .checkout-contribution strong { max-width: 50%; color: #ecdbf7; font-size: 14px; font-weight: 550; overflow-wrap: anywhere; }
+.sunset-page .checkout.is-entry .checkout-contribution strong .checkout-token { color: #bea6d1; font-size: 12px; font-weight: 450; white-space: nowrap; }
+.sunset-page .care-checkout-column .checkout.is-entry .checkout-contribution > .checkout-contribution-total { margin-top: 8px; padding-top: 14px; border-top: 1px solid var(--payment-line); }
+.sunset-page .checkout.is-entry .checkout-contribution-total > span { color: #f7ebff; font-size: 15px; font-weight: 600; }
+.sunset-page .checkout.is-entry .checkout-contribution-total strong { color: #fff4ff; font-size: 27px; line-height: 1.2; font-weight: 650; letter-spacing: -.03em; }
+.sunset-page .checkout.is-entry .checkout-contribution-total strong > span { color: #dfbdec; font-size: 14px; letter-spacing: 0; }
+.sunset-page .checkout.is-entry .checkout-contribution-total strong small { display: block; margin: 5px 0 0; color: #bea2d1; font-size: 13px; font-weight: 450; letter-spacing: 0; }
+.checkout-payment-notes { display: grid; gap: 6px; margin-top: 16px; }
+.sunset-page .care-checkout-column .checkout.is-entry .checkout-payment-notes p { margin: 0; color: #c6afd7; font-size: 13px; line-height: 1.55; text-wrap: pretty; }
+.checkout-payment-notes p > strong { color: #e4ceef; font-weight: 600; }
+.sunset-page .care-checkout-column .checkout.is-entry .checkout-submit { min-height: 56px; justify-content: space-between; margin-top: 18px; padding: 14px 20px; border: 0; border-radius: 10px; background: #8436df; color: #fff; font-size: 16px; font-weight: 650; box-shadow: none; transition: background .2s, transform .2s; }
+.sunset-page .checkout.is-entry .checkout-submit::after { display: none; }
+.sunset-page .checkout.is-entry .checkout-submit:hover:not(:disabled) { background: #9648eb; box-shadow: none; transform: none; }
+.sunset-page .checkout.is-entry .checkout-submit:active:not(:disabled) { transform: translateY(1px); }
+.sunset-page .checkout.is-entry .checkout-submit:disabled { color: #c2a8d6; background: #2b1b3b; opacity: 1; cursor: not-allowed; }
+.sunset-page .care-checkout-column .checkout.is-entry .checkout-disclosure { margin-top: 18px; border-color: var(--payment-line); }
+.sunset-page .checkout.is-entry .checkout-disclosure summary { color: #bda0d1; padding-block: 16px 8px; font-size: 13px; }
+.sunset-page .checkout.is-entry .nft-giving-eyebrow { color: #dec3f3; font-size: 15px; font-weight: 550; }
+.sunset-page .checkout.is-entry .nft-giving-headline { gap: 22px; margin: 20px 0 14px; }
+.sunset-page .checkout.is-entry .nft-giving-headline > strong { color: #f6dfff; font-size: 72px; font-weight: 700; letter-spacing: -.05em; }
+.sunset-page .checkout.is-entry .nft-giving-headline h3 { color: #f7ebff; font-size: 25px; font-weight: 650; }
+.sunset-page .checkout.is-entry .nft-giving-intro > p { color: #c2a8d6; font-size: 14px; }
+.sunset-page .checkout.is-entry .nft-giving-availability { padding: 16px 0 20px; border-color: var(--payment-line); color: #bda0d1; font-size: 13px; }
+.sunset-page .checkout.is-entry .nft-wallet-field .checkout-label { margin-top: 22px; color: #dec3f3; font-size: 15px; }
+.sunset-page .checkout.is-entry .checkout-address-input { min-height: 54px; background: #211036; border: 1px solid #bc72f255; border-radius: 10px; padding: 14px; font-size: 16px; }
+.sunset-page .checkout.is-entry .nft-wallet-field .checkout-help { color: #bda0d1; font-size: 13px; }
+.sunset-page .care-checkout-column .checkout.is-entry .nft-giving-consent { margin: 22px 0 0; gap: 12px; }
+.sunset-page .checkout.is-entry .nft-giving-consent > span > strong { color: #f0ddfa; font-size: 14px; font-weight: 600; }
+.sunset-page .checkout.is-entry .nft-giving-consent > span > span { color: #bda0d1; font-size: 13px; line-height: 1.6; }
+.sunset-page .checkout.is-entry .nft-giving-consent input { accent-color: #a657e6; }
+.sunset-page .lp-payment .payment-service-notice { margin: 20px 28px 0; padding: 12px 0 12px 14px; border: 0; border-left: 2px solid #d58beb; border-radius: 0; background: transparent; }
+.sunset-page .lp-payment .payment-service-notice p { font-size: 14px; }
+@media (max-width: 1100px) {
+  .sunset-page .care-checkout-column .lp-payment-tabs { margin: 16px 16px 0; }
+  .sunset-page .care-checkout-column .lp-payment-tabs button { padding: 10px; gap: 8px; }
+  .sunset-page .care-checkout-column .lp-payment-tabs .payment-tab-art { width: 28px; height: 28px; }
+  .payment-tab-copy strong { font-size: 13px; }
+  .sunset-page .care-checkout-column .lp-payment-tabs .payment-tab-copy small { font-size: 11px; }
+  .sunset-page .care-checkout-column .checkout.is-entry { padding: 24px 20px 14px; }
+  .sunset-page .lp-payment .payment-service-notice { margin-inline: 20px; }
+}
+@media (max-width: 400px) {
+  .sunset-page .care-checkout-column .lp-payment-tabs { margin-inline: 12px; }
+  .sunset-page .care-checkout-column .lp-payment-tabs button { min-height: 64px; padding: 10px 8px; gap: 7px; }
+  .sunset-page .care-checkout-column .lp-payment-tabs .payment-tab-art { width: 24px; height: 24px; }
+  .sunset-page .care-checkout-column .checkout.is-entry { padding: 22px 16px 12px; }
+  .sunset-page .checkout.is-entry .checkout-amount-input { gap: 12px; min-height: 86px; }
+  .sunset-page .checkout.is-entry .checkout-contribution > div > span { font-size: 13px; }
+  .sunset-page .checkout.is-entry .checkout-contribution > div > span small { margin-left: 3px; }
+  .sunset-page .checkout.is-entry .checkout-contribution strong { font-size: 13px; }
+  .sunset-page .checkout.is-entry .checkout-contribution-total strong { font-size: 24px; }
+  .sunset-page .checkout.is-entry .nft-giving-headline { gap: 16px; }
+  .sunset-page .checkout.is-entry .nft-giving-headline h3 { font-size: 22px; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .sunset-page .checkout.is-entry .checkout-amount-input,
+  .sunset-page .checkout.is-entry .checkout-submit { transition: none; }
+}

@@ -5,6 +5,9 @@ outputs/
 work/
 .env
 .env.local
+.env.*
+!.env.example
+*.chogbackup
 coverage/
 *.log
 __pycache__/
@@ -17,3 +20,5 @@ admin/assets/
 *.sqlite-shm
 vite.config.js
 vite.config.d.ts
+
+.vercel

@@ -16,10 +16,12 @@ function field({ compact = true, reduced = false } = {}) {
   let paints = 0, scheduled = 0, bitmapWrites = 0;
   const events = new Map(), queries = new Map(), effects = [], frames = [];
   const observed = [];
+  const glyphPositions = [];
   let notifyLayout = () => {};
   const context = new Proxy({}, { get: (_, key) => {
     if (key === "clearRect") return () => paints++;
     if (key === "createLinearGradient") return () => ({ addColorStop() {} });
+    if (key === "drawImage") return (_image, x, y) => glyphPositions.push([x, y]);
     return () => {};
   }});
   let bitmapWidth = 0, bitmapHeight = 0;
@@ -65,7 +67,7 @@ function field({ compact = true, reduced = false } = {}) {
     stats: () => ({ paints, scheduled, bitmapWrites }),
     fire: event => events.get(event)?.(),
     tick: time => frames.shift()?.(time),
-    notifyLayout: () => notifyLayout(), observed,
+    notifyLayout: () => notifyLayout(), observed, glyphPositions,
   };
 }
 
@@ -98,9 +100,9 @@ test("late CSS canvas growth redraws the entire bitmap without a window resize e
 
 test("iPhone unsafe regions receive a root-level heart pattern, not a plain color", () => {
   assert.match(read("../index.html"), /viewport-fit=cover/);
-  assert.match(read("../src/station-redesign.css"), /html:has\(\.landing-page\), body:has\(\.landing-page\) \{ background:[^}]*chog-heart-tile\.svg[^}]*repeat/);
+  assert.match(read("../src/station-redesign.css"), /html:has\(\.landing-page\), body:has\(\.landing-page\) \{ background: #0e0a19; \}/);
   const tile = read("../public/chog-heart-tile.svg");
-  assert.match(tile, /viewBox="0 0 92 74"/);
+  assert.match(tile, /viewBox="0 0 104 100"/);
   assert.match(tile, /linearGradient/);
   assert.doesNotMatch(tile, /<script|onload=|href="https?:/);
   assert.match(read("../src/ops-dashboard.css"), /padding-top:env\(safe-area-inset-top\)/);
@@ -145,6 +147,15 @@ test("phone UI retains stable viewport background, readable inputs and bounded t
   assert.match(read("../src/support-dialog.css"), /overscroll-behavior:contain/);
 });
 
+test("iPhone root has no always-visible hearts and mobile checkout puts stream first",()=>{
+  const mobile=read("../src/station-redesign.css"),sunset=read("../src/sunset-redesign.css");
+  assert.match(mobile,/html:has\(\.landing-page\), body:has\(\.landing-page\) \{ background: #0e0a19; \}/);
+  assert.doesNotMatch(mobile,/html:has\(\.landing-page\)[^}]*chog-heart-tile/);
+  assert.match(sunset,/care-heart-scene \{[^}]*opacity: 0/);
+  assert.match(sunset,/care-station-grid \{ grid-template-areas: "stream" "checkout"; \}/);
+  assert.doesNotMatch(sunset,/grid-template-areas: "checkout" "stream"/);
+});
+
 test("mobile header is fixed, opaque, safe-area padded and shows the creator avatar", () => {
   const mobile = read("../src/station-redesign.css");
   assert.match(mobile, /site-header \{ position: fixed; inset: 0 0 auto/);
@@ -152,5 +163,21 @@ test("mobile header is fixed, opaque, safe-area padded and shows the creator ava
   assert.match(mobile, /padding-top: calc\(76px \+ env\(safe-area-inset-top\)\)/);
   assert.match(mobile, /creator > img \{ display: block/);
   assert.match(mobile, /heart-field \{ clip-path: inset\(calc\(76px/);
-  assert.match(read("../src/App.tsx"), /src="\/gx-avatar.png" alt="GX avatar"/);
+  assert.match(read("../src/App.tsx"), /<img\b[^>]*src="\/gx-avatar\.png"[^>]*alt="GX avatar"[^>]*>/);
+});
+
+test("phone heart glyphs have real horizontal and vertical gutters, including the fallback tile", () => {
+  const view = field();
+  const [x, y] = view.glyphPositions[0];
+  assert.equal(view.glyphPositions[1][0] - x, 26);
+  const nextRow = view.glyphPositions.find(position => position[1] !== y);
+  assert.ok(nextRow);
+  assert.equal(nextRow[1] - y, 25);
+  assert.ok(26 > 23.65 && 25 > 22.15, "pitch exceeds the outlined glyph dimensions");
+  const tile = read("../public/chog-heart-tile.svg");
+  const cells = Array.from(tile.matchAll(/<use href="#heart" x="([\d.]+)" y="([\d.]+)"/g), match => [Number(match[1]), Number(match[2])]);
+  assert.equal(cells.length, 16);
+  assert.equal(cells[1][0] - cells[0][0], 26);
+  assert.equal(cells[4][1] - cells[0][1], 25);
+  view.cleanup();
 });

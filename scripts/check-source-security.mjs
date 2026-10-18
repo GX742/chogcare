@@ -1,6 +1,6 @@
 import { execFileSync } from "node:child_process";
-import { readFileSync, lstatSync } from "node:fs";
 import { resolve } from "node:path";
+import { readRegularFileSync } from "../server/regular-file.mjs";
 
 // Conservative source/release guard, not an exhaustive credential detector.
 // Prints only locations and categories, never candidate credential values.
@@ -21,13 +21,14 @@ for (const file of files) {
     findings.push(`${file}: forbidden private/runtime artifact`); continue;
   }
   let bytes;
-  if (staged) bytes = execFileSync("git", ["show", `:${file}`], { maxBuffer: 64 * 1024 * 1024 });
+  if (staged) {
+    const entry = execFileSync("git", ["ls-files", "--stage", "--", file], { encoding: "utf8" });
+    if (!/^100(?:644|755) [a-f0-9]{40,64} 0\t/.test(entry)) { findings.push(`${file}: non-regular staged source file`); continue; }
+    bytes = execFileSync("git", ["show", `:${file}`], { maxBuffer: 64 * 1024 * 1024 });
+  }
   else {
-    const path = resolve(file); let stat;
-    try { stat = lstatSync(path); } catch (error) { if (error.code === "ENOENT") continue; throw error; }
-    if (!stat.isFile() || stat.isSymbolicLink()) { findings.push(`${file}: non-regular source file`); continue; }
-    if (stat.size > 32 * 1024 * 1024) { findings.push(`${file}: oversized source artifact needs review`); continue; }
-    bytes = readFileSync(path);
+    try { bytes = readRegularFileSync(resolve(file), 32 * 1024 * 1024); }
+    catch (error) { if (error.code === "ENOENT") continue; findings.push(`${file}: unsafe, changed or oversized source file`); continue; }
   }
   if (/\.(?:png|jpe?g|webp|gif|ico|woff2?|ttf)$/i.test(file)) continue;
   if (bytes.includes(0)) { findings.push(`${file}: unexpected binary artifact needs review`); continue; }

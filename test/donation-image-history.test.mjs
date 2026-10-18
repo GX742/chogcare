@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { activeInvoiceKeys, closeSavedInvoice, recentSavedInvoices, recoveryBundle, rememberInvoice } from "../src/checkout-session.ts";
-import { loadDonationImageReceipt } from "../src/donation-image-receipt.ts";
+import { activeInvoiceKeys, closeSavedInvoice, donationImageReferences, recentSavedInvoices, recoveryBundle, rememberInvoice } from "../src/checkout-session.ts";
+import { loadDonationImageReceipt, loadLatestDonationImage } from "../src/donation-image-receipt.ts";
 import { CHOG } from "../src/route.ts";
 import { chogBeneficiary } from "../src/chog-beneficiary.ts";
 
@@ -46,4 +46,19 @@ test("saved image loader rejects identity substitution, unverifiable receipts an
   await assert.rejects(loadDonationImageReceipt({ mode: "nft", id }, signal(), response(chog)));
   await assert.rejects(loadDonationImageReceipt({ mode: "chog", id }, signal(), response({ ...chog, destinationHash: null })));
   await assert.rejects(loadDonationImageReceipt({ mode: "chog", id }, signal(), async () => new Response("{}", { status: 503 })));
+});
+
+test("automatic image selection prefers a received active donation and skips unpaid or expired checkouts", async () => {
+  const store = memory(); rememberInvoice("chog", id, store, "school-supplies"); closeSavedInvoice("chog", store); rememberInvoice("nft", nftId, store, "school-supplies");
+  const before = recoveryBundle(store), references = donationImageReferences(store);
+  assert.deepEqual(references, [{ mode: "nft", id: nftId }, { mode: "chog", id }]);
+  let calls = [];
+  const request = async url => { calls.push(url); return new Response(JSON.stringify(url.endsWith(nftId) ? nft : chog)); };
+  assert.equal((await loadLatestDonationImage(references, signal(), request)).mode, "nft"); assert.equal(calls.length, 1);
+  for (const state of ["awaiting-payment", "expired"]) {
+    calls = [];
+    const waiting = async url => { calls.push(url); return new Response(JSON.stringify(url.endsWith(nftId) ? { ...nft, state, depositHash: null, destinationHash: null } : chog)); };
+    assert.equal((await loadLatestDonationImage(references, signal(), waiting)).mode, "chog"); assert.equal(calls.length, 2);
+  }
+  assert.equal(recoveryBundle(store), before);
 });

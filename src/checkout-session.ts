@@ -103,6 +103,15 @@ function readHistory(storage: SessionStore): { mode: CheckoutMode; id: string }[
 export function recentSavedInvoices(storage = currentStore()) {
   return readHistory(storage).slice(-20).reverse();
 }
+export function donationImageReferences(storage = currentStore()) {
+  const history = recentSavedInvoices(storage);
+  if (!history.length) return [];
+  const preferred: CheckoutMode = storage.getItem(preferredKey) === "nft" ? "nft" : "chog";
+  const modes: CheckoutMode[] = [preferred, preferred === "chog" ? "nft" : "chog"];
+  const active = modes.flatMap(mode => { const id = savedInvoice(mode, storage); return validInvoiceId(id) ? [{ mode, id }] : []; });
+  const seen = new Set<string>();
+  return [...active, ...history].filter(reference => { const key = `${reference.mode}:${reference.id}`; if (seen.has(key)) return false; seen.add(key); return true; });
+}
 export function recoveryBundle(storage = currentStore()) {
   return JSON.stringify({ version: 1, chog: savedInvoice("chog", storage), nft: savedInvoice("nft", storage), pendingChog: pendingCreation("chog", storage), pendingNft: pendingCreation("nft", storage), history: readHistory(storage) }, null, 2);
 }

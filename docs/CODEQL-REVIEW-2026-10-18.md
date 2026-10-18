@@ -35,3 +35,5 @@ The local/test dispositions assume the operator's checkout, dependencies, accoun
 ## Validation
 
 The complete Node 24.22.0 regression run passed all 565 tests with zero failures or skips. New regressions exercise a file replaced after opening, hard links, byte limits and descriptor cleanup, a Git index symlink independent of Windows symlink privileges, an unlogged randomized credential canary, spoofed Windows system-directory variables and chunked/misleading-length image responses. All payment fixtures are disposable; no production custody unlock or transfer was performed.
+
+The repeat PR analysis raised one additional signal, #20, in the new file-replacement regression itself. That test deliberately renames the opened fixture and creates a replacement before the reader continues, proving that the reader rejects the mismatch and closes its descriptor. It is individually classified as **used in tests**, not suppressed in production code.

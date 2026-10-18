@@ -8,7 +8,7 @@
 .leaderboard-impact-amount > span { grid-column: 3; justify-self: start; color: #d7b9ed; font-size: 19px; font-weight: 550; letter-spacing: -.03em; }
 .leaderboard-impact-amount.is-long { display: flex; flex-direction: column; align-items: center; gap: 6px; }
 .leaderboard-impact-amount.is-long strong { font-size: clamp(27px, 3.4vw, 44px); }
-.leaderboard-impact-usd { display: block; min-height: 20px; color: #b6a0c7; font-size: 13px; line-height: 1.5; }
+.leaderboard-impact-usd { display: block; min-height: 20px; color: #b6a0c7; font-size: 13px; line-height: 1.5; overflow-wrap: anywhere; }
 .leaderboard-impact-context { max-width: 65ch; }
 .leaderboard-impact-context > p { margin: 0 0 4px; color: #cdb9db; font-size: 12px; line-height: 1.6; }
 .leaderboard-impact-context > small { display: block; color: #aa96bc; font-size: 11px; line-height: 1.6; }

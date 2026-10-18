@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { formatChogAmount, isPositiveChogAmount, parseLeaderboardEntries, safeLeaderboardAvatarImage } from "../src/leaderboard-model.ts";
+import { formatChogAmount, isPositiveChogAmount, parseLeaderboardEntries, presentChogAmount, safeLeaderboardAvatarImage } from "../src/leaderboard-model.ts";
 
 const cid = "bafybeihau2egcccbdxymeckmmbrqytbfor5gkt3en6d5fsbueymdbq7g6e";
 const image = `https://gateway.pinata.cloud/ipfs/${cid}/1462.webp`;
@@ -25,16 +25,36 @@ test("amount formatting groups whole digits without floating-point conversion", 
   assert.equal(formatChogAmount("000300.0100"), "300.01");
 });
 
-test("fraction formatting never rounds totals upward or hides omitted nonzero digits", () => {
-  assert.equal(formatChogAmount("999.99999"), "999.9999…");
-  assert.equal(formatChogAmount("300.123400000000000000"), "300.1234");
-  assert.equal(formatChogAmount("1.000000000000000000"), "1");
-  assert.equal(formatChogAmount("1.2345"), "1.2345");
-  assert.equal(formatChogAmount("1.2300"), "1.23");
-  assert.equal(formatChogAmount("0.000000000000000001"), "0.0000…");
-  assert.equal(formatChogAmount("9007199254740993.999999999999999999"), "9,007,199,254,740,993.9999…");
+test("selected base totals stay exact and legitimate fractions round cleanly to two decimals", () => {
+  assert.deepEqual(presentChogAmount("4500"), { display: "4,500", rounded: false });
+  assert.deepEqual(presentChogAmount("1800"), { display: "1,800", rounded: false });
+  assert.deepEqual(presentChogAmount("4502.727272727272727272"), { display: "4,502.73", rounded: true });
+  assert.deepEqual(presentChogAmount("1802.727272727272727272"), { display: "1,802.73", rounded: true });
+  assert.equal(presentChogAmount("999.99999").display, "1,000");
+  assert.equal(presentChogAmount("300.123400000000000000").display, "300.12");
+  assert.equal(presentChogAmount("1.000000000000000000").display, "1");
+  assert.equal(presentChogAmount("1.2345").display, "1.23");
+  assert.equal(presentChogAmount("1.2300").display, "1.23");
+  assert.equal(presentChogAmount("0.000000000000000001").display, "<0.01");
+  assert.equal(presentChogAmount("9007199254740993.999999999999999999").display, "9,007,199,254,740,994");
   assert.throws(() => formatChogAmount("0"), TypeError);
   assert.throws(() => formatChogAmount("1e30"), TypeError);
+});
+
+test("operator-compatible formatting preserves non-upward four-decimal truncation", () => {
+  assert.equal(formatChogAmount("999.99999"), "999.9999…");
+  assert.equal(formatChogAmount("300.123400000000000000"), "300.1234");
+  assert.equal(formatChogAmount("1.2345"), "1.2345");
+  assert.equal(formatChogAmount("0.000000000000000001"), "0.0000…");
+  assert.equal(formatChogAmount("9007199254740993.999999999999999999"), "9,007,199,254,740,993.9999…");
+});
+
+test("aggregate rounding handles half-cent boundaries and 78-digit carries without Number precision loss", () => {
+  for (const [exact, display, rounded] of [["1.004999999999999999", "1", true], ["1.005", "1.01", true], ["1.230000000000000000", "1.23", false], ["0.005", "0.01", true]])
+    assert.deepEqual(presentChogAmount(exact), { display, rounded });
+  const exact = "9".repeat(78) + ".999999999999999999", expected = "1" + "0".repeat(78);
+  assert.deepEqual(presentChogAmount(exact), { display: expected.replace(/\B(?=(\d{3})+(?!\d))/g, ","), rounded: true });
+  assert.equal(exact.length, 97, "the source string remains intact");
 });
 
 test("avatar images remain restricted to the allowed HTTPS IPFS gateway", () => {

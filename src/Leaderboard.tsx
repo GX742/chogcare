@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { ArrowRight, Heart } from "@phosphor-icons/react";
-import { formatChogAmount, type LeaderboardEntry } from "./leaderboard-model";
+import { presentChogAmount, type LeaderboardEntry } from "./leaderboard-model";
 import { loadPublicLeaderboard } from "./leaderboard-client";
 import { loadPublicImpact, type PublicImpact } from "./leaderboard-impact";
 
@@ -11,6 +11,7 @@ export default function Leaderboard() {
   const [revision, setRevision] = useState(0);
   const [impact, setImpact] = useState<PublicImpact | null>(null);
   const [impactUnavailable, setImpactUnavailable] = useState(false);
+  const impactAmount = impact ? /[1-9]/.test(impact.chogDonated) ? presentChogAmount(impact.chogDonated) : { display: "0", rounded: false } : null;
   useEffect(() => {
     const controller = new AbortController();
     let disposed = false;
@@ -38,13 +39,13 @@ export default function Leaderboard() {
     <div className="leaderboard-impact" aria-busy={loading}>
       <div className="leaderboard-impact-value">
         <span className="leaderboard-impact-label">Together, we’ve donated</span>
-        <p className={`leaderboard-impact-amount${(impact?.chogDonated.length ?? 0) > 6 ? " is-long" : ""}`} title={impact ? `${impact.chogDonated} $CHOG` : undefined}>
-          <strong>{impact ? /[1-9]/.test(impact.chogDonated) ? formatChogAmount(impact.chogDonated) : "0" : "—"}</strong><span>$CHOG</span>
+        <p className={`leaderboard-impact-amount${(impactAmount?.display.length ?? 0) > 6 ? " is-long" : ""}`} title={impact ? `${impact.chogDonated} $CHOG` : undefined}>
+          <strong>{impactAmount?.display ?? "—"}</strong><span>$CHOG</span>
         </p>
-        <small className="leaderboard-impact-usd">{impactUnavailable ? impact ? "(Last loaded total · refresh unavailable)" : "(Total temporarily unavailable)" : impact?.estimatedUsd ? `(≈ ${impact.estimatedUsd} USD)` : loading && !impact ? "(Loading donation total…)" : "(USD estimate unavailable)"}</small>
+        <small className="leaderboard-impact-usd">{impactUnavailable ? impact ? "(Last loaded total · refresh unavailable)" : "(Total temporarily unavailable)" : impact?.estimatedUsd ? `(≈ ${impact.estimatedUsd} USD)` : loading && !impact ? "(Loading donation total…)" : "(USD estimate unavailable)"}{impactAmount?.rounded && " · Rounded to 2 decimals"}</small>
       </div>
       <div className="leaderboard-impact-context">
-        <p>Completed donations · including anonymous gifts. Wallet addresses are not displayed.</p>
+        <p>Completed donations · selected amounts, including anonymous gifts. Wallet addresses are not displayed.</p>
         <small>USD estimate at the current rate, before fees. NFT pool contributions are separate.</small>
         {impactUnavailable && <button type="button" onClick={() => setRevision(value => value + 1)} disabled={loading}>Refresh total <ArrowRight size={16}/></button>}
       </div>
@@ -62,12 +63,12 @@ export default function Leaderboard() {
         <button type="button" onClick={() => setRevision(value => value + 1)} disabled={loading}>Retry leaderboard</button>
       </div>}
       {loading && !entries.length ? <div className="leaderboard-loading" aria-label="Loading leaderboard"><span/><span/><span/></div> :
-        entries.length ? <ol>{entries.map(entry => <li key={`${entry.rank}-${entry.nickname}-${entry.amount}`}>
+        entries.length ? <ol>{entries.map(entry => { const amount = presentChogAmount(entry.amount); return <li key={`${entry.rank}-${entry.nickname}-${entry.amount}`}>
           <b>{String(entry.rank).padStart(2, "0")}</b>
           <img src={entry.avatarImage || "/chog-donation-coin.png"} loading="lazy" alt={entry.avatarName || "ChogCare badge"} referrerPolicy="no-referrer" onError={event => { if (!event.currentTarget.src.endsWith("/chog-donation-coin.png")) event.currentTarget.src = "/chog-donation-coin.png"; }}/>
           <div><strong>{entry.nickname}</strong></div>
-          <p title={`${entry.amount} $CHOG`}>{formatChogAmount(entry.amount)}<small>$CHOG</small></p>
-        </li>)}</ol> :
+          <p title={`${entry.amount} $CHOG`}>{amount.display}<small>$CHOG{amount.rounded ? " · rounded" : ""}</small></p>
+        </li>; })}</ol> :
         !unavailable && <div className="leaderboard-empty"><Heart size={36} weight="light"/><strong>The first place is open.</strong><p>Complete a $CHOG donation and choose your public name.</p></div>}
     </div>
     </div>

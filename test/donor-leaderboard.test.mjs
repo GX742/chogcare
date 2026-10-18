@@ -35,17 +35,49 @@ test("verified source proof binds donor identity and original donation excluding
   assert.equal(verifiedLeaderboardDonation(legacy, id(1)).initiativeId, "burundi");
 });
 
-test("proof-backed excess credits the actual cause allocation once per invoice and keeps the source donor identity", () => {
+test("proof-backed excess keeps the original selected donation on the public board without changing receipt verification", () => {
   const receivedUnits=parseUnits("333",18).toString();
   const overpaid=invoice({contributionPercent:10,receivedUnits});
   overpaid.depositProof={...overpaid.depositProof,amountUnits:receivedUnits,logIndex:0,blockNumber:"100",blockHash:`0x${"b".repeat(64)}`};
   const verified=verifiedLeaderboardDonation(overpaid,id(1));
-  assert.deepEqual(verified,donation(address(1),{amount:"302.727272727272727272"}));
+  assert.deepEqual(verified,donation(address(1),{amount:"300"}));
   const leaderboard=buildDonorLeaderboard([profile(1),profile(1)],()=>verified);
-  assert.deepEqual(leaderboard.map(row=>[row.rank,row.amount]),[[1,"302.727272727272727272"]]);
+  assert.deepEqual(leaderboard.map(row=>[row.rank,row.amount]),[[1,"300"]]);
   assert.equal(verifiedLeaderboardDonation({...overpaid,receivedUnits:parseUnits("334",18).toString()},id(1)),null);
   assert.equal(verifiedLeaderboardDonation({...overpaid,depositProof:{...overpaid.depositProof,blockHash:"0x"}},id(1)),null);
   assert.equal(verifiedLeaderboardDonation({...overpaid,depositProof:{...overpaid.depositProof,sender:address(0)}},id(1)),null);
+  assert.equal(verifiedLeaderboardDonation({...overpaid,donationAmount:"331"},id(1)),null,"the selected base cannot exceed the immutable quoted total even if the actual transfer covers it");
+  assert.equal(verifiedLeaderboardDonation({...overpaid,receivedUnits:parseUnits("329",18).toString(),depositProof:{...overpaid.depositProof,amountUnits:parseUnits("329",18).toString()}},id(1)),null);
+  const overCap=parseUnits("1100000.000000000000000001",18).toString();
+  assert.equal(verifiedLeaderboardDonation({...overpaid,receivedUnits:overCap,depositProof:{...overpaid.depositProof,amountUnits:overCap}},id(1)),null);
+});
+
+test("legacy overpaid invoices without a separate base field retain their original selected amount", () => {
+  const receivedUnits=parseUnits("333",18).toString(),legacy=invoice({amount:"300",units:parseUnits("300",18).toString(),contributionPercent:0,receivedUnits});
+  delete legacy.donationAmount;
+  legacy.depositProof={...legacy.depositProof,amountUnits:receivedUnits,logIndex:0,blockNumber:"100",blockHash:`0x${"b".repeat(64)}`};
+  assert.equal(verifiedLeaderboardDonation(legacy,id(1)).amount,"300");
+  assert.equal(legacy.receivedUnits,receivedUnits);
+  assert.equal(legacy.depositProof.amountUnits,receivedUnits);
+});
+
+test("1500 previous + selected 300 overpaid as 333 ranks as 1800, with duplicates and reorgs handled once", () => {
+  const receivedUnits=parseUnits("333",18).toString(),overpaid=invoice({contributionPercent:10,receivedUnits,state:"confirming"});
+  overpaid.depositProof={...overpaid.depositProof,amountUnits:receivedUnits,logIndex:0,blockNumber:"100",blockHash:`0x${"b".repeat(64)}`};
+  const earlier=invoice({id:id(2),amount:"1650",donationAmount:"1500",units:parseUnits("1650",18).toString()});
+  earlier.depositProof={...earlier.depositProof,invoiceId:id(2),amountUnits:earlier.units};
+  const before=structuredClone([overpaid,earlier]);
+  const profiles=[profile(1,{amount:"333"}),profile(1),profile(2)];
+  const read=invoiceId=>verifiedLeaderboardDonation(invoiceId===id(1)?overpaid:earlier,invoiceId);
+  let rows=buildDonorLeaderboard(profiles,read);
+  assert.deepEqual(rows.map(row=>[row.amount,row.status]),[["1800","confirming"]]);
+  assert.deepEqual([overpaid,earlier],before,"public projection must not mutate financial records");
+  overpaid.state="bridging";
+  rows=buildDonorLeaderboard(profiles,read);
+  assert.deepEqual(rows.map(row=>[row.amount,row.status]),[["1500","delivered"]]);
+  overpaid.state="delivered";
+  rows=buildDonorLeaderboard(profiles,read);
+  assert.deepEqual(rows.map(row=>[row.amount,row.status]),[["1800","delivered"]]);
 });
 
 test("same wallet ignores address casing and uses its latest verified public name and avatar", () => {

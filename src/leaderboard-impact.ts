@@ -1,5 +1,5 @@
 export type PublicImpact = { chogDonated: string; donations: number; estimatedUsd: string | null };
-const amountPattern = /^(?:0|[1-9]\d{0,30})(?:\.\d{1,18})?$/;
+const amountPattern = /^(?:0|[1-9]\d{0,77})(?:\.\d{1,18})?$/;
 const matches = (pattern: RegExp, value: unknown): value is string => typeof value === "string" && value.match(pattern)?.[0] === value;
 const record = (value: unknown): value is Record<string, unknown> => !!value && typeof value === "object" && !Array.isArray(value);
 

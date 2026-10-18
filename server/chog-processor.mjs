@@ -5,7 +5,7 @@ import { createPublicClient, http, erc20Abi, encodeFunctionData, parseUnits, for
 import { monad, mainnet, optimism } from "viem/chains";
 import { deliveryNetwork, NEW_DONATION_CHAIN_ID, SOLANA_CHAIN_ID } from "../src/delivery-network.ts";
 import { createAddressAllocator } from "./address-allocator.mjs";
-import { verifyChogDeposit, finalizedReceipt, inspectReceipt, AwaitingFinalityError, NonCanonicalReceiptError } from "./chain-receipts.mjs";
+import { verifyChogDeposit, finalizedReceipt, inspectReceipt, AwaitingFinalityError, NonCanonicalReceiptError, ChogDepositMismatchError } from "./chain-receipts.mjs";
 import { bridgeQuote, relayJson, RELAY_DEPOSITORY } from "./relay-route.mjs";
 import { saleQuote, usdcQuote } from "./source-quotes.mjs";
 import { CHOG_DONATION_MAX_BRIDGE_LOSS_BPS, minimumBridgeDelivery, assertBridgeDelivery, assertCrossAssetBridgeDelivery } from "./bridge-cost-policy.mjs";
@@ -26,6 +26,7 @@ import { createPaymentPerformance } from "./payment-performance.mjs";
 import { paymentRpcClient, PAYMENT_RPC_URLS } from "./payment-rpc.mjs";
 import { observeSourceSubmission } from "./source-submission.mjs";
 import {SOURCE_GAS_GRANT,OPERATOR_READY_BALANCE,sourceGasGrant,sourceGasCharge} from "./source-gas-policy.mjs";
+import { processingChogUnits, receivedChogAmounts, creditedChogDonationAmount } from "./chog-received.mjs";
 
 const same=(a,b)=>typeof a==="string"&&typeof b==="string"&&a.toLowerCase()===b.toLowerCase();
 const hashPattern=/^0x[0-9a-f]{64}$/i;
@@ -83,7 +84,7 @@ export function createChogProcessor({ filename, vault, root, checkpoint=()=>{}, 
     CREATE TABLE IF NOT EXISTS pool_contributions(invoice_id TEXT PRIMARY KEY,units TEXT NOT NULL,source_hash TEXT NOT NULL UNIQUE);
     CREATE TABLE IF NOT EXISTS pool_contribution_batches(id TEXT PRIMARY KEY,state TEXT NOT NULL,document TEXT NOT NULL);`);
   const allocator=createAddressAllocator(db,vault), journal=sourceJournal(db);
-  let running=false, tracking=false, closed=false, healthyAt=0, gasBalance=0n, expiredCursor="";
+  let running=false, tracking=false, closed=false, healthyAt=0, gasBalance=0n, expiredCursor="", reviewCursor="";
   const activeInvoices=new Set();
   const readinessNow=dependencies.now??Date.now;
   let readinessRequest=null;
@@ -114,6 +115,14 @@ export function createChogProcessor({ filename, vault, root, checkpoint=()=>{}, 
   };
   const save=x=>db.prepare("UPDATE chog_invoices SET state=?,document=? WHERE id=?").run(x.state,JSON.stringify(x),x.id);
   const load=id=>{const row=db.prepare("SELECT document FROM chog_invoices WHERE id=?").get(id);return row?JSON.parse(row.document):null;};
+  const activeInvoiceCount=()=>db.prepare("SELECT COUNT(*) AS n FROM chog_invoices WHERE state IN ('awaiting-payment','processing','bridging','confirming')").get().n;
+  const amountReviewCandidate=x=>{
+    if(x?.state!=="manual-review"||typeof x.message!=="string"||["depositHash","depositProof","receivedUnits","sale","swap","monToSwap","usdcToBridge","poolContributionUsdc","bridge","bridgeHash","destinationHash","observedDestinationHash","processingStartedAt","bridgeStartedAt","destinationIncludedAt"].some(key=>x[key]!=null))return false;
+    const amountMessage=/^Received (\d+(?:\.\d{1,18})?) CHOG\. This invoice requires (\d+(?:\.\d{1,18})?) CHOG\./.exec(x.message);
+    if(x.message!=="Deposit amount or time differs from the invoice. Do not pay again."&&!amountMessage)return false;
+    try{if(amountMessage){const received=parseUnits(amountMessage[1],18),expected=BigInt(x.units),maximum=(x.contributionPercent===10?1_100_000n:1_000_000n)*10n**18n;if(amountMessage[2]!==formatUnits(expected,18)||received<expected||received>maximum)return false;}}catch{return false;}
+    return !db.prepare("SELECT 1 FROM source_sends WHERE invoice_id=? LIMIT 1").get(x.id);
+  };
   const publicInvoice=x=>{const network=deliveryNetwork(x.destinationChainId);return {kind:"payment",id:x.id,mode:"chog",asset:"CHOG",chainId:143,amount:x.amount,donationAmount:x.donationAmount??x.amount,
     poolContributionAmount:x.poolContributionAmount??null,contributionPercent:x.contributionPercent??0,poolContributionState:x.contributionPercent===10?(db.prepare("SELECT 1 FROM pool_contributions WHERE invoice_id=?").get(x.id)?"collected":"pending"):null,
     initiativeId:x.initiativeId??"burundi",recipient:chogBeneficiary(x.initiativeId??"burundi",network.id),
@@ -121,7 +130,7 @@ export function createChogProcessor({ filename, vault, root, checkpoint=()=>{}, 
     minUsdc:x.minOutput,state:x.state,expiresAt:x.expiresAt,depositHash:x.depositHash??null,bridgeHash:journal.get(x.id,"bridge")?.hash??null,destinationHash:x.destinationHash??null,
     deliveredUsdc:x.deliveredUsdc??null,observedDestinationHash:x.observedDestinationHash??null,observedUsdc:x.observedUsdc??null,message:x.message??null,
     processingStartedAt:x.processingStartedAt??null,bridgeStartedAt:x.bridgeStartedAt??null,destinationIncludedAt:x.destinationIncludedAt??null,
-    destinationChainId:network.id,destinationAsset:network.asset,destinationDecimals:network.decimals,minimumUsd:x.minimumUsd??x.minOutput,bridgeEstimatedSeconds:x.bridge?.estimatedSeconds??x.bridgeEstimatedSeconds??null};};
+    destinationChainId:network.id,destinationAsset:network.asset,destinationDecimals:network.decimals,minimumUsd:x.minimumUsd??x.minOutput,bridgeEstimatedSeconds:x.bridge?.estimatedSeconds??x.bridgeEstimatedSeconds??null,...receivedChogAmounts(x)};};
 
   async function send(x,phase,wallet,build) {
     let row=journal.get(x.id,phase);
@@ -219,18 +228,43 @@ export function createChogProcessor({ filename, vault, root, checkpoint=()=>{}, 
     const initiativeId=x.initiativeId??"burundi", recipient=chogBeneficiary(initiativeId,network.id);
     const wallet=root.deriveChild(x.index);
     if(!same(wallet.address,x.depositAddress))throw new Error("Invoice address derivation mismatch.");
-    if(x.state==="awaiting-payment" || x.state==="expired") {
+    const review=amountReviewCandidate(x),reviewSnapshot=review?JSON.stringify(x):null;
+    if(review&&activeInvoiceCount()>=3)return;
+    const reviewUnchanged=()=>JSON.stringify(load(x.id))===reviewSnapshot&&amountReviewCandidate(x)&&activeInvoiceCount()<3;
+    if(x.state==="awaiting-payment" || x.state==="expired" || review) {
       const final=await source.getBlock({blockTag:"finalized"});
-      const from=BigInt(x.cursor)+1n, end=from+1999n<final.number?from+1999n:final.number;
+      const from=BigInt(review?x.createdBlock:x.cursor)+1n, end=review?final.number:from+1999n<final.number?from+1999n:final.number;
       if(from>end)return;
-      const logs=await source.getContractEvents({address:CHOG,abi:erc20Abi,eventName:"Transfer",args:{to:x.depositAddress},fromBlock:from,toBlock:end,strict:true});
+      // Old amount holds are recoverable only after a complete bounded scan of
+      // the original address, frozen at this finalized head. Never accept a
+      // partial page or mutate the original invoice cursor/deadline to recover.
+      if(review&&end-from>=10_000n)return;
+      const logs=[];
+      for(let start=from;start<=end;start+=2000n){
+        const pageEnd=start+1999n<end?start+1999n:end;
+        logs.push(...await source.getContractEvents({address:CHOG,abi:erc20Abi,eventName:"Transfer",args:{to:x.depositAddress},fromBlock:start,toBlock:pageEnd,strict:true}));
+      }
       if(logs.length) {
-        if(logs.length!==1) {x.state="manual-review";x.message="Multiple deposits detected. Operator review required.";save(x);return;}
+        if(logs.length!==1) {atomic(db,()=>{if(review&&!reviewUnchanged())return;x.state="manual-review";x.message="Multiple deposits detected. Operator review required.";save(x);});return;}
         const l=logs[0];
-        try { const proof=await verifyChogDeposit(source,{kind:"chog-donation",state:"awaiting-payment",id:x.id,depositAddress:x.depositAddress,amountUnits:BigInt(x.units),createdBlock:BigInt(x.createdBlock),expiresAt:x.expiresAt},l.transactionHash,l.logIndex);x.depositProof=proof; }
-        catch {x.state="manual-review";x.message="Deposit amount or time differs from the invoice. Do not pay again.";save(x);return;}
-        x.depositHash=l.transactionHash;x.state="processing";x.processingStartedAt=Date.now();x.message=null;save(x);
-      } else {x.cursor=String(end);if(Date.now()>x.expiresAt)x.state="expired";save(x);return;}
+        let proof;
+        try {
+          proof=await verifyChogDeposit(source,{kind:"chog-donation",state:"awaiting-payment",id:x.id,depositAddress:x.depositAddress,amountUnits:BigInt(x.units),createdBlock:BigInt(x.createdBlock),expiresAt:x.expiresAt},l.transactionHash,l.logIndex,{allowOverpayment:true,maxAmountUnits:(x.contributionPercent===10?1_100_000n:1_000_000n)*10n**18n});
+        }
+        catch(error) {
+          // A missing/lagging receipt or failed RPC read is not proof of a bad
+          // payment. Preserve the scan cursor and let safelyProcess retry it.
+          if(!(error instanceof ChogDepositMismatchError))throw error;
+          atomic(db,()=>{if(review&&!reviewUnchanged())return;x.state="manual-review";x.message=error.message.slice(0,300);save(x);});return;
+        }
+        const activated=atomic(db,()=>{
+          if(review&&!reviewUnchanged())return false;
+          x.depositProof=proof;if(BigInt(proof.amountUnits)>BigInt(x.units))x.receivedUnits=proof.amountUnits;
+          x.depositHash=l.transactionHash;x.state="processing";x.processingStartedAt=Date.now();x.message=null;save(x);return true;
+        });
+        if(!activated)return;
+        if(review)checkpoint();
+      } else {if(!review){x.cursor=String(end);if(Date.now()>x.expiresAt)x.state="expired";save(x);}return;}
     }
     if(x.state==="processing") {
       if(initiativeId==="animal-ethics" && network.id!==SOLANA_CHAIN_ID) {
@@ -238,10 +272,11 @@ export function createChogProcessor({ filename, vault, root, checkpoint=()=>{}, 
         // recipient. Only newly issued native-SOL invoices can auto-settle.
         x.state="manual-review";x.message="This historical recipient requires operator review. Your original payment is preserved; do not pay again.";save(x);return;
       }
-      if(!x.sale) {x.sale=await quoteSale(source,BigInt(x.units));save(x);}
+      const units=processingChogUnits(x);
+      if(!x.sale) {x.sale=await quoteSale(source,units);save(x);}
       if(!await send(x,"gas",root,async()=>({to:x.depositAddress,value:sourceGasGrant(x),data:"0x"})))return;
-      if(!await send(x,"approve-chog",wallet,async()=>approve(CHOG,x.sale.router,BigInt(x.units))))return;
-      const sold=await send(x,"sell",wallet,async()=>({to:x.sale.router,value:0n,data:encodeFunctionData({abi:sellAbi,functionName:"sell",args:[{amountIn:BigInt(x.units),amountOutMin:BigInt(x.sale.minMon),token:CHOG,to:x.depositAddress,deadline:BigInt(Math.floor(Date.now()/1000)+300)}]})}));
+      if(!await send(x,"approve-chog",wallet,async()=>approve(CHOG,x.sale.router,units)))return;
+      const sold=await send(x,"sell",wallet,async()=>({to:x.sale.router,value:0n,data:encodeFunctionData({abi:sellAbi,functionName:"sell",args:[{amountIn:units,amountOutMin:BigInt(x.sale.minMon),token:CHOG,to:x.depositAddress,deadline:BigInt(Math.floor(Date.now()/1000)+300)}]})}));
       if(!sold)return;
       if(!x.monToSwap) {
         const approval=await confirmedSource(journal.get(x.id,"approve-chog").hash);
@@ -337,6 +372,9 @@ export function createChogProcessor({ filename, vault, root, checkpoint=()=>{}, 
     if(closed||activeInvoices.has(x.id))return;
     activeInvoices.add(x.id);
     try{await processInvoice(x,sourceOnly);}catch(error){
+      // Preserve the trusted reason and recovery eligibility of an old amount
+      // hold when its read-only rescan encounters a temporary network failure.
+      if(x.state==="manual-review")return;
       x.message=error instanceof AwaitingFinalityError?"Transaction included on Monad. Waiting for source finality before continuing; no further payment is needed.":x.state==="confirming"?"A destination transfer was observed. Network verification is temporarily unavailable; final delivery is not confirmed yet. Do not pay again.":"Processing paused while the network or route is checked. Do not pay again.";save(x);
     }finally{activeInvoices.delete(x.id);}
   }
@@ -391,7 +429,7 @@ export function createChogProcessor({ filename, vault, root, checkpoint=()=>{}, 
         nftMetadataRequests.set(tokenId,metadataRequest);
         try{return await metadataRequest;}finally{nftMetadataRequests.delete(tokenId);}
       }));
-      return {invoiceId:x.id,state:x.state,initiativeId:x.initiativeId,amount:x.donationAmount??x.amount,nfts};
+      return {invoiceId:x.id,state:x.state,initiativeId:x.initiativeId,amount:creditedChogDonationAmount(x),nfts};
     })();
     nftProfileRequests.set(id,request);
     try{return await request;}finally{nftProfileRequests.delete(id);}
@@ -403,7 +441,7 @@ export function createChogProcessor({ filename, vault, root, checkpoint=()=>{}, 
     leaderboardDonation(id){return closed||!/^[a-f0-9]{64}$/.test(id??"")?null:verifiedLeaderboardDonation(load(id),id);},
     refreshReadiness,
     track:trackPending,
-    publicStatus(){const networkReady=!closed&&readinessNow()-healthyAt<60_000,queueFull=!closed&&db.prepare("SELECT COUNT(*) AS n FROM chog_invoices WHERE state IN ('awaiting-payment','processing','bridging','confirming')").get().n>=3;return {paymentsEnabled:networkReady&&gasBalance>=OPERATOR_READY_BALANCE&&!queueFull,chogQueueFull:queueFull,chogReadiness:!networkReady?"network-unavailable":gasBalance<OPERATOR_READY_BALANCE?"gas-needed":queueFull?"queue-full":"ready",paymentMode:"local-pilot",workerVersion:"2026-10-18-queue-recovery-v12",destinationChainId:newDestinationChainId,supportedModes:["chog"],supportedInitiatives:[...CHOG_INITIATIVES],poolContributionPercent:10,poolContributionMode:"added-on-top",poolContributionBatchMinimumUsdc:"5.00",poolContributionPendingUsdc:formatUnits(poolPendingUsdc,6)};},
+    publicStatus(){const networkReady=!closed&&readinessNow()-healthyAt<60_000,queueFull=!closed&&db.prepare("SELECT COUNT(*) AS n FROM chog_invoices WHERE state IN ('awaiting-payment','processing','bridging','confirming')").get().n>=3;return {paymentsEnabled:networkReady&&gasBalance>=OPERATOR_READY_BALANCE&&!queueFull,chogQueueFull:queueFull,chogReadiness:!networkReady?"network-unavailable":gasBalance<OPERATOR_READY_BALANCE?"gas-needed":queueFull?"queue-full":"ready",paymentMode:"local-pilot",workerVersion:"2026-10-18-overpayment-recovery-v13",destinationChainId:newDestinationChainId,supportedModes:["chog"],supportedInitiatives:[...CHOG_INITIATIVES],poolContributionPercent:10,poolContributionMode:"added-on-top",poolContributionBatchMinimumUsdc:"5.00",poolContributionPendingUsdc:formatUnits(poolPendingUsdc,6)};},
     cancelUnpaidChog(id){
       if(closed||!/^[a-f0-9]{64}$/.test(id??"")||activeInvoices.has(id))throw Error("Payment observation is in progress. Retry the same cancellation.");
       const x=load(id);
@@ -459,6 +497,8 @@ export function createChogProcessor({ filename, vault, root, checkpoint=()=>{}, 
         // invoices never block active orders, and late deposits remain reviewable.
         const expired=db.prepare("SELECT id,document FROM chog_invoices WHERE state='expired' AND id>? ORDER BY id LIMIT 1").get(expiredCursor);
         if(expired){expiredCursor=expired.id;invoices.push(expired);}else expiredCursor="";
+        const held=db.prepare("SELECT id,document FROM chog_invoices WHERE state='manual-review' AND id>? ORDER BY id LIMIT 1").get(reviewCursor);
+        if(held){reviewCursor=held.id;if(amountReviewCandidate(JSON.parse(held.document)))invoices.push(held);}else reviewCursor="";
         const pending=invoices.map(row=>JSON.parse(row.document));
         // Read-only destination checks are independent of the source signer.
         // A slow bridge must not hold up another payment's exchange (or finality).

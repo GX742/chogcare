@@ -25,7 +25,7 @@ export default function GivingExplainer() {
           <span className="care-mechanic-label">NFT community pool</span>
           <h3 id="nft-mechanic-title">Give as an NFT holder</h3>
           <p>Hold a CHOG NFT and choose a cause. The pool donates <strong>$1 on your behalf.</strong></p>
-          <span className="care-mechanic-note">Three holders a day. $3 daily pool.<br />One donation per wallet and NFT.</span>
+          <span className="care-mechanic-note">Three donations a day. $3 daily pool.<br />Standard allowance: one donation per wallet and NFT.</span>
         </div>
         <ol className="care-giving-flow" aria-label="NFT pool donation steps">
           <li><span className="care-step-number" aria-hidden="true">01</span><span className="care-step-copy"><strong>Choose a cause</strong><small>Pick an NFT-pool initiative.</small></span></li>

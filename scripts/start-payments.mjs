@@ -89,7 +89,7 @@ try {
   console.log("Donation amount: 300-1,000,000 CHOG. Each new invoice adds exactly 10% on top for the NFT community pool and shows the full total before QR.");
   console.log("Pool contributions consolidate on Monad and bridge to the pinned Optimism treasury in batches from 5 USDC.");
   console.log("Limits: 3 active invoices, 20 operator gas grants/day across donations and pool batches.");
-  console.log("NFT claims require funded Optimism USDC and ETH gas. $1 per wallet/NFT/UTC day, 3 recipients and $3/day maximum. Existing invoices keep their original amount.");
+  console.log("NFT claims require funded Optimism USDC and ETH gas. Standard allowance: $1 per wallet/NFT/UTC day; the approved repeat holder shares the same 3-grant and $3/day maximum. Existing invoices keep their original amount.");
   console.log("No independent production audit has been completed. Local single-operator pilot only.");
   // Compare before schema initialisation or key unlock. Enrolment is a separate,
   // explicit offline owner action, never an automatic baseline reset.

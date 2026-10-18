@@ -18,10 +18,21 @@ export async function runPrivateStationWorker(channel = process, run = runStatio
     finally { channel.removeListener("message", onMessage); channel.removeListener("disconnect", onDisconnect); if (channel.connected) channel.disconnect(); }
   })();
   const onDisconnect = () => { void shutdown(); };
-  const onMessage = message => { if (message?.type === "stop" && Object.keys(message).length === 1) void shutdown(); };
+  const onMessage = message => {
+    if (!message || typeof message !== "object" || Array.isArray(message)) return;
+    if (message.type === "stop" && Object.keys(message).length === 1) { void shutdown(); return; }
+    if (message.type !== "test" || Object.keys(message).length !== 2 || typeof message.requestId !== "string" || !/^[a-f0-9]{24}$/.test(message.requestId)) return;
+    let status = "not-ready";
+    try { if (bridge && !requestedStop) status = bridge.test?.() ?? "not-ready"; } catch { status = "error"; }
+    if (!["accepted", "busy", "not-ready", "error"].includes(status)) status = "error";
+    send({ type: "test-result", requestId: message.requestId, status });
+  };
   channel.on("message", onMessage); channel.once("disconnect", onDisconnect);
   try {
-    bridge = await run(args);
+    bridge = await run(args, { onTestState(state) {
+      const code = { running: "station-test-started", done: "station-test-done", error: "station-test-failed" }[state];
+      if (code && !requestedStop) send({ type: "event", code, level: state === "error" ? "error" : "info" });
+    } });
     if (bridge.finished) void bridge.finished.then(() => shutdown());
     if (!requestedStop) send({ type: "ready" });
   } catch { send({ type: "event", code: "station-failed", level: "error" }); channel.exitCode = 1; }

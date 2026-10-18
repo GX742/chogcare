@@ -148,6 +148,20 @@ export function createPaymentService(store, allowedOrigin = "http://127.0.0.1:41
         const entries=buildDonorLeaderboard(store.leaderboardRecords(),processor?.leaderboardDonation? id=>processor.leaderboardDonation(id):null);
         return respond(200,{entries});
       }
+      const cancelMatch=url.pathname.match(/^\/api\/payments\/invoices\/([a-f0-9]{64})\/cancel$/);
+      if(req.method==="POST"&&cancelMatch){
+        if(profileIntegrityHeld())return profileIntegrityHold();
+        if(!session)return respond(403,{error:"Open payment configuration before retrying cancellation."});
+        const body=await readJson(64);
+        if(!body||Array.isArray(body)||Object.keys(body).length!==1||body.mode!=="chog")return respond(400,{error:"Only an explicitly cancelled unpaid CHOG checkout is supported."});
+        if(!processor?.cancelUnpaidChog)return respond(503,{error:"Cancellation is unavailable. Keep your original payment reference."});
+        try{
+          const result=processor.cancelUnpaidChog(cancelMatch[1]);
+          await processor.checkpoint?.();
+          if(profileIntegrityHeld())return profileIntegrityHold();
+          return respond(200,result);
+        }catch{return respond(409,{error:"Payment may be processing or its storage check is incomplete. Keep your invoice and retry; do not pay again."});}
+      }
       const profileMatch=url.pathname.match(/^\/api\/payments\/invoices\/([a-f0-9]{64})\/profile$/);
       if(req.method==="GET"&&profileMatch){
         if (profileIntegrityHeld()) return profileIntegrityHold();

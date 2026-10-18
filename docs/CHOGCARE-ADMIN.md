@@ -4,9 +4,9 @@ ChogCare Admin manages the existing ChogCare installation on this Windows comput
 
 ## Install and start
 
-1. Open `work/admin-release/ChogCare-Admin-Setup-1.0.0.exe` and choose your installation folder. The locally built installer is unsigned; do not disable Windows security protections.
-2. Open **ChogCare Admin** from its desktop shortcut. Keep the existing project folder and installed Node.js 25.9 or newer Node 25 runtime available; this release uses that installation rather than copying custody storage into the app.
-3. Under **Settings**, check the NodeMCU USB port. The current setup defaults to COM4; use the actual assigned port and close Arduino Serial Monitor before connecting.
+1. Build the current installer with `npm run admin:package`; its version follows `admin/package.json` and the output is in `work/admin-release/`. The locally built installer is unsigned; do not disable Windows security protections.
+2. Open **ChogCare Admin** from its desktop shortcut. Keep the existing project folder and supported **Node.js 24.22+ within the 24.x LTS line** available. The controller prefers the verified portable runtime under `work/runtimes/`; the app does not copy custody storage into its installer.
+3. Under **Settings**, check the actual NodeMCU USB port, save it and close Arduino Serial Monitor before connecting. The reviewed physical installation uses COM6; a new computer may assign another port.
 4. Choose **Start services**. Enter the existing custody vault password in the app, not in chat. Services already running outside the app are not duplicated or terminated. If an old payment terminal owns the worker, it remains external; finish its normal graceful shutdown before starting an app-managed worker.
 5. Choose **Open OBS** and start your camera stream in OBS. The app controls the local Owncast server, not the OBS stream-start button.
 
@@ -25,7 +25,7 @@ Closing the window leaves the app running in the system tray. **Quit safely** dr
 
 ## Phone dashboard
 
-Open `https://chogcare.vercel.app/dashboard` after deployment. The responsive dashboard uses the supplied CHOG coin and sunset artwork. It shows public service readiness, aggregate CHOG donations when available, daily NFT places and read-only bridge estimates. It has no local service actions or privileged IPC access.
+Open `https://chogcare.xyz/dashboard`. The responsive dashboard uses the supplied CHOG coin and sunset artwork. It shows public service readiness, aggregate CHOG donations when available, daily NFT places and read-only bridge estimates. It has no local service actions or privileged IPC access.
 
 The physical station state is **Not confirmed** until an authoritative public check is available. A failed public request does not prove the underlying service is offline. Bridge estimates never unlock payments or reserve NFT places.
 

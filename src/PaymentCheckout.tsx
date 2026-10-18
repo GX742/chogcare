@@ -4,7 +4,7 @@ import type { CheckoutMode } from "./checkout";
 import "./checkout.css";
 import LiveChogCheckout from "./LiveChogCheckout";
 import LiveNftCheckout from "./LiveNftCheckout";
-import { holderAvailability, paymentServicePolicy } from "./payment-service-policy";
+import { holderAvailability, paymentAvailabilityNotice, paymentServicePolicy } from "./payment-service-policy";
 import { initiativeChain, supportsNft, acceptsNewChog } from "./chog-beneficiary";
 import type { DonationDestinationChainId } from "./delivery-network";
 import { NFT_POOL_GRANT_USDC, NFT_POOL_DAILY_CLAIMS } from "./nft-pool-policy";
@@ -23,10 +23,12 @@ export default function PaymentCheckout(props: Props) {
   const [nftQueueFull, setNftQueueFull] = useState(false);
   const [serviceAllowed, setServiceAllowed] = useState(false);
   const [securityNotice, setSecurityNotice] = useState("");
+  const [availabilityNotices, setAvailabilityNotices] = useState({ chog: "", nft: "" });
   const [configInitiative, setConfigInitiative] = useState("");
   const currentConfig = configInitiative === props.initiativeId;
   const chogReady = currentConfig && ready;
   const holderReady = currentConfig && nftReady;
+  const availabilityNotice = currentConfig && (props.mode === "chog" ? acceptsNewChog(props.initiativeId) : supportsNft(props.initiativeId)) ? availabilityNotices[props.mode] : "";
   useEffect(() => {
     let disposed = false;
     const controller = new AbortController();
@@ -34,6 +36,7 @@ export default function PaymentCheckout(props: Props) {
     setReady(false); setNftReady(false); setPoolHealthy(false);
     setAvailableClaims(null); setNftQueueFull(false); setServiceAllowed(false); setSecurityNotice("");
     setConfigInitiative("");
+    setAvailabilityNotices({ chog: "", nft: "" });
     const poll = async () => {
       try {
         const response = await fetch("/api/payments/config", { signal: AbortSignal.any([controller.signal, AbortSignal.timeout(8000)]) });
@@ -44,6 +47,7 @@ export default function PaymentCheckout(props: Props) {
           const policy = paymentServicePolicy(config);
           setServiceAllowed(policy.allowed);
           setSecurityNotice(policy.notice);
+          setAvailabilityNotices({ chog: paymentAvailabilityNotice(config, "chog"), nft: paymentAvailabilityNotice(config, "nft") });
           setDestinationChainId(initiativeChain(props.initiativeId,config.destinationChainId === 10 ? 10 : 1));
           setReady(policy.allowed && config.paymentMode === "local-pilot" && config.paymentsEnabled === true && config.supportedModes?.includes("chog") && config.supportedInitiatives?.includes(props.initiativeId));
           setNftReady(policy.allowed && config.subsidyUsdc === NFT_POOL_GRANT_USDC && config.maxDailyClaims === NFT_POOL_DAILY_CLAIMS && config.nftPaymentsEnabled === true && config.supportedModes?.includes("nft") && config.poolChainId === 10 && supportsNft(props.initiativeId) && (config.nftSupportedInitiatives?.includes(props.initiativeId) || props.initiativeId === "burundi"));
@@ -62,7 +66,8 @@ export default function PaymentCheckout(props: Props) {
 
   return <>
     {securityNotice && <div className="payment-service-notice" role="status"><Info size={22} aria-hidden="true"/><div><strong>Payments temporarily paused</strong><p>{securityNotice}</p><button className="support-checkout-link" type="button" onClick={() => setSupport({ mode: props.mode, issue: "payment-unavailable" })}>Contact support</button></div></div>}
-    {props.initiativeId === "animal-ethics" && props.mode === "nft" && <div className="payment-service-notice" role="status"><Info size={22} aria-hidden="true"/><div><strong>Holder benefit unavailable for this cause</strong><p>Animal Ethics supports CHOG donations, but not donations from this NFT pool. No verification QR is issued here.</p></div></div>}
+    {!securityNotice && availabilityNotice && <div className="payment-service-notice" role="status"><Info size={22} aria-hidden="true"/><div><strong>New donations temporarily unavailable</strong><p>{availabilityNotice}</p></div></div>}
+    {props.initiativeId === "animal-ethics" && props.mode === "nft" && <div className="payment-service-notice" role="status"><Info size={22} aria-hidden="true"/><div><strong>Holder benefit unavailable for this cause</strong><p>Animal Ethics supports $CHOG donations, but not donations from this NFT pool. No verification QR is issued here.</p></div></div>}
     {props.mode === "chog" ? <LiveChogCheckout initiativeId={props.initiativeId} initiativeName={props.initiativeName} ready={chogReady && acceptsNewChog(props.initiativeId)} destinationChainId={initiativeChain(props.initiativeId,destinationChainId===10?10:1)} serviceAllowed={currentConfig && serviceAllowed} onViewLeaderboard={props.onViewLeaderboard} onSupport={setSupport}/> : !supportsNft(props.initiativeId) ? <section className="checkout"><h3>Holder donations are paused.</h3><p>The selected cause is not supported by the NFT pool.</p></section> : <LiveNftCheckout initiativeId={props.initiativeId} ready={holderReady} healthy={currentConfig && poolHealthy} availableClaims={currentConfig ? availableClaims : null} queueFull={currentConfig && nftQueueFull} serviceAllowed={currentConfig && serviceAllowed} onSupport={setSupport}/>}
     {!securityNotice && !(props.mode === "chog" ? chogReady : holderReady) && <div className="checkout-service-help"><button className="support-checkout-link" type="button" onClick={() => setSupport({ mode: props.mode, issue: "payment-unavailable" })}>Contact support</button></div>}
     <SupportDialog context={support} onClose={() => setSupport(null)}/>

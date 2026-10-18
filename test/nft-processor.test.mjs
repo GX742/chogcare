@@ -26,7 +26,7 @@ function transfer(token,from,to,value,txHash,number) {
   return {address:token,transactionHash:txHash,blockNumber:number,blockHash:h(number),logIndex:0,removed:false,
     topics:encodeEventTopics({abi:erc20Abi,eventName:"Transfer",args:{from,to}}),data:encodeAbiParameters([{type:"uint256"}],[value])};
 }
-async function fixture(t, { checkpoint = () => {}, holderAddress = holder } = {}) {
+async function fixture(t, { checkpoint = () => {}, holderAddress = holder, initialTick = true } = {}) {
   const holder=holderAddress;
   const dir=mkdtempSync(join(tmpdir(),"chogcare-nft-test-")),filename=join(dir,"processor.sqlite");
   const root=HDNodeWallet.createRandom("",DEPOSIT_BASE_PATH),xpub=root.neuter().extendedKey;
@@ -53,19 +53,41 @@ async function fixture(t, { checkpoint = () => {}, holderAddress = holder } = {}
   const settings={filename,vault,root,checkpoint},deps={source,destination,now:()=>clock,feeEstimate:async()=>fee};
   worker=createNftProcessor(settings,deps);
   t.after(async()=>{await worker.close();rmSync(dir,{recursive:true,force:true});});
-  await worker.tick();
+  if(initialTick)await worker.tick();
   return {get worker(){return worker;},filename,broadcasts,deposits,source,destination,
     input:(tokenId="1")=>({mode:"nft",amount:"1",holderAddress:holder,tokenId,initiativeId:"burundi"}),
     async fund(){destTip=110n;tokenBalance=10000000n;await worker.tick();},
     corruptFunding(token,from=NFT_POOL_FUNDER){fundingToken=token;fundingFrom=from;},
     setOwner(value){owner=value;},setGas(value){gas=value;},setFee(value){fee=value;},setTimeout(value){timeout=value;},
     async advance(ms){clock+=ms;await worker.tick();},
+    elapse(ms){clock+=ms;},
     deposit(x,changes={}){sourceTip+=1n;const tx={hash:h(1000+deposits.length),blockNumber:sourceTip,blockHash:h(sourceTip),from:x.holderAddress,to:x.depositAddress,value:10n**18n,input:"0x",...changes};deposits.push(tx);return tx.hash;},
     async settle(finalized=false,token=usdc){assert.ok(accepted);const tx=Transaction.from(broadcasts.at(-1));const [recipient,units]=iface.decodeFunctionData("transfer",tx.data);const b=destTip+1n;receipts.set(tx.hash,{status:"success",transactionHash:tx.hash,blockNumber:b,blockHash:h(b),logs:[transfer(token,tx.from,recipient,units,tx.hash,b)]});nonce=tx.nonce+1;tokenBalance-=units;if(finalized)destTip=b;await worker.tick();return tx;},
     async finalize(){destTip+=100n;await worker.tick();},
     async restart(){await worker.close();worker=createNftProcessor(settings,deps);await worker.tick();},
   };
 }
+
+test("NFT funding/network recovery preserves the reservation without restart or another transfer",async t=>{
+  const f=await fixture(t);await f.fund();
+  const invoice=await f.worker.issue(f.input()),getBlock=f.destination.getBlock;
+  assert.equal(f.worker.publicStatus().nftReadiness,"ready");
+  f.destination.getBlock=async()=>{throw new Error("temporary network outage");};
+  await assert.rejects(f.worker.tick());
+  assert.equal(f.worker.publicStatus().nftPaymentsEnabled,false);
+  assert.equal(f.worker.publicStatus().nftReadiness,"network-unavailable");
+  // A balance heartbeat cannot bypass the failed funding verification.
+  await f.worker.refreshReadiness();
+  assert.equal(f.worker.publicStatus().nftPaymentsEnabled,false);
+  f.destination.getBlock=getBlock;
+  await f.worker.tick();
+  assert.equal(f.worker.publicStatus().nftPaymentsEnabled,true);
+  assert.equal(f.worker.publicStatus().nftReadiness,"ready");
+  assert.equal(f.worker.get(invoice.id).depositAddress,invoice.depositAddress);
+  assert.equal(f.worker.get(invoice.id).subsidyUsdc,invoice.subsidyUsdc);
+  assert.equal(f.worker.publicStatus().availableClaims,2);
+  assert.equal(f.broadcasts.length,0);
+});
 
 for(const initiativeId of ["school-supplies","solar-foundation","vida-verde"])test(`NFT ${initiativeId}: exact recipient, restart, finality and no duplicate payout`,async t=>{
   const f=await fixture(t);await f.fund();
@@ -352,4 +374,97 @@ test("NFT issuance accepts only a trusted valid internal request ID and never al
   const id="a".repeat(64),x=await f.worker.issue(f.input(),id);assert.equal(x.id,id);
   await assert.rejects(f.worker.issue(f.input("2"),id),/already active/);
   assert.equal(f.worker.get(id).tokenId,"1");
+});
+
+test("a slow unpaid NFT discovery does not block another holder's verified payout",async t=>{
+  const f=await fixture(t);await f.fund();
+  const slow=await f.worker.issue(f.input());
+  f.setOwner(other);const ready=await f.worker.issue({...f.input("2"),holderAddress:other});f.deposit(ready);
+  const original=f.source.getBalance;let release,entered=false;
+  const gate=new Promise(resolve=>{release=resolve;});
+  f.source.getBalance=async args=>{
+    if(args.address===slow.depositAddress){entered=true;await gate;}
+    return original(args);
+  };
+  const tick=f.worker.tick();
+  try{
+    for(let i=0;i<50&&!f.broadcasts.length;i++)await new Promise(resolve=>setImmediate(resolve));
+    assert.equal(entered,true);assert.equal(f.broadcasts.length,1,"ready payout must progress before slow discovery resolves");
+    assert.equal(f.worker.get(ready.id).state,"paying");
+    assert.equal(f.worker.get(slow.id).state,"awaiting-payment");
+    assert.equal(f.worker.diagnostics()["nft-discovery"].inFlight,1);
+  }finally{release();await tick;}
+  assert.equal(f.worker.diagnostics()["nft-discovery"].inFlight,0);
+  await f.settle(true);assert.equal(f.worker.get(ready.id).state,"delivered");
+  await f.restart();assert.equal(f.broadcasts.length,1);
+});
+
+test("concurrent NFT proofs keep treasury estimation, nonce allocation and signing serialized",async t=>{
+  const f=await fixture(t);await f.fund();
+  const first=await f.worker.issue(f.input());f.setOwner(other);
+  const second=await f.worker.issue({...f.input("2"),holderAddress:other});
+  f.source.readContract=async args=>args.args[0]===1n?holder:other;
+  f.deposit(first);f.deposit(second);
+  let release,estimates=0;
+  const gate=new Promise(resolve=>{release=resolve;});
+  f.destination.estimateGas=async()=>{estimates++;await gate;return 60_000n;};
+  const tick=f.worker.tick();
+  try{
+    for(let i=0;i<50&&estimates===0;i++)await new Promise(resolve=>setImmediate(resolve));
+    for(let i=0;i<5;i++)await new Promise(resolve=>setImmediate(resolve));
+    assert.equal(estimates,1,"a second signing path must not enter while the first is preparing");
+    await f.worker.tick(); // Reentrant tick must not open a second queue.
+    assert.equal(estimates,1);
+  }finally{release();await tick;}
+  assert.equal(f.broadcasts.length,1);assert.equal(new Set(f.broadcasts).size,1);
+  const txOne=await f.settle(true);assert.equal(txOne.nonce,0);assert.equal(f.broadcasts.length,2);
+  const txTwo=await f.settle(true);assert.equal(txTwo.nonce,1);
+  assert.equal(f.worker.get(first.id).state,"delivered");assert.equal(f.worker.get(second.id).state,"delivered");
+  await f.restart();assert.equal(f.broadcasts.length,2);
+});
+
+test("performance snapshot is numeric only and never changes public invoice or pool terms",async t=>{
+  const f=await fixture(t);await f.fund();const invoice=await f.worker.issue(f.input());
+  const before=f.worker.get(invoice.id),status=f.worker.publicStatus();
+  const snapshot=f.worker.diagnostics();assert.ok(snapshot["nft-funding"].count>0);
+  assert.doesNotMatch(JSON.stringify(snapshot),new RegExp(`${invoice.id}|${invoice.depositAddress}|${holder}|privateKey|raw`,"i"));
+  assert.deepEqual(f.worker.get(invoice.id),before);assert.deepEqual(f.worker.publicStatus(),status);
+  assert.equal(f.broadcasts.length,0);assert.equal(status.diagnostics,undefined);
+});
+
+test("NFT heartbeat refreshes expired health without writing funding, proof or payout state",async t=>{
+  const f=await fixture(t);await f.fund();const invoice=await f.worker.issue(f.input());
+  const before=f.worker.get(invoice.id);f.elapse(61_000);
+  assert.equal(f.worker.publicStatus().poolHealthy,false);
+  await f.worker.refreshReadiness();assert.equal(f.worker.publicStatus().poolHealthy,true);
+  assert.deepEqual(f.worker.get(invoice.id),before);assert.equal(f.broadcasts.length,0);
+  f.setGas(0n);await f.worker.refreshReadiness();assert.equal(f.worker.publicStatus().nftPaymentsEnabled,false);
+  f.source.getChainId=async()=>1;await assert.rejects(f.worker.refreshReadiness(),/network/);
+  assert.equal(f.worker.publicStatus().poolHealthy,false);
+});
+
+test("NFT heartbeat cannot turn an unverified balance into funding or initialized health",async t=>{
+  const f=await fixture(t,{initialTick:false});f.destination.readContract=async()=>10000000n;
+  await f.worker.refreshReadiness();const status=f.worker.publicStatus();
+  assert.equal(status.poolHealthy,false);assert.equal(status.poolFunded,false);assert.equal(status.nftPaymentsEnabled,false);
+  assert.equal(f.broadcasts.length,0);
+});
+
+test("an escaped storage failure drains other NFT work before releasing the tick lock",async t=>{
+  const f=await fixture(t);await f.fund();const broken=await f.worker.issue(f.input());
+  f.setOwner(other);const slow=await f.worker.issue({...f.input("2"),holderAddress:other});
+  const db=new DatabaseSync(f.filename);
+  db.prepare("UPDATE nft_invoices SET document='invalid-json' WHERE id=?").run(broken.id);db.close();
+  const original=f.source.getBalance;let release,entered=0,finished=false;
+  const gate=new Promise(resolve=>{release=resolve;});
+  f.source.getBalance=async args=>{if(args.address===slow.depositAddress){entered++;await gate;}return original(args);};
+  // Attach rejection handling immediately; malformed storage is not a network retry.
+  const checked=assert.rejects(f.worker.tick(),SyntaxError).then(()=>{finished=true;});
+  try{
+    for(let i=0;i<10&&!entered;i++)await new Promise(resolve=>setImmediate(resolve));
+    assert.equal(entered,1);assert.equal(finished,false);
+    await f.worker.tick();assert.equal(entered,1,"a sibling must not outlive the processing lock");
+  }finally{release();await checked;}
+  assert.equal(f.worker.publicStatus().poolHealthy,false);
+  assert.equal(f.worker.diagnostics()["nft-tick"].inFlight,0);assert.equal(f.broadcasts.length,0);
 });

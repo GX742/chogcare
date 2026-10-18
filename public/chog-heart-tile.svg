@@ -1,21 +1,20 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="92" height="74" viewBox="0 0 92 74">
+<svg xmlns="http://www.w3.org/2000/svg" width="104" height="100" viewBox="0 0 104 100">
   <defs>
-    <linearGradient id="spectrum" gradientUnits="userSpaceOnUse" x1="0" y1="0" x2="92" y2="74">
+    <linearGradient id="spectrum" gradientUnits="userSpaceOnUse" x1="0" y1="0" x2="104" y2="100">
       <stop stop-color="#5e28c7"/>
       <stop offset=".35" stop-color="#8943ff"/>
       <stop offset=".65" stop-color="#d736b8"/>
       <stop offset="1" stop-color="#ff9eda"/>
     </linearGradient>
     <path id="heart" d="M12 21.5C10 19.7 1 13.8 1 7.8C1 1.8 8.3.1 12 5.4C15.7.1 23 1.8 23 7.8C23 13.8 14 19.7 12 21.5Z"/>
-    <mask id="grid" maskUnits="userSpaceOnUse" x="0" y="0" width="92" height="74">
+    <mask id="grid" maskUnits="userSpaceOnUse" x="0" y="0" width="104" height="100">
   <g fill="white" stroke="white" stroke-width=".65" stroke-linejoin="round">
-    <use href="#heart" x="-.5" y="-16.5"/><use href="#heart" x="22.5" y="-16.5"/><use href="#heart" x="45.5" y="-16.5"/><use href="#heart" x="68.5" y="-16.5"/>
-    <use href="#heart" x="-.5" y="2"/><use href="#heart" x="22.5" y="2"/><use href="#heart" x="45.5" y="2"/><use href="#heart" x="68.5" y="2"/>
-    <use href="#heart" x="-.5" y="20.5"/><use href="#heart" x="22.5" y="20.5"/><use href="#heart" x="45.5" y="20.5"/><use href="#heart" x="68.5" y="20.5"/>
-    <use href="#heart" x="-.5" y="39"/><use href="#heart" x="22.5" y="39"/><use href="#heart" x="45.5" y="39"/><use href="#heart" x="68.5" y="39"/>
-    <use href="#heart" x="-.5" y="57.5"/><use href="#heart" x="22.5" y="57.5"/><use href="#heart" x="45.5" y="57.5"/><use href="#heart" x="68.5" y="57.5"/>
+    <use href="#heart" x="1" y="2"/><use href="#heart" x="27" y="2"/><use href="#heart" x="53" y="2"/><use href="#heart" x="79" y="2"/>
+    <use href="#heart" x="1" y="27"/><use href="#heart" x="27" y="27"/><use href="#heart" x="53" y="27"/><use href="#heart" x="79" y="27"/>
+    <use href="#heart" x="1" y="52"/><use href="#heart" x="27" y="52"/><use href="#heart" x="53" y="52"/><use href="#heart" x="79" y="52"/>
+    <use href="#heart" x="1" y="77"/><use href="#heart" x="27" y="77"/><use href="#heart" x="53" y="77"/><use href="#heart" x="79" y="77"/>
   </g>
     </mask>
   </defs>
-  <rect width="92" height="74" fill="url(#spectrum)" mask="url(#grid)"/>
+  <rect width="104" height="100" fill="url(#spectrum)" mask="url(#grid)"/>
 </svg>

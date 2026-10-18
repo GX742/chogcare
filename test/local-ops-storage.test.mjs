@@ -86,6 +86,7 @@ test("fixed ACL script persists Access only, verifies exact private DACLs and ne
   assert.ok(!/\.(?:GetOwner|SetOwner|GetGroup|SetGroup|GetAuditRules|SetAuditRule)\(/.test(source));
   assert.ok(!/\b(?:Remove-Item|Invoke-Expression|Start-Process|icacls|Get-Content)\b/.test(source));
   assert.ok(!source.includes("-Recurse"));
+  assert.doesNotMatch(source, /^\s*(?:Import-Module|Get-Item|Get-ChildItem|Join-Path|Write-Output)\b/m, "Private ACL setup must not wait on first-run PowerShell module discovery");
 });
 
 test("native private DACL setup repeats under a normal Windows user without changing file contents", { skip: process.platform !== "win32" }, t => {

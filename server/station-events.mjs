@@ -3,8 +3,9 @@ import { createHash } from "node:crypto";
 import { existsSync, lstatSync, mkdirSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { atomic } from "./sqlite-transaction.mjs";
+import { openStationArrivals } from "./station-arrivals.mjs";
 
-export const STATION_NICKNAME_GRACE_MS = 30_000;
+export const STATION_NICKNAME_GRACE_MS = 8_000;
 export const STATION_MAX_LINE_BYTES = 384;
 const stationIdPattern = /^[a-f0-9]{24}$/;
 const invoiceIdPattern = /^[a-f0-9]{64}$/;
@@ -44,9 +45,18 @@ export function stationAmount(value) {
   return value;
 }
 
-export function stationDonation({ id, nick, amount }) {
+export const STATION_CAUSES = Object.freeze(["school-supplies", "vida-verde", "solar-foundation", "animal-ethics", "burundi"]);
+export function stationDonation({ id, nick, amount, cause, test }) {
   if (typeof id !== "string" || !stationIdPattern.test(id)) throw new Error("Invalid station event identity.");
   const payload = { v: 1, type: "donation", id, nick: stationNickname(nick), amount: stationAmount(amount) };
+  if (cause !== undefined) {
+    if (!STATION_CAUSES.includes(cause)) throw new Error("Unknown station initiative.");
+    payload.cause = cause;
+  }
+  if (test !== undefined) {
+    if (test !== true) throw new Error("Invalid station test marker.");
+    payload.test = true;
+  }
   if (Buffer.byteLength(JSON.stringify(payload), "utf8") > STATION_MAX_LINE_BYTES) throw new Error("Station command is too large.");
   return payload;
 }
@@ -63,7 +73,8 @@ function sourceRecord(row) {
   if (!invoice || invoice.id !== row.invoice_id || invoice.state !== "delivered" || typeof row.event_id !== "string" || !row.event_id.length) throw new Error("Station source is not a finalized donation.");
   const amount = stationAmount(invoice.donationAmount ?? invoice.amount);
   const fingerprint = digest(JSON.stringify([row.sequence, row.event_id, row.invoice_id, amount]));
-  return { sequence: row.sequence, invoiceId: row.invoice_id, amount, fingerprint, id: digest(`chogcare-station-v1:${fingerprint}`).slice(0, 24) };
+  const cause = STATION_CAUSES.includes(invoice.initiativeId) ? invoice.initiativeId : undefined;
+  return { sequence: row.sequence, invoiceId: row.invoice_id, amount, cause, fingerprint, id: digest(`chogcare-station-v1:${fingerprint}`).slice(0, 24) };
 }
 
 /**
@@ -114,46 +125,54 @@ export function openStationEvents({ processorFilename, profileFilename, stationF
       return cursor;
     };
     assertCursor();
+    const arrivals = openStationArrivals({ source, sidecar, profile, started: Number(getMeta("started")), amount: stationAmount, donation: stationDonation, causes: STATION_CAUSES, grace: STATION_NICKNAME_GRACE_MS });
     let healthy = false, closed = false;
     return {
       sync(isHealthy, timestamp = Date.now()) {
         healthy = isHealthy === true;
         if (closed || !healthy) return 0;
         const cursor = assertCursor(), rows = after.all(cursor), events = rows.map(sourceRecord);
+        let added = 0;
         atomic(sidecar, () => {
           for (const event of events) {
             const nickname = profile.get(event.invoiceId)?.nickname;
-            sidecar.prepare("INSERT INTO station_events VALUES (?,?,?,?,?,?,?,?,'pending',NULL)").run(event.id, event.sequence, event.fingerprint, event.amount, typeof nickname === "string" ? stationNickname(nickname) : null, null, timestamp, typeof nickname === "string" ? timestamp : timestamp + STATION_NICKNAME_GRACE_MS);
+            if (!arrivals.has(event.invoiceId)) {
+              sidecar.prepare("INSERT INTO station_events VALUES (?,?,?,?,?,?,?,?,'pending',NULL)").run(event.id, event.sequence, event.fingerprint, event.amount, typeof nickname === "string" ? stationNickname(nickname) : null, null, timestamp, typeof nickname === "string" ? timestamp : timestamp + STATION_NICKNAME_GRACE_MS);
+              added++;
+            }
             setMeta("cursor", event.sequence); setMeta("anchor", event.fingerprint);
           }
+          added += arrivals.sync(timestamp);
         });
-        return events.length;
+        return added;
       },
-      next(timestamp = Date.now()) {
+      next(timestamp = Date.now(), pendingId = null) {
         if (closed || !healthy) return null;
         assertCursor();
+        if (pendingId && arrivals.owns(pendingId)) return arrivals.next(timestamp, pendingId);
         const row = sidecar.prepare("SELECT * FROM station_events WHERE state='pending' ORDER BY source_sequence LIMIT 1").get();
-        if (!row) return null;
+        if (!row) return arrivals.next(timestamp);
         const sourceEvent = sourceRecord(at.get(row.source_sequence));
         if (sourceEvent.fingerprint !== row.fingerprint || sourceEvent.id !== row.id || sourceEvent.amount !== row.amount) throw new Error("Station pending event identity changed.");
         if (row.payload) {
           const result = stationDonation(JSON.parse(row.payload));
-          if (JSON.stringify(result) !== row.payload || result.id !== row.id || result.amount !== row.amount) throw new Error("Station outbox integrity mismatch.");
+          if (JSON.stringify(result) !== row.payload || result.id !== row.id || result.amount !== row.amount || result.test !== undefined || (result.cause !== undefined && result.cause !== sourceEvent.cause)) throw new Error("Station outbox integrity mismatch.");
           return result;
         }
         const nickname = profile.get(sourceEvent.invoiceId)?.nickname ?? row.nickname;
         if (!nickname && timestamp < row.ready_at) return null;
-        const payload = stationDonation({ id: row.id, nick: nickname, amount: row.amount });
+        const payload = stationDonation({ id: row.id, nick: nickname, amount: row.amount, cause: sourceEvent.cause });
         sidecar.prepare("UPDATE station_events SET payload=? WHERE id=? AND payload IS NULL").run(JSON.stringify(payload), row.id);
         return payload;
       },
       complete(id, timestamp = Date.now()) {
         if (closed || !stationIdPattern.test(id ?? "")) throw new Error("Invalid station completion.");
+        if (arrivals.complete(id, timestamp)) return;
         const row = sidecar.prepare("SELECT payload,state FROM station_events WHERE id=?").get(id);
         if (!row?.payload) throw new Error("Station completion has no queued payload.");
         sidecar.prepare("UPDATE station_events SET state='done',completed_at=? WHERE id=? AND state='pending'").run(timestamp, id);
       },
-      summary() { return { pending: sidecar.prepare("SELECT COUNT(*) AS n FROM station_events WHERE state='pending'").get().n, completed: sidecar.prepare("SELECT COUNT(*) AS n FROM station_events WHERE state='done'").get().n, cursor: Number(getMeta("cursor")) }; },
+      summary() { return { pending: sidecar.prepare("SELECT COUNT(*) AS n FROM station_events WHERE state='pending'").get().n + arrivals.count("pending"), completed: sidecar.prepare("SELECT COUNT(*) AS n FROM station_events WHERE state='done'").get().n + arrivals.count("done"), cursor: Number(getMeta("cursor")) }; },
       close() { if (closed) return; closed = true; healthy = false; sidecar.close(); profiles.close(); source.close(); },
     };
   } catch (error) { sidecar?.close(); profiles?.close(); source?.close(); throw error; }

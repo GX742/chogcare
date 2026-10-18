@@ -13,8 +13,8 @@ export type CreationInput = { mode: CheckoutMode; amount: string; holderAddress:
 export type PendingCreation = { key: string; input: CreationInput };
 type SessionStore = Pick<Storage, "getItem" | "setItem" | "removeItem">;
 export function validInvoiceId(id: unknown): id is string { return typeof id === "string" && id.length === 64 && /^[a-f0-9]{64}$/.test(id); }
-export function assertUnpaidCheckout(id: string, invoice: { id: string; state: string; depositHash?: string | null; destinationHash?: string | null; observedDestinationHash?: string | null }) {
-  if (!validInvoiceId(id) || invoice.id !== id || invoice.state !== "awaiting-payment" || invoice.depositHash || invoice.destinationHash || invoice.observedDestinationHash) throw new Error("This payment may be processing. Keep it open; do not pay again.");
+export function assertUnpaidCheckout(id: string, invoice: { id: string; state: string; depositHash?: string | null; bridgeHash?: string | null; destinationHash?: string | null; observedDestinationHash?: string | null }, { allowExpired = false } = {}) {
+  if (!validInvoiceId(id) || invoice.id !== id || (invoice.state !== "awaiting-payment" && !(allowExpired && invoice.state === "expired")) || invoice.depositHash || invoice.bridgeHash || invoice.destinationHash || invoice.observedDestinationHash) throw new Error("This payment may be processing. Keep it open; do not pay again.");
 }
 const uuid = /^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/i;
 function announce() { if (typeof window !== "undefined") window.dispatchEvent(new Event(checkoutChanged)); }
@@ -36,14 +36,18 @@ export function pendingCreation(mode: CheckoutMode, storage = currentStore()): P
     (value.input.tokenId !== undefined && typeof value.input.tokenId !== "string")) throw new Error("Saved payment request is invalid. Contact the operator before paying.");
   return value;
 }
+export function savedCheckoutModes(storage = currentStore()) {
+  return { chog: !!(storage.getItem(activeInvoiceKeys.chog) || storage.getItem(pendingKeys.chog)), nft: !!(storage.getItem(activeInvoiceKeys.nft) || storage.getItem(pendingKeys.nft)) };
+}
 export function checkoutSelection(requestedCause = "burundi", preferred?: CheckoutMode, storage = currentStore()) {
-  const outstanding = { chog: !!(storage.getItem(activeInvoiceKeys.chog) || storage.getItem(pendingKeys.chog)), nft: !!(storage.getItem(activeInvoiceKeys.nft) || storage.getItem(pendingKeys.nft)) };
+  const outstanding = savedCheckoutModes(storage);
   const storedMode = storage.getItem(preferredKey);
-  const wanted = preferred || (storedMode === "nft" ? "nft" : "chog");
-  const mode: CheckoutMode = outstanding[wanted] ? wanted : outstanding.chog ? "chog" : outstanding.nft ? "nft" : wanted;
+  // Explicit tab selection is navigation, not cancellation or a new invoice.
+  // Only the selected mode pins its own cause; the other mode stays recoverable.
+  const mode: CheckoutMode = preferred ?? (storedMode === "nft" || storedMode === "chog" ? storedMode : outstanding.chog ? "chog" : outstanding.nft ? "nft" : "chog");
   const activeCause = storage.getItem(causeKey(mode)) || pendingCreation(mode,storage)?.input.initiativeId || "burundi";
   if (outstanding[mode] && !(mode === "chog" ? supportsChog(activeCause) : supportsNft(activeCause))) throw new Error("Saved payment initiative is invalid.");
-  return { mode, initiativeId: outstanding.chog || outstanding.nft ? activeCause : requestedCause, outstanding: outstanding.chog || outstanding.nft };
+  return { mode, initiativeId: outstanding[mode] ? activeCause : requestedCause, outstanding: outstanding.chog || outstanding.nft };
 }
 export function rememberMode(mode: CheckoutMode, storage = currentStore()) { storage.setItem(preferredKey, mode); }
 export function beginCreation(input: CreationInput, storage = currentStore()): PendingCreation {

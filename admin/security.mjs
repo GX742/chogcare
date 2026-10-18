@@ -23,7 +23,7 @@ export async function assetPath(root, target) {
   return canonicalFile;
 }
 export function safeExternalTarget(target) {
-  if (target === "website") return "https://chogcare.vercel.app";
-  if (target === "dashboard") return "https://chogcare.vercel.app/dashboard";
+  if (target === "website") return "https://chogcare.xyz";
+  if (target === "dashboard") return "https://chogcare.xyz/dashboard";
   throw Error("Unknown destination.");
 }

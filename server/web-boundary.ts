@@ -11,7 +11,7 @@ export function contentSecurityPolicy(developmentNonce?: string): string {
     // MSE and the hls.js worker use blob URLs. Never allow arbitrary hosts;
     // the deployed Vercel policy does not include these loopback exceptions.
     "font-src 'self'", `connect-src 'self' https://chogcare-stream.tail1f833b.ts.net http://127.0.0.1:8080 http://localhost:8080${developmentNonce ? " ws://127.0.0.1:* ws://localhost:*" : ""}`,
-    "form-action 'none'", "worker-src 'self' blob:", "media-src blob: https://chogcare-stream.tail1f833b.ts.net http://127.0.0.1:8080 http://localhost:8080", "manifest-src 'self'",
+    "form-action 'none'", "worker-src 'self' blob:", "media-src 'self' blob: https://chogcare-stream.tail1f833b.ts.net http://127.0.0.1:8080 http://localhost:8080", "manifest-src 'self'",
   ].join("; ");
 }
 

@@ -1,6 +1,7 @@
 import { keccak256 } from "viem";
 import { atomic } from "./sqlite-transaction.mjs";
 import { Transaction } from "ethers";
+import {SOURCE_GAS_GRANT,LEGACY_SOURCE_GAS_GRANT,sourceGasGrant} from "./source-gas-policy.mjs";
 
 // Serialized bytes stay private. A transport timeout never creates a new nonce.
 export function sourceJournal(db) {
@@ -17,7 +18,11 @@ export function sourceJournal(db) {
       if(!/^[a-f0-9]{64}$/.test(id) || !["gas","approve-chog","sell","swap","pool-contribution","approve-usdc","bridge","pool-gas","pool-approve","pool-bridge"].includes(phase) ||
         !tx.isSigned() || tx.chainId!==143n || tx.type!==2 || tx.from.toLowerCase()!==sender.toLowerCase() || tx.nonce!==nonce ||
         !tx.to || tx.accessList?.length || tx.gasLimit<21_000n || tx.gasLimit>1_500_000n || tx.maxFeePerGas<=0n || tx.maxFeePerGas>500_000_000_000n || tx.maxPriorityFeePerGas>tx.maxFeePerGas ||
-        (phase==="gas" ? tx.value!==5n*10n**18n || tx.data!=="0x" : phase==="pool-gas" ? tx.value!==1n*10n**18n || tx.data!=="0x" : phase!=="swap" && tx.value!==0n))throw new Error("Invalid signed source transaction.");
+        (phase==="gas" ? ![LEGACY_SOURCE_GAS_GRANT,SOURCE_GAS_GRANT].includes(tx.value) || tx.data!=="0x" : phase==="pool-gas" ? tx.value!==1n*10n**18n || tx.data!=="0x" : phase!=="swap" && tx.value!==0n))throw new Error("Invalid signed source transaction.");
+      if(phase==="gas"&&tx.value===SOURCE_GAS_GRANT){
+        const invoice=db.prepare("SELECT document FROM chog_invoices WHERE id=?").get(id);
+        if(!invoice||sourceGasGrant(JSON.parse(invoice.document))!==SOURCE_GAS_GRANT)throw new Error("Gas funding does not match the persisted invoice.");
+      }
       return atomic(db,()=>{
         const hash=keccak256(raw), day=new Date(now).toISOString().slice(0,10);
         const old=this.get(id,phase);

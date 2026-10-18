@@ -17,10 +17,10 @@ export class NonCanonicalReceiptError extends Error {
 
 // Inclusion and finality are distinct. An included, canonical transfer can be
 // shown as pending confirmation, but must never authorize a completed payout.
-export async function inspectReceipt(client, chainId, txHash) {
+export async function inspectReceipt(client, chainId, txHash, observedReceipt) {
   if (!hash(txHash) || ![1, 10, 143].includes(chainId)) throw new Error("Invalid transaction reference.");
   const [receipt, finalized, actualChain] = await Promise.all([
-    client.getTransactionReceipt({ hash: txHash }), client.getBlock({ blockTag: "finalized" }), client.getChainId(),
+    observedReceipt ?? client.getTransactionReceipt({ hash: txHash }), client.getBlock({ blockTag: "finalized" }), client.getChainId(),
   ]);
   if(actualChain !== chainId) throw new Error("Wrong RPC network.");
   if (receipt.status !== "success" || !same(receipt.transactionHash, txHash) || !hash(receipt.blockHash) ||
@@ -31,8 +31,8 @@ export async function inspectReceipt(client, chainId, txHash) {
   return { receipt, block, finalized: receipt.blockNumber <= finalized.number };
 }
 
-export async function finalizedReceipt(client, chainId, txHash) {
-  const result=await inspectReceipt(client,chainId,txHash);
+export async function finalizedReceipt(client, chainId, txHash, observedReceipt) {
+  const result=await inspectReceipt(client,chainId,txHash,observedReceipt);
   if(!result.finalized)throw new AwaitingFinalityError();
   return {receipt:result.receipt,block:result.block};
 }

@@ -28,7 +28,7 @@ only the latest three source segments to the encoder, never a long archive.
 Its only upstream is the fixed local Owncast video playlist; paths and segment
 names are strictly validated, redirects and environment proxies are refused.
 The public gateway has no route to this helper.
-The browser targets two segments behind the published edge and limits drift;
+The browser targets three segments behind the published edge and limits drift;
 native Safari also catches substantial accumulated lag after playback starts.
 This is ordinary HLS, so total camera-to-viewer delay still includes segment
 completion, re-encoding, transport and the player's safety buffer.

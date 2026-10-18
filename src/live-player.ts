@@ -1,7 +1,7 @@
 import type { HlsConfig } from "hls.js";
 
 export const DEFAULT_LIVE_SEGMENT_SECONDS = 3;
-export const LIVE_SYNC_SEGMENT_COUNT = 2;
+export const LIVE_SYNC_SEGMENT_COUNT = 3;
 export const LIVE_MAX_LATENCY_SEGMENT_COUNT = 6;
 
 // Let portrait camera footage fill its frame without cropping the terminal.
@@ -27,10 +27,10 @@ export function liveHlsConfig(): Partial<HlsConfig> {
     lowLatencyMode: true,
     liveSyncDurationCount: LIVE_SYNC_SEGMENT_COUNT,
     liveMaxLatencyDurationCount: LIVE_MAX_LATENCY_SEGMENT_COUNT,
-    maxLiveSyncPlaybackRate: 1.08,
+    maxLiveSyncPlaybackRate: 1.03,
     liveSyncOnStallIncrease: 0,
-    maxBufferLength: 4,
-    maxMaxBufferLength: 8,
+    maxBufferLength: 6,
+    maxMaxBufferLength: 10,
     backBufferLength: 4,
   };
 }
@@ -114,7 +114,7 @@ export function safeLiveResumeTarget(
   const segment = liveSegmentSeconds(segmentSeconds);
   const span = range.end - range.start;
   // Never jump to the very last frame. Use the library's safe position when it
-  // is available; Safari's native player falls back to two complete segments.
+  // is available; Safari's native player falls back to three complete segments.
   const maximum = range.end - Math.min(segment, span);
   const suggested = typeof liveSyncPosition === "number" && Number.isFinite(liveSyncPosition) &&
     liveSyncPosition >= range.start && liveSyncPosition < range.end

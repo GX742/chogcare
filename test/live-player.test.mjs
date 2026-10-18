@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { createLiveLoadState, createLiveResumeSync, createLiveRetryBudget, DEFAULT_LIVE_SEGMENT_SECONDS, latestLiveRange, liveHlsConfig, livePlaybackStrategy, liveSegmentSeconds, portraitFrameAspect, recoverLiveNetwork, safeLiveResumeTarget } from "../src/live-player.ts";
+import { createLiveDriftSync, createLiveLoadState, createLiveResumeSync, createLiveRetryBudget, DEFAULT_LIVE_SEGMENT_SECONDS, latestLiveRange, liveHlsConfig, livePlaybackStrategy, liveSegmentSeconds, portraitFrameAspect, recoverLiveNetwork, safeLiveResumeTarget } from "../src/live-player.ts";
 
 test("portrait camera frame uses the actual ratio without scaling/cropping landscape fallback footage", () => {
   assert.equal(portraitFrameAspect(1080, 1920), 9 / 16);
@@ -30,42 +30,42 @@ test("Safari uses native HLS even when ManagedMediaSource makes hls.js appear su
 
 test("live HLS uses adaptive segment-count latency with a finite recovery threshold", () => {
   const config = liveHlsConfig();
-  assert.equal(config.liveSyncDurationCount, 3);
-  assert.equal(config.liveMaxLatencyDurationCount, 12);
+  assert.equal(config.liveSyncDurationCount, 2);
+  assert.equal(config.liveMaxLatencyDurationCount, 6);
   assert.ok(config.liveMaxLatencyDurationCount > config.liveSyncDurationCount);
-  assert.equal(config.maxLiveSyncPlaybackRate, 1);
-  assert.equal(config.liveSyncOnStallIncrease, 1);
-  assert.equal(config.maxBufferLength, 8);
-  assert.equal(config.maxMaxBufferLength, 16);
-  assert.equal(config.backBufferLength, 8);
+  assert.equal(config.maxLiveSyncPlaybackRate, 1.08);
+  assert.equal(config.liveSyncOnStallIncrease, 0);
+  assert.equal(config.maxBufferLength, 4);
+  assert.equal(config.maxMaxBufferLength, 8);
+  assert.equal(config.backBufferLength, 4);
   assert.equal(config.lowLatencyMode, true);
   assert.equal(config.enableWorker, true);
   for (const property of ["liveSyncDuration", "liveMaxLatencyDuration", "startLevel", "loadLevel", "currentLevel", "capLevelToPlayerSize"]) assert.equal(Object.hasOwn(config, property), false, property);
-  assert.equal(config.liveSyncDurationCount * 3, 9, "Current 3s segments retain a stable 9s client target");
-  assert.equal(config.liveSyncDurationCount * 1, 3, "Shorter server segments lower latency without mixing seconds and counts");
+  assert.equal(config.liveSyncDurationCount * 3, 6, "Legacy 3s segments retain a bounded client target");
+  assert.equal(config.liveSyncDurationCount * 1, 2, "The current one-second segments target two seconds behind the playlist");
   config.maxBufferLength = 999;
-  assert.equal(liveHlsConfig().maxBufferLength, 8, "Each player receives its own configuration");
+  assert.equal(liveHlsConfig().maxBufferLength, 4, "Each player receives its own configuration");
 });
 
-test("native HLS resumes three complete segments behind the seekable live edge", () => {
+test("native HLS resumes two complete segments behind the seekable live edge", () => {
   assert.equal(DEFAULT_LIVE_SEGMENT_SECONDS, 3);
-  assert.equal(safeLiveResumeTarget(20, ranges([0, 100])), 91);
-  assert.equal(safeLiveResumeTarget(20, ranges([0, 100]), 1), 97);
-  assert.equal(safeLiveResumeTarget(0, ranges([80, 100])), 91);
+  assert.equal(safeLiveResumeTarget(20, ranges([0, 100])), 94);
+  assert.equal(safeLiveResumeTarget(20, ranges([0, 100]), 1), 98);
+  assert.equal(safeLiveResumeTarget(0, ranges([80, 100])), 94);
   assert.equal(safeLiveResumeTarget(1, ranges([10, 12])), 10, "A short window clamps to its safe start");
 });
 
 test("safe resume accepts a bounded HLS sync point without seeking to the last frame", () => {
   assert.equal(safeLiveResumeTarget(20, ranges([0, 100]), 3, 88), 88);
   assert.equal(safeLiveResumeTarget(20, ranges([0, 100]), 3, 99.9), 97);
-  for (const hint of [-1, 100, 1000, NaN, Infinity]) assert.equal(safeLiveResumeTarget(20, ranges([0, 100]), 3, hint), 91);
+  for (const hint of [-1, 100, 1000, NaN, Infinity]) assert.equal(safeLiveResumeTarget(20, ranges([0, 100]), 3, hint), 94);
 });
 
 test("live resume never rewinds, never skips small fluctuations and chooses the latest range", () => {
-  for (const time of [89, 90, 91, 95, 100, 101]) assert.equal(safeLiveResumeTarget(time, ranges([0, 100])), null, String(time));
-  assert.equal(safeLiveResumeTarget(88, ranges([0, 100])), 91);
-  assert.equal(safeLiveResumeTarget(10, ranges([0, 20], [70, 100])), 91);
-  assert.equal(safeLiveResumeTarget(89, ranges([90, 100])), 91, "A playhead outside the sliding window can move into the safe range");
+  for (const time of [92, 93, 94, 95, 100, 101]) assert.equal(safeLiveResumeTarget(time, ranges([0, 100])), null, String(time));
+  assert.equal(safeLiveResumeTarget(91, ranges([0, 100])), 94);
+  assert.equal(safeLiveResumeTarget(10, ranges([0, 20], [70, 100])), 94);
+  assert.equal(safeLiveResumeTarget(89, ranges([90, 100])), 94, "A playhead outside the sliding window can move into the safe range");
   assert.equal(safeLiveResumeTarget(99.5, ranges([100, 100.5])), 100);
 });
 
@@ -133,14 +133,14 @@ test("resume synchronizes once after metadata becomes seekable, not on every pla
   assert.equal(timer.size, 1);
   media.seekable = ranges([0, 100]);
   sync.update();
-  assert.equal(media.currentTime, 91);
+  assert.equal(media.currentTime, 94);
   assert.equal(sync.pending, false);
   assert.equal(timer.size, 0);
   media.seekable = ranges([0, 110]);
   sync.update();
-  assert.equal(media.currentTime, 91, "A normal playlist update is not an extra jump");
+  assert.equal(media.currentTime, 94, "A normal playlist update is not an extra jump");
   sync.request();
-  assert.equal(media.currentTime, 101, "An explicit later resume can catch up again");
+  assert.equal(media.currentTime, 104, "An explicit later resume can catch up again");
   sync.dispose();
 });
 
@@ -202,4 +202,29 @@ test("initial manifest errors retry the manifest request rather than an ineffect
   recoverLiveNetwork(loader, source, "levelLoadError");
   recoverLiveNetwork(loader, source, "fragLoadError");
   assert.deepEqual(requests, [["manifest", source], ["manifest", source], ["load"], ["load"]], "Established playback keeps adaptive level/fragment loading");
+});
+
+test("native playback catches substantial drift, leaves small drift alone and rate-limits seeks", () => {
+  const timer = fakeTimers(); let now = 0;
+  const media = { currentTime: 97, seekable: ranges([75, 100]), paused: false, ended: false, seeking: false, readyState: 4 };
+  const sync = createLiveDriftSync({ media, segmentSeconds: () => 1, now: () => now, schedule: timer.schedule, cancel: timer.cancel });
+  sync.start(); sync.start(); assert.equal(timer.size, 1);
+  timer.fire(); assert.equal(media.currentTime, 97, "Normal playback must not hop every update");
+  media.currentTime = 70; timer.fire(); assert.equal(media.currentTime, 98);
+  media.seekable = ranges([95, 120]); timer.fire(); assert.equal(media.currentTime, 98, "A stalled connection cannot trigger repeated immediate seeks");
+  now = 10_000; timer.fire(); assert.equal(media.currentTime, 118);
+  sync.dispose(); assert.equal(timer.size, 0); sync.start(); assert.equal(timer.size, 0);
+});
+
+test("native drift correction respects visibility, pause, seeking and unavailable media", () => {
+  const timer = fakeTimers(); let active = false;
+  const media = { currentTime: 70, seekable: ranges([75, 100]), paused: false, ended: false, seeking: false, readyState: 4 };
+  const sync = createLiveDriftSync({ media, active: () => active, segmentSeconds: () => 1, schedule: timer.schedule, cancel: timer.cancel });
+  sync.start(); timer.fire(); assert.equal(media.currentTime, 70);
+  active = true;
+  for (const property of ["paused", "ended", "seeking"]) { media[property] = true; timer.fire(); assert.equal(media.currentTime, 70); media[property] = false; }
+  media.readyState = 1; timer.fire(); assert.equal(media.currentTime, 70);
+  media.readyState = 4; media.seekable = ranges(); timer.fire(); assert.equal(media.currentTime, 70);
+  media.seekable = ranges([75, 100]); timer.fire(); assert.equal(media.currentTime, 98);
+  sync.dispose();
 });

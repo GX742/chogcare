@@ -17,7 +17,7 @@ import Leaderboard from "./Leaderboard";
 import SupportDialog from "./SupportDialog";
 import BroadcastPreview from "./BroadcastPreview";
 import type { SupportContext } from "./support-model";
-import { createLiveLoadState, createLiveResumeSync, createLiveRetryBudget, liveHlsConfig, livePlaybackStrategy, liveSegmentSeconds, portraitFrameAspect, recoverLiveNetwork, DEFAULT_LIVE_SEGMENT_SECONDS, type LiveLoadState } from "./live-player";
+import { createLiveDriftSync, createLiveLoadState, createLiveResumeSync, createLiveRetryBudget, liveHlsConfig, livePlaybackStrategy, liveSegmentSeconds, portraitFrameAspect, recoverLiveNetwork, DEFAULT_LIVE_SEGMENT_SECONDS, type LiveLoadState } from "./live-player";
 import { broadcastPreviewUrl, broadcastStreamUrl } from "./broadcast-source";
 
 import "./station-redesign.css";
@@ -190,7 +190,9 @@ function NativeLivePlayer({ src, onReady, onWaiting, onAspect }: { src: string; 
   useEffect(() => {
     const video = videoRef.current;
     if (!video) return;
-    let cancelled = false, wasHidden = document.hidden, segmentSeconds = DEFAULT_LIVE_SEGMENT_SECONDS;
+    // The dedicated mobile encoder emits one-second segments. Native Safari
+    // does not emit hls.js LEVEL_UPDATED, so it needs this actual duration too.
+    let cancelled = false, wasHidden = document.hidden, segmentSeconds = src.endsWith("/hls/mobile/stream.m3u8") ? 1 : DEFAULT_LIVE_SEGMENT_SECONDS;
     let hls: HlsType | null = null, retryTimer: ReturnType<typeof setTimeout> | null = null;
     let lastRecovery: (() => void) | null = null, recoveryHeld = false;
     const nativeHlsCapable = Boolean(video.canPlayType("application/vnd.apple.mpegurl"));
@@ -207,13 +209,14 @@ function NativeLivePlayer({ src, onReady, onWaiting, onAspect }: { src: string; 
     const loadMonitor = createLiveLoadState({ onChange: state => { if (!cancelled) setLoadState(state); } });
     const retryBudget = createLiveRetryBudget();
     const resumeSync = createLiveResumeSync({ media: video, segmentSeconds: () => segmentSeconds, liveSyncPosition: () => hls?.liveSyncPosition ?? null });
+    const driftSync = createLiveDriftSync({ media: video, active: () => nativeActive && !document.hidden, segmentSeconds: () => segmentSeconds });
     const waiting = () => { if (!cancelled) { if (document.hidden) loadMonitor.suspend(); else loadMonitor.waiting(); callbacks.current.onWaiting(); } };
     const updateAspect = () => {
       // iPhone can report its decoded dimensions after loadedmetadata, and
       // quality switches can emit resize without another metadata event.
       if (!cancelled && video.videoWidth > 0 && video.videoHeight > 0) callbacks.current.onAspect(portraitFrameAspect(video.videoWidth, video.videoHeight));
     };
-    const playing = () => { if (!cancelled) { updateAspect(); setHasFrame(true); loadMonitor.playing(); callbacks.current.onReady(); } };
+    const playing = () => { if (!cancelled) { updateAspect(); setHasFrame(true); loadMonitor.playing(); if (nativeActive) driftSync.start(); callbacks.current.onReady(); } };
     const pausedPlayback = () => { if (!cancelled && !document.hidden && !video.ended) { loadMonitor.blocked(); callbacks.current.onWaiting(); } };
     const endedPlayback = () => { if (!cancelled) { loadMonitor.unavailable(); callbacks.current.onWaiting(); } };
     const startPlayback = () => {
@@ -318,6 +321,7 @@ function NativeLivePlayer({ src, onReady, onWaiting, onAspect }: { src: string; 
       if (retryTimer !== null) clearTimeout(retryTimer);
       retryBudget.dispose();
       resumeSync.dispose();
+      driftSync.dispose();
       video.removeEventListener("loadedmetadata", metadata);
       video.removeEventListener("loadeddata", updateAspect);
       video.removeEventListener("resize", updateAspect);

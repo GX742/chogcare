@@ -66,7 +66,7 @@
     "hardhat": "3.18.1",
     "solc": "0.8.37",
     "typescript": "7.0.2",
-    "vite": "8.3.3"
+    "vite": "8.3.4"
   },
   "overrides": {
     "@electron/get@3.1.0": {

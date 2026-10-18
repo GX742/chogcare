@@ -12,6 +12,7 @@ struct Command {
   char amount[27] = {};
   char cause[20] = {};
   bool test = false;
+  bool live = false;
 };
 
 inline bool validId(const char *value) {
@@ -104,6 +105,11 @@ class Parser {
         bit = 64; skip();
         if (strncmp(cursor, "true", 4)) return false;
         cursor += 4; result.test = true;
+      } else if (!strcmp(key, "live")) {
+        bit = 128; skip();
+        if (!strncmp(cursor, "true", 4)) { cursor += 4; result.live = true; }
+        else if (!strncmp(cursor, "false", 5)) cursor += 5;
+        else return false;
       } else return false;
       if (seen & bit) return false;
       seen |= bit;
@@ -115,8 +121,8 @@ class Parser {
     skip();
     if (*cursor) return false;
     if (result.type == Type::Ping) {
-      if (seen != 3) return false;
-    } else if ((seen & 31) != 31 || !validId(result.id) ||
+      if (seen != 3 && seen != 131) return false;
+    } else if ((seen & 128) || (seen & 31) != 31 || !validId(result.id) ||
                !validAmount(result.amount) || !validNickname(result.nick)) return false;
     out = result;
     return true;

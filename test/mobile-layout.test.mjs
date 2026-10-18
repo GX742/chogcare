@@ -163,7 +163,7 @@ test("mobile header is fixed, opaque, safe-area padded and shows the creator ava
   assert.match(mobile, /padding-top: calc\(76px \+ env\(safe-area-inset-top\)\)/);
   assert.match(mobile, /creator > img \{ display: block/);
   assert.match(mobile, /heart-field \{ clip-path: inset\(calc\(76px/);
-  assert.match(read("../src/App.tsx"), /src="\/gx-avatar.png" alt="GX avatar"/);
+  assert.match(read("../src/App.tsx"), /<img\b[^>]*src="\/gx-avatar\.png"[^>]*alt="GX avatar"[^>]*>/);
 });
 
 test("phone heart glyphs have real horizontal and vertical gutters, including the fallback tile", () => {

@@ -1,0 +1,9 @@
+title = "ChogCare source and history secret scanning"
+
+[extend]
+useDefault = true
+
+[[allowlists]]
+description = "The public CHOG ERC-20 contract address is not a credential"
+regexTarget = "secret"
+regexes = ['''(?i)^0x350035555e10d9afaf1566aaebfced5ba6c27777$''']

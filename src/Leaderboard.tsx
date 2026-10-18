@@ -64,7 +64,7 @@ export default function Leaderboard() {
       {loading && !entries.length ? <div className="leaderboard-loading" aria-label="Loading leaderboard"><span/><span/><span/></div> :
         entries.length ? <ol>{entries.map(entry => <li key={`${entry.rank}-${entry.nickname}-${entry.amount}`}>
           <b>{String(entry.rank).padStart(2, "0")}</b>
-          <img src={entry.avatarImage || "/chog-donation-coin.png"} alt={entry.avatarName || "ChogCare badge"} referrerPolicy="no-referrer" onError={event => { if (!event.currentTarget.src.endsWith("/chog-donation-coin.png")) event.currentTarget.src = "/chog-donation-coin.png"; }}/>
+          <img src={entry.avatarImage || "/chog-donation-coin.png"} loading="lazy" alt={entry.avatarName || "ChogCare badge"} referrerPolicy="no-referrer" onError={event => { if (!event.currentTarget.src.endsWith("/chog-donation-coin.png")) event.currentTarget.src = "/chog-donation-coin.png"; }}/>
           <div><strong>{entry.nickname}</strong></div>
           <p title={`${entry.amount} $CHOG`}>{formatChogAmount(entry.amount)}<small>$CHOG</small></p>
         </li>)}</ol> :

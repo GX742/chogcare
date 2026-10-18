@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
-import { createStationController, parseStationArgs, stationWorkerHealthy, validStationDeviceMessage } from "../scripts/station-bridge.mjs";
+import { createStationController, parseStationArgs, stationWorkerHealthy, stationBroadcastLive, validStationDeviceMessage } from "../scripts/station-bridge.mjs";
 
 const donation = { v: 1, type: "donation", id: "a".repeat(24), nick: "GX", amount: "300" };
 function controller() {
@@ -116,6 +116,32 @@ test("initiative scenes are negotiated without breaking old device schemas", () 
   fresh.device.resetConnection(); fresh.device.receive({v:1,type:"pong"}); fresh.device.tick(true);
   assert.deepEqual(fresh.wires.at(-1), donation, "reconnecting to legacy firmware drops only display metadata");
   for (const scenes of [0,1,3,"2",null,true]) assert.equal(validStationDeviceMessage({v:1,type:"pong",scenes}),false);
+});
+
+test("live status is negotiated separately and never changes a donation payload", () => {
+  const old = controller(); old.device.receive({v:1,type:"pong",scenes:2}); old.device.tick(false,true);
+  assert.deepEqual(old.wires.at(-1),{v:1,type:"ping"});
+  const fresh = controller(); fresh.device.receive({v:1,type:"hello",last:"",scenes:2,idle:1}); fresh.device.tick(false,true);
+  assert.deepEqual(fresh.wires.at(-1),{v:1,type:"ping",live:true});
+  fresh.advance(1000); fresh.device.tick(false);
+  assert.deepEqual(fresh.wires.at(-1),{v:1,type:"ping",live:false});
+  fresh.device.offer(donation); fresh.device.tick(true,true); assert.deepEqual(fresh.wires.at(-1),donation);
+  fresh.device.resetConnection(); fresh.device.tick(false,true); assert.deepEqual(fresh.wires.at(-1),{v:1,type:"ping"});
+  for (const idle of [0,2,true,"1",null]) assert.equal(validStationDeviceMessage({v:1,type:"pong",idle}),false);
+});
+
+test("LIVE requires an online broadcast and a bounded read-only local status response", async () => {
+  const fetcher = value => async (url, options) => {
+    assert.equal(url,"http://127.0.0.1:8080/api/status"); assert.equal(options.redirect,"error");
+    assert.equal(options.headers.Authorization,undefined); assert.equal(options.method,undefined);
+    return new Response(JSON.stringify(value));
+  };
+  assert.equal(await stationBroadcastLive(fetcher({online:true})),true);
+  for (const online of [false,"true",1,null,undefined]) assert.equal(await stationBroadcastLive(fetcher({online})),false);
+  assert.equal(await stationBroadcastLive(async()=>{throw new Error("offline");}),false);
+  assert.equal(await stationBroadcastLive(async()=>new Response('{"online":true}',{status:503})),false);
+  assert.equal(await stationBroadcastLive(async()=>new Response("x".repeat(16385))),false);
+  assert.equal(await stationBroadcastLive(async()=>new Response("not JSON")),false);
 });
 
 test("scene tests rotate allowlisted initiative photos and always carry a test marker", () => {

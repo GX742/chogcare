@@ -12,8 +12,9 @@ export function validStationDeviceMessage(value) {
   if (!value || typeof value !== "object" || Array.isArray(value) || value.v !== 1) return false;
   if (value.type === "fault") return Object.keys(value).every(key => ["v", "type"].includes(key));
   const scenesValid = value.scenes === undefined || value.scenes === 2;
-  if (value.type === "hello") return scenesValid && Object.keys(value).every(key => ["v", "type", "last", "scenes"].includes(key)) && (value.last === "" || eventIdPattern.test(value.last ?? ""));
-  if (value.type === "pong") return scenesValid && Object.keys(value).every(key => ["v", "type", "scenes"].includes(key));
+  const idleValid = value.idle === undefined || value.idle === 1;
+  if (value.type === "hello") return scenesValid && idleValid && Object.keys(value).every(key => ["v", "type", "last", "scenes", "idle"].includes(key)) && (value.last === "" || eventIdPattern.test(value.last ?? ""));
+  if (value.type === "pong") return scenesValid && idleValid && Object.keys(value).every(key => ["v", "type", "scenes", "idle"].includes(key));
   return value.type === "ack" && Object.keys(value).every(key => ["v", "type", "id", "status"].includes(key)) && eventIdPattern.test(value.id ?? "") && ["accepted", "done"].includes(value.status);
 }
 
@@ -22,7 +23,7 @@ export function validStationDeviceMessage(value) {
 export function createStationController({ write, done = () => {}, onFault = () => {}, onTestState = () => {}, now = Date.now }) {
   let current = null, lastSent = -Infinity, acceptedAt = null, ready = false, fault = false, lastPing = -Infinity;
   let testId = null, lastSeen = -Infinity, lastTest = -Infinity;
-  let scenes = false, testSequence = 0;
+  let scenes = false, liveStatus = false, testSequence = 0;
   const testState = state => { try { onTestState(state); } catch { /* Diagnostics cannot control the device. */ } };
   const complete = id => {
     if (id === testId) { testId = null; testState("done"); }
@@ -40,6 +41,7 @@ export function createStationController({ write, done = () => {}, onFault = () =
       }
       if (value.type === "hello") {
         scenes = value.scenes === 2;
+        liveStatus = value.idle === 1;
         fault = false; ready = true; lastSeen = now();
         if (current && value.last === current.id) {
           const id = current.id; complete(id); current = null; acceptedAt = null; lastSent = -Infinity;
@@ -50,7 +52,7 @@ export function createStationController({ write, done = () => {}, onFault = () =
         }
         return true;
       }
-      if (value.type === "pong") { if (!fault) { scenes = value.scenes === 2; ready = true; lastSeen = now(); } return true; }
+      if (value.type === "pong") { if (!fault) { scenes = value.scenes === 2; liveStatus = value.idle === 1; ready = true; lastSeen = now(); } return true; }
       if (!current || value.id !== current.id) return false;
       if (value.status === "accepted") { if (acceptedAt === null) acceptedAt = now(); }
       else { const id = current.id; complete(id); current = null; acceptedAt = null; lastSent = -Infinity; }
@@ -74,9 +76,9 @@ export function createStationController({ write, done = () => {}, onFault = () =
       acceptedAt = null; lastSent = -Infinity; testState("running");
       return "accepted";
     },
-    tick(healthy = false) {
+    tick(healthy = false, broadcastLive = false) {
       const timestamp = now();
-      if (timestamp - lastPing >= 1000) { send(ping); lastPing = timestamp; }
+      if (timestamp - lastPing >= 1000) { send(liveStatus ? { ...ping, live: broadcastLive === true } : ping); lastPing = timestamp; }
       if ((!healthy && !testId) || !ready || fault || !current) return;
       if (acceptedAt !== null && timestamp - acceptedAt < ACCEPTED_TIMEOUT_MS) return;
       if (timestamp - lastSent >= RETRY_MS) {
@@ -86,9 +88,31 @@ export function createStationController({ write, done = () => {}, onFault = () =
         send(wire); lastSent = timestamp; acceptedAt = null;
       }
     },
-    resetConnection() { scenes = false; ready = false; fault = false; lastSeen = -Infinity; lastSent = -Infinity; acceptedAt = null; lastPing = -Infinity; },
+    resetConnection() { scenes = false; liveStatus = false; ready = false; fault = false; lastSeen = -Infinity; lastSent = -Infinity; acceptedAt = null; lastPing = -Infinity; },
     get pendingId() { return current?.id ?? null; },
   };
+}
+
+// Public, read-only stream status. This never gates a donation or reads an
+// Owncast password. An absent, stale or malformed response cannot assert LIVE.
+export async function stationBroadcastLive(fetcher = fetch) {
+  try {
+    const response = await fetcher("http://127.0.0.1:8080/api/status", { headers: { Accept: "application/json" }, redirect: "error", signal: AbortSignal.timeout(2000) });
+    if (!response.ok || Number(response.headers.get("content-length") ?? 0) > 16384 || !response.body) return false;
+    const reader = response.body.getReader(), chunks = [];
+    let size = 0;
+    try {
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        size += value.byteLength;
+        if (size > 16384) { await reader.cancel(); return false; }
+        chunks.push(value);
+      }
+    } finally { reader.releaseLock(); }
+    const status = JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(Buffer.concat(chunks)));
+    return status?.online === true;
+  } catch { return false; }
 }
 
 export async function stationWorkerHealthy(fetcher = fetch) {
@@ -122,6 +146,7 @@ export async function runStationBridge(args = process.argv.slice(2), { onTestSta
   if (!options.simulate && process.platform !== "win32") throw new Error("The native USB transport is for Windows; --simulate works without opening USB.");
   const project = resolve(dirname(fileURLToPath(import.meta.url)), "..");
   let events = null, serial = null, timer = null, stopping = false, tickRunning = false, healthy = options.demo, outputBuffer = "";
+  let broadcastLive = false, broadcastCheckedAt = -Infinity, broadcastCheck = null;
   const demoPayload = options.demo ? stationDonation({ id: randomBytes(12).toString("hex"), nick: "DEMO", amount: "300", cause: "solar-foundation", test: true }) : null;
   let demoDone = false;
   let closePromise, finishClose;
@@ -170,6 +195,9 @@ export async function runStationBridge(args = process.argv.slice(2), { onTestSta
     const tick = async () => {
       if (stopping || tickRunning) return; tickRunning = true;
       try {
+        if (!options.simulate && !broadcastCheck && Date.now() - broadcastCheckedAt >= 5000) {
+          broadcastCheck = stationBroadcastLive().then(value => { broadcastLive = value; broadcastCheckedAt = Date.now(); }).finally(() => { broadcastCheck = null; });
+        }
         healthy = options.demo || await stationWorkerHealthy();
         if (stopping) return;
         if (healthy !== previousHealthy && !options.demo) { console.log(healthy ? "Payment worker is healthy; waiting for verified destination receipts." : "Station held: payment worker is offline, locked or not ready. No gratitude command is sent."); previousHealthy = healthy; }
@@ -184,7 +212,7 @@ export async function runStationBridge(args = process.argv.slice(2), { onTestSta
         }
         // A previously offered arrival can become unverifiable after a reorg.
         // Revalidate its identity before retrying USB; test displays are separate.
-        controller.tick(healthy && (options.demo || allowedId === controller.pendingId));
+        controller.tick(healthy && (options.demo || allowedId === controller.pendingId), broadcastLive && Date.now() - broadcastCheckedAt <= 8000);
         if (options.simulate && controller.pendingId) controller.receive({ v: 1, type: "ack", id: controller.pendingId, status: "done" });
       } catch { console.error("Station safety check failed; forwarding is paused. Preserve station and payment databases. Payments were not changed."); healthy = false; events?.sync(false); }
       finally { tickRunning = false; }

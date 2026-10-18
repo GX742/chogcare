@@ -2,7 +2,7 @@ import type { HlsConfig } from "hls.js";
 
 export const DEFAULT_LIVE_SEGMENT_SECONDS = 3;
 export const LIVE_SYNC_SEGMENT_COUNT = 3;
-export const LIVE_MAX_LATENCY_SEGMENT_COUNT = 6;
+export const LIVE_MAX_LATENCY_SEGMENT_COUNT = 12;
 
 // Let portrait camera footage fill its frame without cropping the terminal.
 // Landscape/offline footage retains the existing contained fallback layout.
@@ -12,9 +12,10 @@ export function portraitFrameAspect(width: number, height: number): number | und
   return ratio >= .4 && ratio <= 1 ? ratio : undefined;
 }
 
-export function livePlaybackStrategy(mseSupported: boolean, nativeSupported: boolean): "hls" | "native" | "unsupported" {
-  // Some Chromium builds advertise native HLS as well as MSE. Prefer hls.js
-  // there so live-edge, bounded buffering and recovery policies still apply.
+export function livePlaybackStrategy(mseSupported: boolean, nativeSupported: boolean, managedMediaSource = false): "hls" | "native" | "unsupported" {
+  // Safari's native HLS handles iPhone streaming without a ManagedMediaSource
+  // attachment. Chromium can advertise native HLS too; retain hls.js there.
+  if (nativeSupported && managedMediaSource) return "native";
   return mseSupported ? "hls" : nativeSupported ? "native" : "unsupported";
 }
 
@@ -26,8 +27,8 @@ export function liveHlsConfig(): Partial<HlsConfig> {
     lowLatencyMode: true,
     liveSyncDurationCount: LIVE_SYNC_SEGMENT_COUNT,
     liveMaxLatencyDurationCount: LIVE_MAX_LATENCY_SEGMENT_COUNT,
-    maxLiveSyncPlaybackRate: 1.08,
-    liveSyncOnStallIncrease: 0.5,
+    maxLiveSyncPlaybackRate: 1,
+    liveSyncOnStallIncrease: 1,
     maxBufferLength: 8,
     maxMaxBufferLength: 16,
     backBufferLength: 8,

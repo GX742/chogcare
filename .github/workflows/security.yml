@@ -2,12 +2,48 @@ name: Security and recovery checks
 on:
   push:
   pull_request:
+  workflow_dispatch:
 permissions:
   contents: read
 concurrency:
   group: security-${{ github.ref }}
   cancel-in-progress: true
 jobs:
+  secrets:
+    name: Secret scan of complete Git history
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Install pinned, checksum-verified Gitleaks
+        shell: bash
+        run: |
+          set -euo pipefail
+          curl --proto '=https' --tlsv1.2 --fail --location --retry 2 \
+            https://github.com/gitleaks/gitleaks/releases/download/v8.30.1/gitleaks_8.30.1_linux_x64.tar.gz \
+            --output "$RUNNER_TEMP/gitleaks.tar.gz"
+          echo "551f6fc83ea457d62a0d98237cbad105af8d557003051f41f3e7ca7b3f2470eb  $RUNNER_TEMP/gitleaks.tar.gz" | sha256sum --check
+          mkdir "$RUNNER_TEMP/chogcare-gitleaks"
+          tar -xzf "$RUNNER_TEMP/gitleaks.tar.gz" -C "$RUNNER_TEMP/chogcare-gitleaks" gitleaks
+      - name: Verify scanner rejects an in-memory canary
+        shell: bash
+        run: |
+          set -euo pipefail
+          if python3 -c 'import secrets; print("GITHUB_TOKEN=ghp_" + secrets.token_hex(18))' | \
+            "$RUNNER_TEMP/chogcare-gitleaks/gitleaks" stdin --config .gitleaks.toml --redact=100 --no-banner --exit-code=10; then
+            echo 'Secret scanner failed its positive control.'
+            exit 1
+          else
+            test "$?" -eq 10
+          fi
+      - name: Scan every fetched revision without exposing matched values
+        shell: bash
+        run: |
+          "$RUNNER_TEMP/chogcare-gitleaks/gitleaks" git --log-opts="--all" \
+            --config .gitleaks.toml --ignore-gitleaks-allow --redact=100 --no-banner --timeout=120
   verify:
     runs-on: windows-latest
     timeout-minutes: 20

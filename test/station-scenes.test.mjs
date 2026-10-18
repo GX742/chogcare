@@ -32,6 +32,20 @@ test("initiative screen is immediately visible text only, without photo or fade"
   assert.doesNotMatch(display,/StationScenes|void photo\(|float fade\(|brightness|previousFade/);
   assert.ok(display.includes('initiativeTitle(title1, title2[0] ? 145 : 164'));
   assert.ok(display.includes('initiativeTitle(title2, 187'));
-  assert.ok(display.includes('smallCenter("Your care goes to", 86'));
+  assert.ok(display.includes('gfxCenter("Your care goes to", &FreeSansBold9pt7b, 86'));
   assert.ok(display.includes('w <= 216 ? &FreeSansBold18pt7b : &FreeSansBold12pt7b'));
+});
+
+test("waiting and gratitude artwork preserves the requested image with rounded corners in flash",async()=>{
+  const source=await readFile(new URL("../firmware/assets/chogcare-kindness.png",import.meta.url));
+  const header=await readFile(new URL("../firmware/chogcare_station/StationBrand.h",import.meta.url),"utf8");
+  assert.ok(header.includes(`Source SHA256: ${createHash("sha256").update(source).digest("hex")}`));
+  for(const [name,size] of [["WaitingArt",176],["ThanksArt",128]]){
+    const block=header.split(`const uint16_t ${name}[${size} * ${size}] PROGMEM = {`)[1]?.split("};")[0];
+    assert.ok(block);const words=[...block.matchAll(/0x([0-9a-f]{4})/g)].map(m=>parseInt(m[1],16));
+    assert.equal(words.length,size*size);
+    for(const at of [0,size-1,size*(size-1),size*size-1])assert.equal(words[at],0x0823);
+    assert.notEqual(words[Math.floor(size/2)],0x0823,"rounding must retain the image along each straight edge");
+    assert.ok(new Set(words).size>1000);
+  }
 });

@@ -4,7 +4,7 @@ import type HlsType from "hls.js";
 import { ArrowRight, ArrowUpRight, Check, Copy, Broadcast, ChatCircle, X, XLogo } from "@phosphor-icons/react";
 import { useGSAP } from "@gsap/react";
 import gsap from "gsap";
-import PaymentCheckout from "./PaymentCheckout";
+import type PaymentCheckoutView from "./PaymentCheckout";
 import ChangeInitiative from "./ChangeInitiative";
 import SunsetScene from "./SunsetScene";
 import GivingExplainer from "./GivingExplainer";
@@ -15,15 +15,34 @@ import CheckoutRecovery from "./CheckoutRecovery";
 import CheckoutSizeTransition from "./CheckoutSizeTransition";
 import Leaderboard from "./Leaderboard";
 import SupportDialog from "./SupportDialog";
+import BroadcastPreview from "./BroadcastPreview";
 import type { SupportContext } from "./support-model";
 import { createLiveLoadState, createLiveResumeSync, createLiveRetryBudget, liveHlsConfig, livePlaybackStrategy, liveSegmentSeconds, portraitFrameAspect, recoverLiveNetwork, DEFAULT_LIVE_SEGMENT_SECONDS, type LiveLoadState } from "./live-player";
-import { broadcastStreamUrl } from "./broadcast-source";
+import { broadcastPreviewUrl, broadcastStreamUrl } from "./broadcast-source";
 
 import "./station-redesign.css";
 import "./sunset-redesign.css";
 import "./payment-entry.css";
 import "./payment-invoice.css";
 import "./leaderboard-impact.css";
+
+let paymentCheckoutView: typeof PaymentCheckoutView | null = null;
+const loadPaymentCheckout = () => import("./PaymentCheckout").then(module => { paymentCheckoutView = module.default; return module.default; });
+
+function PaymentCheckout(props: Parameters<typeof PaymentCheckoutView>[0]) {
+  const [View, setView] = useState<typeof PaymentCheckoutView | null>(() => paymentCheckoutView);
+  const [failed, setFailed] = useState(false);
+  useEffect(() => {
+    if (View) return;
+    let active = true;
+    setFailed(false);
+    void loadPaymentCheckout().then(component => { if (active) setView(() => component); }).catch(() => { if (active) setFailed(true); });
+    return () => { active = false; };
+  }, [View]);
+  return View ? <View {...props}/> : <div className="checkout-help" role="status">
+    {failed ? <>Donation options couldn’t load. <button type="button" className="lp-text-button" onClick={() => window.location.reload()}>Reload page</button></> : "Loading donation options…"}
+  </div>;
+}
 
 type Initiative = {
   id: string;
@@ -136,9 +155,9 @@ function shortAddress(address: string) {
 
 function Brand({ footer = false, onHome }: { footer?: boolean; onHome?: () => void }) {
   return <a href="#top" onClick={event => { if (onHome) { event.preventDefault(); onHome(); } }} className={`brand${footer ? " footer-brand" : ""}`} aria-label="ChogCare home">
-    {footer ? <img className="care-brand-icon" src="/chogcare-care-logo.png" width="1254" height="1254" alt="ChogCare logo" /> : <>
-      <img className="care-header-icon" src="/chogcare-care-logo.png" width="1254" height="1254" alt="" />
-      <img className="care-header-wordmark" src="/chogcare-wordmark.png" width="610" height="200" alt="ChogCare" />
+    {footer ? <img className="care-brand-icon" src="/chogcare-care-logo.png" srcSet="/chogcare-care-logo-128.webp 128w, /chogcare-care-logo-256.webp 256w" sizes="62px" loading="lazy" decoding="async" width="1254" height="1254" alt="ChogCare logo" /> : <>
+      <img className="care-header-icon" src="/chogcare-care-logo.png" srcSet="/chogcare-care-logo-128.webp 128w, /chogcare-care-logo-256.webp 256w" sizes="42px" decoding="async" fetchPriority="low" width="1254" height="1254" alt="" />
+      <img className="care-header-wordmark" src="/chogcare-wordmark.png" srcSet="/chogcare-wordmark.webp 610w" sizes="(max-width: 767px) 137px, 180px" decoding="async" width="610" height="200" alt="ChogCare" />
     </>}
   </a>;
 }
@@ -150,10 +169,10 @@ function Funding({ initiative }: { initiative: Initiative }) {
   </div>;
 }
 
-const configuredTwitchChannel = import.meta.env.VITE_TWITCH_CHANNEL?.trim().toLowerCase() || "nerfwok";
+const configuredTwitchChannel = import.meta.env.VITE_TWITCH_CHANNEL?.trim().toLowerCase() || "";
 const twitchChannel = /^[a-z0-9_]{4,25}$/.test(configuredTwitchChannel) ? configuredTwitchChannel : null;
 function owncastStreamUrl() {
-  return broadcastStreamUrl(import.meta.env.VITE_OWNCAST_URL?.trim(), window.location.origin);
+  return broadcastStreamUrl(import.meta.env.VITE_OWNCAST_URL?.trim(), window.location.origin, window.matchMedia("(max-width: 767px), (pointer: coarse)").matches);
 }
 
 function NativeLivePlayer({ src, onReady, onWaiting, onAspect }: { src: string; onReady: () => void; onWaiting: () => void; onAspect: (ratio: number | undefined) => void }) {
@@ -161,7 +180,10 @@ function NativeLivePlayer({ src, onReady, onWaiting, onAspect }: { src: string; 
   const callbacks = useRef({ onReady, onWaiting, onAspect });
   const playAction = useRef<(() => void) | null>(null);
   const [loadState, setLoadState] = useState<LiveLoadState>("loading");
+  const [hasFrame, setHasFrame] = useState(false);
+  const [previewReady, setPreviewReady] = useState(false);
   const [attempt, setAttempt] = useState(0);
+  const preview = broadcastPreviewUrl(src, window.location.origin);
 
   useEffect(() => { callbacks.current = { onReady, onWaiting, onAspect }; }, [onReady, onWaiting, onAspect]);
 
@@ -172,13 +194,26 @@ function NativeLivePlayer({ src, onReady, onWaiting, onAspect }: { src: string; 
     let hls: HlsType | null = null, retryTimer: ReturnType<typeof setTimeout> | null = null;
     let lastRecovery: (() => void) | null = null, recoveryHeld = false;
     const nativeHlsCapable = Boolean(video.canPlayType("application/vnd.apple.mpegurl"));
+    const managedMediaSource = "ManagedMediaSource" in window;
+    // Safari checks both the muted attribute and current media state before
+    // allowing inline autoplay. Set these before assigning any HLS source.
+    video.defaultMuted = true;
+    video.muted = true;
+    video.playsInline = true;
     let nativeActive = false, mseAttached = false;
     setLoadState("loading");
+    setHasFrame(false);
+    setPreviewReady(false);
     const loadMonitor = createLiveLoadState({ onChange: state => { if (!cancelled) setLoadState(state); } });
     const retryBudget = createLiveRetryBudget();
     const resumeSync = createLiveResumeSync({ media: video, segmentSeconds: () => segmentSeconds, liveSyncPosition: () => hls?.liveSyncPosition ?? null });
     const waiting = () => { if (!cancelled) { if (document.hidden) loadMonitor.suspend(); else loadMonitor.waiting(); callbacks.current.onWaiting(); } };
-    const playing = () => { if (!cancelled) { loadMonitor.playing(); callbacks.current.onReady(); } };
+    const updateAspect = () => {
+      // iPhone can report its decoded dimensions after loadedmetadata, and
+      // quality switches can emit resize without another metadata event.
+      if (!cancelled && video.videoWidth > 0 && video.videoHeight > 0) callbacks.current.onAspect(portraitFrameAspect(video.videoWidth, video.videoHeight));
+    };
+    const playing = () => { if (!cancelled) { updateAspect(); setHasFrame(true); loadMonitor.playing(); callbacks.current.onReady(); } };
     const pausedPlayback = () => { if (!cancelled && !document.hidden && !video.ended) { loadMonitor.blocked(); callbacks.current.onWaiting(); } };
     const endedPlayback = () => { if (!cancelled) { loadMonitor.unavailable(); callbacks.current.onWaiting(); } };
     const startPlayback = () => {
@@ -214,8 +249,10 @@ function NativeLivePlayer({ src, onReady, onWaiting, onAspect }: { src: string; 
     const metadata = () => {
       // Adapt to the real portrait camera, but keep landscape offline screens
       // contained in the established frame instead of cropping them again.
-      callbacks.current.onAspect(portraitFrameAspect(video.videoWidth, video.videoHeight));
-      resumeSync.request(); startPlayback();
+      updateAspect();
+      // Let the native/HLS engine choose its initial buffered position. Only
+      // an explicit return from a hidden page requests a live-edge seek.
+      resumeSync.update(); startPlayback();
     };
     const canPlay = () => { resumeSync.update(); };
     const visibility = () => {
@@ -232,11 +269,14 @@ function NativeLivePlayer({ src, onReady, onWaiting, onAspect }: { src: string; 
       hls?.destroy(); hls = null;
       nativeActive = true;
       video.src = src;
+      video.load();
       startPlayback();
     };
 
     waiting();
     video.addEventListener("loadedmetadata", metadata);
+    video.addEventListener("loadeddata", updateAspect);
+    video.addEventListener("resize", updateAspect);
     video.addEventListener("playing", playing);
     video.addEventListener("pause", pausedPlayback);
     video.addEventListener("ended", endedPlayback);
@@ -247,9 +287,12 @@ function NativeLivePlayer({ src, onReady, onWaiting, onAspect }: { src: string; 
     document.addEventListener("visibilitychange", visibility);
     window.addEventListener("pageshow", pageShow);
 
-    void import("hls.js").then(({ default: Hls }) => {
+    // Start native Safari playback immediately; it must not wait for a JS
+    // media engine that iPhone does not need to load or attach.
+    if (livePlaybackStrategy(typeof window.MediaSource === "function" || managedMediaSource, nativeHlsCapable, managedMediaSource) === "native") startNative();
+    else void import("hls.js").then(({ default: Hls }) => {
         if (cancelled) return;
-        const strategy = livePlaybackStrategy(Hls.isSupported(), nativeHlsCapable);
+        const strategy = livePlaybackStrategy(Hls.isSupported(), nativeHlsCapable, managedMediaSource);
         if (strategy !== "hls") { if (strategy === "native") startNative(); else loadMonitor.unavailable(); return; }
         hls = new Hls(liveHlsConfig());
         hls.on(Hls.Events.MANIFEST_PARSED, startPlayback);
@@ -276,6 +319,8 @@ function NativeLivePlayer({ src, onReady, onWaiting, onAspect }: { src: string; 
       retryBudget.dispose();
       resumeSync.dispose();
       video.removeEventListener("loadedmetadata", metadata);
+      video.removeEventListener("loadeddata", updateAspect);
+      video.removeEventListener("resize", updateAspect);
       video.removeEventListener("playing", playing);
       video.removeEventListener("pause", pausedPlayback);
       video.removeEventListener("ended", endedPlayback);
@@ -293,12 +338,17 @@ function NativeLivePlayer({ src, onReady, onWaiting, onAspect }: { src: string; 
   }, [src, attempt]);
 
   return <>
+    {preview && !hasFrame && <BroadcastPreview key={preview} src={preview} refresh={loadState === "loading"}
+      onReady={() => setPreviewReady(true)}
+      onAspect={(width, height) => callbacks.current.onAspect(portraitFrameAspect(width, height))} />}
     <video
       ref={videoRef}
       className="lp-broadcast-player is-ready"
       autoPlay
       muted
       playsInline
+      preload="auto"
+      disableRemotePlayback
       disablePictureInPicture
       controls={false}
       controlsList="nodownload noplaybackrate noremoteplayback"
@@ -306,7 +356,7 @@ function NativeLivePlayer({ src, onReady, onWaiting, onAspect }: { src: string; 
       aria-label="ChogCare live broadcast"
       onContextMenu={(event) => event.preventDefault()}
     />
-    {loadState !== "playing" && <div className="lp-broadcast-loading lp-broadcast-state" role="status" aria-live="polite">
+    {loadState !== "playing" && !((hasFrame || previewReady) && loadState === "loading") && <div className="lp-broadcast-loading lp-broadcast-state" role="status" aria-live="polite">
       {loadState === "loading" ? <><i aria-hidden="true"/><span>Loading live broadcast…</span></> : <>
         <span className="care-broadcast-state-icon" aria-hidden="true"><Broadcast size={30} weight="light" /></span>
         <strong>{loadState === "blocked" ? "Ready when you are." : "Broadcast unavailable"}</strong>
@@ -319,6 +369,11 @@ function NativeLivePlayer({ src, onReady, onWaiting, onAspect }: { src: string; 
 
 function BroadcastPanel({ headingId, portraitAspect, onAspect }: { headingId: string; portraitAspect: number | undefined; onAspect: (ratio: number | undefined) => void }) {
   const [playerLoaded, setPlayerLoaded] = useState(false);
+  useEffect(() => {
+    if (!playerLoaded) return;
+    const timer = setTimeout(() => { void loadPaymentCheckout().catch(() => {}); }, 1500);
+    return () => clearTimeout(timer);
+  }, [playerLoaded]);
   const owncastUrl = owncastStreamUrl();
   const twitchUrl = twitchChannel
     ? `https://player.twitch.tv/?channel=${encodeURIComponent(twitchChannel)}&parent=${encodeURIComponent(window.location.hostname)}&muted=true&autoplay=true`
@@ -372,6 +427,8 @@ export default function App() {
     try { return savedCheckoutModes(); } catch { return { chog: false, nft: false }; }
   });
   const [stationOpen, setStationOpen] = useState(initialSelection.outstanding);
+  const [checkoutVisited, setCheckoutVisited] = useState(initialSelection.outstanding);
+  useEffect(() => { if (stationOpen) setCheckoutVisited(true); }, [stationOpen]);
   const [exitTarget, setExitTarget] = useState<string | null>(null);
   const [returnedToLanding, setReturnedToLanding] = useState(false);
   // Keep the observed camera ratio across checkout navigation so its delayed
@@ -393,7 +450,8 @@ export default function App() {
       const hero = heroRef.current;
       if (hero && hero.getBoundingClientRect().bottom > 0) {
         gsap.from(".care-intro-copy > *", { y: 20, opacity: 0, duration: .85, stagger: .09, ease: "power3.out", clearProps: "opacity,transform" });
-        gsap.from(".care-intro-broadcast", { y: 26, opacity: 0, duration: 1, ease: "power3.out", clearProps: "opacity,transform" });
+        // The camera is immediately visible; an entrance fade delays the first
+        // useful frame even after the network has already delivered it.
       }
       const stage = appRef.current!.querySelector(".care-lower-stage");
       const block = appRef.current!.querySelector(".care-lower-world");
@@ -511,7 +569,7 @@ export default function App() {
           <a href="#how-it-works" onClick={event => { event.preventDefault(); leaveStation("how-it-works"); }}>How it works</a>
           <a href="#leaderboard" onClick={event => { event.preventDefault(); leaveStation("leaderboard"); }}>Leaderboard</a>
         </nav>
-        <div className="creator"><img src="/gx-avatar.png" alt="GX avatar" width="36" height="36" /><span><small>Creator</small>GX</span><a className="creator-x" href="https://x.com/GxOlympus" target="_blank" rel="noopener noreferrer" aria-label="GX on X (opens in a new tab)"><XLogo size={21} weight="bold" /></a></div>
+        <div className="creator"><img src="/gx-avatar.png" srcSet="/gx-avatar-128.webp 128w" sizes="36px" decoding="async" fetchPriority="low" alt="GX avatar" width="36" height="36" /><span><small>Creator</small>GX</span><a className="creator-x" href="https://x.com/GxOlympus" target="_blank" rel="noopener noreferrer" aria-label="GX on X (opens in a new tab)"><XLogo size={21} weight="bold" /></a></div>
         </div>
       </header>
 
@@ -565,18 +623,18 @@ export default function App() {
               {stationOpen && <BroadcastPanel headingId="broadcast-heading" portraitAspect={portraitAspect} onAspect={setPortraitAspect} />}
             </div>
             <div className="care-checkout-column">
-              <div className="care-selected"><img src={selected.image} alt={selected.imageAlt} width="76" height="76" /><div><span>{selected.category} · {selected.location}</span><h2>{selected.name}</h2><button className="lp-text-button" onClick={() => setOpenInitiative(selected)}>About this initiative <ArrowUpRight size={14} /></button></div></div>
+              <div className="care-selected"><img src={selected.image} alt={selected.imageAlt} loading="lazy" width="76" height="76" /><div><span>{selected.category} · {selected.location}</span><h2>{selected.name}</h2><button className="lp-text-button" onClick={() => setOpenInitiative(selected)}>About this initiative <ArrowUpRight size={14} /></button></div></div>
             <div className="lp-payment">
               <div className="lp-payment-tabs" role="tablist" aria-label="Donation method">{(["chog", "nft"] as const).map((item, index) => <button key={item} id={"tab-" + item} role="tab" aria-controls={"panel-" + item} aria-selected={mode === item} tabIndex={mode === item ? 0 : -1} onClick={() => chooseMode(item)} onKeyDown={event => {
                 if (["ArrowRight", "ArrowLeft", "Home", "End"].includes(event.key)) { event.preventDefault(); const next = event.key === "Home" ? "chog" : event.key === "End" ? "nft" : index === 0 ? "nft" : "chog"; document.getElementById("tab-" + chooseMode(next))?.focus(); }
-              }}><img className={`payment-tab-art ${item === "chog" ? "payment-tab-coin" : "payment-tab-nft"}`} src={item === "chog" ? "/chog-donation-coin.png" : "/chog-holder-nft.png"} alt="" width="32" height="32"/><span className="payment-tab-copy"><strong>{item === "chog" ? "$CHOG" : "NFT holder"}</strong><small>{item === "chog" ? "Your amount" : "$1 from pool"}</small></span></button>)}</div>
+              }}><img className={`payment-tab-art ${item === "chog" ? "payment-tab-coin" : "payment-tab-nft"}`} src={item === "chog" ? "/chog-donation-coin.png" : "/chog-holder-nft.png"} srcSet={item === "chog" ? "/chog-donation-coin-256.webp 256w" : "/chog-holder-nft-256.webp 256w"} sizes="32px" loading="lazy" alt="" width="32" height="32"/><span className="payment-tab-copy"><strong>{item === "chog" ? "$CHOG" : "NFT holder"}</strong><small>{item === "chog" ? "Your amount" : "$1 from pool"}</small></span></button>)}</div>
               {savedMethods[mode === "chog" ? "nft" : "chog"] && <p className="checkout-help" role="status">Your {mode === "chog" ? "NFT" : "$CHOG"} checkout is saved in the other tab. You can switch back to track it. Do not pay the same invoice twice.</p>}
               <CheckoutSizeTransition>
               <div id="panel-chog" role="tabpanel" aria-labelledby="tab-chog" hidden={mode !== "chog"}>
-                {mode === "chog" && <PaymentCheckout key={selectedId + "-chog-" + recoveryVersion} mode="chog" initiativeId={selectedId} initiativeName={selected.name} onViewLeaderboard={()=>leaveStation("leaderboard")} />}
+                {(stationOpen || checkoutVisited) && mode === "chog" && <PaymentCheckout key={selectedId + "-chog-" + recoveryVersion} mode="chog" initiativeId={selectedId} initiativeName={selected.name} onViewLeaderboard={()=>leaveStation("leaderboard")} />}
               </div>
               <div id="panel-nft" role="tabpanel" aria-labelledby="tab-nft" hidden={mode !== "nft"}>
-                {mode === "nft" && <PaymentCheckout key={selectedId + "-nft-" + recoveryVersion} mode="nft" initiativeId={selectedId} initiativeName={selected.name} />}
+                {(stationOpen || checkoutVisited) && mode === "nft" && <PaymentCheckout key={selectedId + "-nft-" + recoveryVersion} mode="nft" initiativeId={selectedId} initiativeName={selected.name} />}
               </div>
               </CheckoutSizeTransition>
             </div>

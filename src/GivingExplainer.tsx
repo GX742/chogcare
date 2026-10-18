@@ -6,7 +6,7 @@ export default function GivingExplainer() {
     <section id="how-it-works" tabIndex={-1} className="care-mechanics" aria-label="How ChogCare works">
       <div className="care-mechanics-heading"><span className="care-section-label">How it works</span><h2>Two ways to give.</h2></div>
       <article className="care-mechanic care-token-mechanic" aria-labelledby="token-mechanic-title">
-        <div className="care-mechanic-art care-coin-art"><img src="/chog-donation-coin.png" alt="Purple $CHOG coin" width="1324" height="1188" loading="lazy" /></div>
+        <div className="care-mechanic-art care-coin-art"><img src="/chog-donation-coin.png" srcSet="/chog-donation-coin-256.webp 256w, /chog-donation-coin-512.webp 512w" sizes="(max-width: 767px) 56px, 100px" alt="Purple $CHOG coin" width="1324" height="1188" loading="lazy" /></div>
         <div className="care-mechanic-copy">
           <span className="care-mechanic-label">$CHOG donation</span>
           <h3 id="token-mechanic-title">Give with $CHOG</h3>
@@ -20,7 +20,7 @@ export default function GivingExplainer() {
         </ol>
       </article>
       <article className="care-mechanic care-nft-mechanic" aria-labelledby="nft-mechanic-title">
-        <div className="care-mechanic-art care-nft-art"><img src="/chog-holder-nft.png" alt="CHOG NFT with a blue hat and purple laser eyes" width="1000" height="1000" loading="lazy" /></div>
+        <div className="care-mechanic-art care-nft-art"><img src="/chog-holder-nft.png" srcSet="/chog-holder-nft-256.webp 256w, /chog-holder-nft-512.webp 512w" sizes="(max-width: 767px) 56px, 100px" alt="CHOG NFT with a blue hat and purple laser eyes" width="1000" height="1000" loading="lazy" /></div>
         <div className="care-mechanic-copy">
           <span className="care-mechanic-label">NFT community pool</span>
           <h3 id="nft-mechanic-title">Give as an NFT holder</h3>

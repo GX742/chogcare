@@ -20,13 +20,21 @@ test("MSE wins when Chromium also advertises native HLS; native is a capability 
   assert.equal(livePlaybackStrategy(false, false), "unsupported");
 });
 
+test("Safari uses native HLS even when ManagedMediaSource makes hls.js appear supported", () => {
+  assert.equal(livePlaybackStrategy(true, true, true), "native", "iPhone Safari with MMS must use the built-in HLS player");
+  assert.equal(livePlaybackStrategy(false, true, true), "native");
+  assert.equal(livePlaybackStrategy(true, false, true), "hls", "MMS alone is not evidence of native HLS support");
+  assert.equal(livePlaybackStrategy(false, false, true), "unsupported");
+  assert.equal(livePlaybackStrategy(true, true, false), "hls", "Chromium's native-HLS claim must not change desktop playback");
+});
+
 test("live HLS uses adaptive segment-count latency with a finite recovery threshold", () => {
   const config = liveHlsConfig();
   assert.equal(config.liveSyncDurationCount, 3);
-  assert.equal(config.liveMaxLatencyDurationCount, 6);
+  assert.equal(config.liveMaxLatencyDurationCount, 12);
   assert.ok(config.liveMaxLatencyDurationCount > config.liveSyncDurationCount);
-  assert.equal(config.maxLiveSyncPlaybackRate, 1.08);
-  assert.equal(config.liveSyncOnStallIncrease, 0.5);
+  assert.equal(config.maxLiveSyncPlaybackRate, 1);
+  assert.equal(config.liveSyncOnStallIncrease, 1);
   assert.equal(config.maxBufferLength, 8);
   assert.equal(config.maxMaxBufferLength, 16);
   assert.equal(config.backBufferLength, 8);

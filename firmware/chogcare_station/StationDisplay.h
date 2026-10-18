@@ -2,15 +2,17 @@
 #include <Adafruit_GFX.h>
 #include <Adafruit_ST7789.h>
 #include <U8g2_for_Adafruit_GFX.h>
+#include <Fonts/FreeSansBold9pt7b.h>
 #include <Fonts/FreeSansBold12pt7b.h>
 #include <Fonts/FreeSansBold18pt7b.h>
 #include <Fonts/FreeSansBold24pt7b.h>
 #include <math.h>
 #include "StationConfig.h"
 #include "StationArt.h"
+#include "StationBrand.h"
 
-// One 15 KB strip, never a full-screen framebuffer. The initiative is text
-// only; the small ChogCare coin remains on the amount/thank-you screens.
+// One 15 KB strip, never a full-screen framebuffer. Brand images live in flash;
+// only the status line, hearts and overflowing text need animated redraws.
 class StationDisplay {
  public:
   StationDisplay() : tft(StationConfig::TFT_CS, StationConfig::TFT_DC,
@@ -22,10 +24,12 @@ class StationDisplay {
     type.begin(band); type.setFontMode(1); type.setFontDirection(0);
     renderFull(); return true;
   }
-  void setConnected(bool value) {
-    if (connected == value) return;
+  void setConnected(bool value, bool streaming) {
+    const bool nextLive = value && streaming;
+    if (connected == value && live == nextLive) return;
     connected = value;
-    if (!active) renderBand(0);
+    live = nextLive;
+    if (!active) renderBand(288);
   }
   void show(const char *nickname, const char *chog, const char *cause, bool isTest, uint32_t now) {
     strlcpy(nick, nickname, sizeof(nick)); formatAmount(chog);
@@ -56,7 +60,7 @@ class StationDisplay {
       const bool moving = active ?
         (y == 288 || (current == 1 && amountWidth > 216 && y >= 160 && y <= 224) ||
          (current == 2 && y >= 64 && y <= 160) ||
-         (current == 2 && nicknameWidth > 216 && y >= 224 && y <= 256)) : y >= 64 && y <= 192;
+         (current == 2 && nicknameWidth > 216 && y >= 224 && y <= 256)) : y == 288;
       if (full || moving) renderBand(y);
     }
     lastScene = current;
@@ -66,7 +70,7 @@ class StationDisplay {
   Adafruit_ST7789 tft;
   GFXcanvas16 band;
   U8G2_FOR_ADAFRUIT_GFX type;
-  bool active = false, connected = false, test = false;
+  bool active = false, connected = false, live = false, test = false;
   uint32_t startedAt = 0, frameAt = 0, age = 0;
   uint8_t lastScene = 0;
   float orbitPhase = 0;
@@ -91,6 +95,10 @@ class StationDisplay {
   }
   void smallCenter(const char *value, int16_t baseline, uint16_t color) {
     type.setFont(u8g2_font_6x12_tf); small(value, (240 - type.getUTF8Width(value)) / 2, baseline, color);
+  }
+  void readable(const char *value, int16_t x, int16_t baseline, uint16_t color) {
+    type.setFont(u8g2_font_helvB08_tf); type.setForegroundColor(color);
+    type.setCursor(x, baseline - bandY); type.print(value);
   }
   void gfxCenter(const char *value, const GFXfont *font, int16_t baseline, uint16_t color) {
     int16_t x, y; uint16_t w, h;
@@ -121,11 +129,27 @@ class StationDisplay {
     dot(x - size / 2, y, size / 2, pink()); dot(x + size / 2, y, size / 2, pink());
     band.fillTriangle(x - size, y - bandY, x + size, y - bandY, x, y + size - bandY, pink());
   }
+  void liveLine() {
+    type.setFont(u8g2_font_helvB10_tf);
+    const uint8_t glow = 140 + lroundf(55 * (sinf(orbitPhase * 2) + 1));
+    const uint16_t color = live ? rgb(110, glow, 174) : connected ? pink() : muted();
+    const char *label = live ? "LIVE" : connected ? "STATION ONLINE" : "CONNECTING";
+    const int16_t labelWidth = type.getUTF8Width(label);
+    const int16_t width = 16 + labelWidth;
+    const int16_t left = (240 - width) / 2;
+    dot(left + 4, 301, 4, color);
+    type.setForegroundColor(color); type.setCursor(left + 16, 307 - bandY); type.print(label);
+  }
   void chrome() {
     for (uint8_t i = 0; i < 3; ++i) band.fillRoundRect(12 + i * 74, 6 - bandY, 68, 3, 1, i == scene() ? pink() : rgb(55, 34, 76));
     const char *label = scene() == 0 ? "YOUR IMPACT" : scene() == 1 ? "YOUR DONATION" : "WITH GRATITUDE";
-    small(label, 12, 29, muted());
-    if (test) small("TEST / NO PAYMENT", 132, 29, pink());
+    if (scene() == 0) {
+      readable(label, 12, 30, muted());
+      if (test) small("TEST / NO PAYMENT", 132, 29, pink());
+    } else {
+      small(label, 12, 29, muted());
+      if (test) small("TEST / NO PAYMENT", 132, 29, pink());
+    }
     if (intersects(314, 320)) {
       band.fillRect(12, 315 - bandY, 216, 2, rgb(55, 34, 76));
       band.fillRect(12, 315 - bandY, min(uint32_t(216), age * 216 / StationConfig::SHOW_MS), 2, pink());
@@ -137,22 +161,20 @@ class StationDisplay {
   void renderBand(int16_t y) {
     bandY = y; band.fillScreen(background());
     if (!active) {
-      if (intersects(0, 56)) { gfxCenter("ChogCare", &FreeSansBold18pt7b, 46, ink()); dot(232, 6, 3, connected ? rgb(133, 255, 205) : rgb(91, 58, 111)); }
-      if (intersects(72, 224)) {
-        coin(StationArt::IdleCoin, 128, 56, 84);
-        for (uint8_t i = 0; i < 2; ++i) { const float a = orbitPhase + i * PI; const int16_t dx = lroundf(cosf(a) * 75), dy = lroundf(sinf(a) * 70); if (abs(dx) >= 68 || abs(dy) >= 68) dot(120 + dx, 148 + dy, 2, pink()); }
-      }
-      if (intersects(248, 296)) { gfxCenter("CHOG", &FreeSansBold12pt7b, 265, ink()); smallCenter("SMALL GIFTS. REAL CARE.", 293, muted()); }
+      if (intersects(0, 48)) gfxCenter("ChogCare", &FreeSansBold18pt7b, 35, ink());
+      if (intersects(54, 230)) coin(StationBrand::WaitingArt, 176, 32, 54);
+      if (intersects(232, 282)) { gfxCenter("Waiting for", &FreeSansBold12pt7b, 254, ink()); gfxCenter("kindness", &FreeSansBold12pt7b, 279, pink()); }
+      if (intersects(288, 320)) liveLine();
     } else {
       if (scene() == 0) {
-        if (intersects(64, 96)) smallCenter("Your care goes to", 86, muted());
+        if (intersects(64, 96)) gfxCenter("Your care goes to", &FreeSansBold9pt7b, 86, muted());
         if (intersects(112, 192)) {
           initiativeTitle(title1, title2[0] ? 145 : 164, ink());
           initiativeTitle(title2, 187, pink());
         }
         if (intersects(208, 240)) line(84, 220, 156, 220, pink());
         if (intersects(288, 312)) {
-          smallCenter(test ? "INITIATIVE PREVIEW" : "A cause you supported", 304, muted());
+          gfxCenter(test ? "INITIATIVE PREVIEW" : "A cause you supported", &FreeSansBold9pt7b, 304, muted());
         }
       } else if (scene() == 1) {
         if (intersects(48, 144)) coin(StationArt::DonationCoin, 96, 72, 48);
@@ -165,7 +187,7 @@ class StationDisplay {
           smallCenter(test ? "SIMULATED - NO FUNDS MOVED" : "Cause delivery confirmed", 290, ink());
         }
       } else {
-        if (intersects(48, 176)) coin(StationArt::IdleCoin, 128, 56, 48);
+        if (intersects(48, 176)) coin(StationBrand::ThanksArt, 128, 56, 48);
         if (intersects(64, 164)) { const int16_t size = 5 + lroundf(2 * (sinf(orbitPhase * 2) + 1)); heart(32, 108, size); heart(208, 108, size); }
         if (intersects(184, 220)) gfxCenter("Thank you!", &FreeSansBold18pt7b, 214, pink());
         if (intersects(224, 264)) {

@@ -22,7 +22,7 @@ class StationApplication {
     memoryReady = EEPROM.length() == 64 && EEPROM.getConstDataPtr() != nullptr;
     if (memoryReady) loadLastDone();
     displayReady = display.begin();
-    Serial.print(F("{\"v\":1,\"type\":\"hello\",\"scenes\":2,\"last\":\""));
+    Serial.print(F("{\"v\":1,\"type\":\"hello\",\"scenes\":2,\"idle\":1,\"last\":\""));
     Serial.print(lastDone);
     Serial.println(F("\"}"));
     if (!displayReady || !memoryReady) Serial.println(F("{\"v\":1,\"type\":\"fault\"}"));
@@ -31,7 +31,7 @@ class StationApplication {
   void tick() {
     readSerial();
     const uint32_t now = millis();
-    if (displayReady) display.setConnected(heardBridge && now - lastPingAt < StationConfig::HEARTBEAT_TIMEOUT_MS);
+    if (displayReady) display.setConnected(heardBridge && now - lastPingAt < StationConfig::HEARTBEAT_TIMEOUT_MS, broadcastLive);
     if (active) {
       const uint32_t age = now - startedAt;
       if (age >= StationConfig::SHOW_MS) {
@@ -70,7 +70,7 @@ class StationApplication {
   StationProtocol::Command current;
   char line[StationConfig::LINE_BYTES + 1] = {}, lastDone[25] = {};
   uint16_t used = 0;
-  bool discard = false, active = false, displayReady = false, memoryReady = false, heardBridge = false;
+  bool discard = false, active = false, displayReady = false, memoryReady = false, heardBridge = false, broadcastLive = false;
   uint32_t startedAt = 0, lastPingAt = 0, lastPersistAt = 0;
 
   static float smooth(float x) { x = constrain(x, 0.0f, 1.0f); return x * x * (3 - 2 * x); }
@@ -102,7 +102,8 @@ class StationApplication {
   void command(const StationProtocol::Command &next) {
     heardBridge = true; lastPingAt = millis();
     if (next.type == StationProtocol::Type::Ping) {
-      Serial.println(F("{\"v\":1,\"type\":\"pong\",\"scenes\":2}"));
+      broadcastLive = next.live;
+      Serial.println(F("{\"v\":1,\"type\":\"pong\",\"scenes\":2,\"idle\":1}"));
       return;
     }
     if (!displayReady || !memoryReady) return;

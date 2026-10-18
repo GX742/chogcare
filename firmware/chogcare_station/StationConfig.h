@@ -19,5 +19,5 @@ constexpr uint32_t FADE_OUT_MS = 800;
 constexpr uint32_t HEARTBEAT_TIMEOUT_MS = 12000;
 constexpr uint32_t FRAME_MS = 50; // Target 20 fps; coin sparkles + overflowing text only.
 constexpr uint16_t LINE_BYTES = 384;
-constexpr uint16_t STRIP_HEIGHT = 32; // 15 KB, not a 153 KB full framebuffer.
+constexpr uint16_t STRIP_HEIGHT = 16; // 7.5 KB strip leaves room for one 8 KB NFT thumbnail.
 }

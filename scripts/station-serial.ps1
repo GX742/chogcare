@@ -44,7 +44,9 @@ try {
       [Console]::Out.Write($stationOutput)
       [Console]::Out.Flush()
     }
-    Start-Sleep -Milliseconds 50
+    # Bounded thumbnail chunks wait for board ACKs. Poll fast enough to keep
+    # those transfers short while continuing to drain donation acknowledgements.
+    Start-Sleep -Milliseconds 5
   }
 } catch {
   [Console]::Error.WriteLine('Station USB port failed. Close Arduino Serial Monitor and check the selected COM port. No payments were changed.')

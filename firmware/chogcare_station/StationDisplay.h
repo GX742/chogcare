@@ -10,8 +10,9 @@
 #include "StationConfig.h"
 #include "StationArt.h"
 #include "StationBrand.h"
+#include "StationLeaderboard.h"
 
-// One 15 KB strip, never a full-screen framebuffer. Brand images live in flash;
+// One 7.5 KB strip, never a full-screen framebuffer. Brand images live in flash;
 // only the status line, hearts and overflowing text need animated redraws.
 class StationDisplay {
  public:
@@ -21,6 +22,7 @@ class StationDisplay {
     if (!band.getBuffer()) return false;
     tft.init(240, 320); tft.setRotation(StationConfig::ROTATION);
     tft.setSPISpeed(StationConfig::SPI_HZ); tft.setTextWrap(false);
+    band.setTextWrap(false);
     type.begin(band); type.setFontMode(1); type.setFontDirection(0);
     renderFull(); return true;
   }
@@ -29,9 +31,35 @@ class StationDisplay {
     if (connected == value && live == nextLive) return;
     connected = value;
     live = nextLive;
-    if (!active) renderBand(288);
+    if (!connected && board.visible(frameAt)) { board.clear(); if (!active) renderFull(); return; }
+    if (!active) renderStatus();
   }
+  void beginBoard(const StationProtocol::Command &command) {
+    const bool previous = board.visible(frameAt); board.begin(command);
+    if (!active && previous) renderFull();
+  }
+  bool boardPixels(const StationProtocol::Command &command) { return board.append(command); }
+  uint16_t boardOffset() const { return board.offset(); }
+  bool showBoard(const char *id, uint32_t now) {
+    if (!board.show(id, now)) return false;
+    boardNickAscii = true;
+    for (const uint8_t *p = reinterpret_cast<const uint8_t *>(board.nick); *p; ++p) if (*p >= 128) boardNickAscii = false;
+    int16_t x, y; uint16_t width, height;
+    band.setFont(&FreeSansBold18pt7b); band.getTextBounds(board.nick, 0, 0, &x, &y, &width, &height);
+    boardNickAscii = boardNickAscii && width <= 216;
+    type.setFont(u8g2_font_10x20_t_cyrillic); boardNickWidth = type.getUTF8Width(board.nick) + 1;
+    boardAmountFont = &FreeSansBold24pt7b;
+    for (uint8_t size = 0; size < 3; ++size) {
+      band.setFont(boardAmountFont); band.getTextBounds(board.amount, 0, 0, &x, &y, &width, &height);
+      if (width <= 216 || size == 2) break;
+      boardAmountFont = size == 0 ? &FreeSansBold18pt7b : &FreeSansBold12pt7b;
+    }
+    boardAmountWidth = width; boardAmountBearing = x; band.setFont(nullptr);
+    frameAt = now; if (!active) renderFull(); return true;
+  }
+  void clearBoard() { const bool previous = board.visible(frameAt); board.clear(); if (previous && !active) renderFull(); }
   void show(const char *nickname, const char *chog, const char *cause, bool isTest, uint32_t now) {
+    board.clear();
     strlcpy(nick, nickname, sizeof(nick)); formatAmount(chog);
     test = isTest || !strcmp(nick, "TEST - NO PAYMENT") || !strcmp(nick, "DEMO");
     setInitiative("A cause", "you chose");
@@ -52,15 +80,18 @@ class StationDisplay {
     const uint32_t elapsed = now - frameAt;
     if (elapsed < StationConfig::FRAME_MS) return;
     frameAt = now;
+    if (!active && board.expire(now)) renderFull();
     orbitPhase = fmodf(orbitPhase + min(elapsed, uint32_t(1000)) * 0.0018f, TWO_PI);
     age = active ? now - startedAt : 0;
     const uint8_t current = scene();
     const bool full = active && current != lastScene;
     for (int16_t y = 0; y < 320; y += StationConfig::STRIP_HEIGHT) {
       const bool moving = active ?
-        (y == 288 || (current == 1 && amountWidth > 216 && y >= 160 && y <= 224) ||
+        (y >= 288 || (current == 1 && amountWidth > 216 && y >= 160 && y <= 224) ||
          (current == 2 && y >= 64 && y <= 160) ||
-         (current == 2 && nicknameWidth > 216 && y >= 224 && y <= 256)) : y == 288;
+         (current == 2 && nicknameWidth > 216 && y >= 224 && y <= 256)) :
+        (y >= 288 || (board.visible(now) && ((!boardNickAscii && boardNickWidth > 216 && y >= 192 && y <= 224) ||
+          (boardAmountWidth > 216 && y >= 224 && y <= 256))));
       if (full || moving) renderBand(y);
     }
     lastScene = current;
@@ -70,6 +101,10 @@ class StationDisplay {
   Adafruit_ST7789 tft;
   GFXcanvas16 band;
   U8G2_FOR_ADAFRUIT_GFX type;
+  StationLeaderboard board;
+  bool boardNickAscii = false;
+  int16_t boardNickWidth = 0, boardAmountWidth = 0, boardAmountBearing = 0;
+  const GFXfont *boardAmountFont = &FreeSansBold24pt7b;
   bool active = false, connected = false, live = false, test = false;
   uint32_t startedAt = 0, frameAt = 0, age = 0;
   uint8_t lastScene = 0;
@@ -178,12 +213,52 @@ class StationDisplay {
       band.fillRect(12, 315 - bandY, min(uint32_t(216), age * 216 / StationConfig::SHOW_MS), 2, pink());
     }
   }
+  int16_t boardTextX(int16_t width) const {
+    if (width <= 216) return (240 - width) / 2;
+    const uint32_t local = board.age(frameAt);
+    const float progress = local <= 650 ? 0 : min(local - 650, uint32_t(6000)) / 6000.0f;
+    return 12 - lroundf((width - 216) * ease(progress));
+  }
+  void boardAvatar() {
+    const int16_t left = 56, top = 60, size = 128, radius = 15;
+    const int16_t first = max(top, bandY), last = min(int16_t(top + size), int16_t(bandY + StationConfig::STRIP_HEIGHT));
+    for (int16_t y = first; y < last; ++y) for (int16_t x = 0; x < size; ++x) {
+      const int16_t edgeX = min(x, int16_t(size - 1 - x)), edgeY = min(int16_t(y - top), int16_t(top + size - 1 - y));
+      if (edgeX < radius && edgeY < radius && (radius - edgeX) * (radius - edgeX) + (radius - edgeY) * (radius - edgeY) > radius * radius) continue;
+      uint16_t color;
+      if (board.image) color = board.pixels[((y - top) / 2) * StationLeaderboard::SIZE + x / 2];
+      else color = pgm_read_word(StationArt::DonationCoin + ((y - top) * 96 / size) * 96 + x * 96 / size);
+      band.drawPixel(left + x, y - bandY, color);
+    }
+  }
+  void renderBoard() {
+    if (intersects(0, 36)) gfxCenter("LEADERBOARD", &FreeSansBold12pt7b, 30, ink());
+    if (intersects(40, 54)) {
+      line(12, 45, 75, 45, rgb(55, 34, 76)); line(165, 45, 228, 45, rgb(55, 34, 76));
+      char rank[10]; snprintf(rank, sizeof(rank), "TOP %02u", unsigned(atoi(board.rank)));
+      smallCenter(rank, 49, pink());
+    }
+    if (intersects(56, 192)) { band.drawRoundRect(52, 56 - bandY, 136, 136, 19, rgb(106, 57, 138)); boardAvatar(); }
+    if (intersects(196, 226)) {
+      if (boardNickAscii) gfxCenter(board.nick, &FreeSansBold18pt7b, 223, ink());
+      else { type.setFont(u8g2_font_10x20_t_cyrillic); type.setForegroundColor(ink()); type.setCursor(boardTextX(boardNickWidth), 220 - bandY); type.print(board.nick); mask(196, 30); }
+    }
+    if (intersects(230, 272)) {
+      band.setFont(boardAmountFont); band.setTextColor(pink()); band.setCursor(boardTextX(boardAmountWidth) - boardAmountBearing, 263 - bandY); band.print(board.amount); band.setFont(nullptr); mask(230, 42);
+    }
+    if (intersects(274, 290)) smallCenter("CHOG DONATED", 287, muted());
+    if (intersects(288, 320)) liveLine();
+  }
   void renderFull() {
     for (int16_t y = 0; y < 320; y += StationConfig::STRIP_HEIGHT) { renderBand(y); yield(); }
+  }
+  void renderStatus() {
+    for (int16_t y = 288; y < 320; y += StationConfig::STRIP_HEIGHT) renderBand(y);
   }
   void renderBand(int16_t y) {
     bandY = y; band.fillScreen(background());
     if (!active) {
+      if (board.visible(frameAt)) { renderBoard(); tft.drawRGBBitmap(0, y, band.getBuffer(), 240, StationConfig::STRIP_HEIGHT); yield(); return; }
       if (intersects(0, 48)) gfxCenter("ChogCare", &FreeSansBold18pt7b, 35, ink());
       if (intersects(54, 230)) coin(StationBrand::WaitingArt, 176, 32, 54);
       if (intersects(232, 282)) { gfxCenter("Waiting for", &FreeSansBold12pt7b, 254, ink()); gfxCenter("kindness", &FreeSansBold12pt7b, 279, pink()); }

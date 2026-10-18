@@ -3,6 +3,8 @@ import { randomBytes } from "node:crypto";
 import { resolve, dirname } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { openStationEvents, stationDonation, STATION_MAX_LINE_BYTES, STATION_CAUSES } from "../server/station-events.mjs";
+import { createStationLeaderboard } from "./station-leaderboard.mjs";
+import { createStationBoardTransport, validStationBoardAck } from "./station-board-wire.mjs";
 
 const eventIdPattern = /^[a-f0-9]{24}$/;
 const RETRY_MS = 5000, ACCEPTED_TIMEOUT_MS = 60_000;
@@ -13,8 +15,9 @@ export function validStationDeviceMessage(value) {
   if (value.type === "fault") return Object.keys(value).every(key => ["v", "type"].includes(key));
   const scenesValid = value.scenes === undefined || value.scenes === 2;
   const idleValid = value.idle === undefined || value.idle === 1;
-  if (value.type === "hello") return scenesValid && idleValid && Object.keys(value).every(key => ["v", "type", "last", "scenes", "idle"].includes(key)) && (value.last === "" || eventIdPattern.test(value.last ?? ""));
-  if (value.type === "pong") return scenesValid && idleValid && Object.keys(value).every(key => ["v", "type", "scenes", "idle"].includes(key));
+  const boardValid = value.board === undefined || value.board === 1;
+  if (value.type === "hello") return scenesValid && idleValid && boardValid && Object.keys(value).every(key => ["v", "type", "last", "scenes", "idle", "board"].includes(key)) && (value.last === "" || eventIdPattern.test(value.last ?? ""));
+  if (value.type === "pong") return scenesValid && idleValid && boardValid && Object.keys(value).every(key => ["v", "type", "scenes", "idle", "board"].includes(key));
   return value.type === "ack" && Object.keys(value).every(key => ["v", "type", "id", "status"].includes(key)) && eventIdPattern.test(value.id ?? "") && ["accepted", "done"].includes(value.status);
 }
 
@@ -90,6 +93,7 @@ export function createStationController({ write, done = () => {}, onFault = () =
     },
     resetConnection() { scenes = false; liveStatus = false; ready = false; fault = false; lastSeen = -Infinity; lastSent = -Infinity; acceptedAt = null; lastPing = -Infinity; },
     get pendingId() { return current?.id ?? null; },
+    get canShowBoard() { return ready && !fault && !current && now() - lastSeen <= 5000; },
   };
 }
 
@@ -147,12 +151,14 @@ export async function runStationBridge(args = process.argv.slice(2), { onTestSta
   const project = resolve(dirname(fileURLToPath(import.meta.url)), "..");
   let events = null, serial = null, timer = null, stopping = false, tickRunning = false, healthy = options.demo, outputBuffer = "";
   let broadcastLive = false, broadcastCheckedAt = -Infinity, broadcastCheck = null;
+  let boardTransport, leaderboard, boardTask = null, lastBoardAttemptAt = Date.now() - 8000;
   const demoPayload = options.demo ? stationDonation({ id: randomBytes(12).toString("hex"), nick: "DEMO", amount: "300", cause: "solar-foundation", test: true }) : null;
   let demoDone = false;
   let closePromise, finishClose;
   const finished = new Promise(ok => { finishClose = ok; });
   const close = () => closePromise ??= (async () => {
     stopping = true; clearInterval(timer);
+    boardTransport?.close(); leaderboard?.close();
     // On Windows ChildProcess.kill is an abrupt TerminateProcess, not a
     // graceful signal. EOF lets the native transport dispose the USB handle.
     if (serial && serial.exitCode === null && serial.signalCode === null) {
@@ -170,6 +176,10 @@ export async function runStationBridge(args = process.argv.slice(2), { onTestSta
     serial.stdin.write(line, "utf8");
   };
   const controller = createStationController({ write, onTestState, onFault() { console.error("Station display or storage reported a hardware fault. Gratitude is held; reconnect after fixing the device. Payments are unaffected."); }, done(id) { if (options.demo) { demoDone = true; console.log("Demo completed. This did not create or change a payment."); close(); } else events.complete(id); } });
+  if (!options.demo && !options.simulate) {
+    leaderboard = createStationLeaderboard();
+    boardTransport = createStationBoardTransport({ write, canSend: () => !stopping && healthy && controller.canShowBoard });
+  }
   try {
     if (!options.simulate) {
       serial = spawn("powershell.exe", ["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File", resolve(project, "scripts/station-serial.ps1"), "-Port", options.port], { cwd: project, windowsHide: true, shell: false, stdio: ["pipe", "pipe", "pipe"] });
@@ -181,7 +191,15 @@ export async function runStationBridge(args = process.argv.slice(2), { onTestSta
         while ((newline = outputBuffer.indexOf("\n")) >= 0) {
           const line = outputBuffer.slice(0, newline).trim(); outputBuffer = outputBuffer.slice(newline + 1);
           if (!line || Buffer.byteLength(line, "utf8") > 512) continue;
-          try { controller.receive(JSON.parse(line)); } catch { /* Boot chatter and unknown firmware messages never acknowledge gifts. */ }
+          try {
+            const message = JSON.parse(line);
+            if (validStationBoardAck(message)) boardTransport?.receive(message);
+            else if (controller.receive(message)) {
+              if (message.type === "hello") { boardTransport?.cancel(); lastBoardAttemptAt = Date.now() - 8000; }
+              if (message.type === "hello" || message.type === "pong") boardTransport?.setSupported(message.board === 1);
+              if (message.type === "fault") boardTransport?.setSupported(false);
+            }
+          } catch { /* Boot chatter and unknown firmware messages never acknowledge gifts. */ }
         }
       });
       serial.stderr.on("data", () => console.error("Station USB reported an error. Check COM port and close Serial Monitor; payments are unaffected."));
@@ -208,11 +226,21 @@ export async function runStationBridge(args = process.argv.slice(2), { onTestSta
           // says that custody, processing and integrity are ready.
           if (!events && healthy) events = openStationEvents({ processorFilename: resolve(project, "work/payments/processor.sqlite"), profileFilename: resolve(project, "work/payments/preview.sqlite"), stationFilename: resolve(project, options.simulate ? "work/station/simulation.sqlite" : "work/station/station.sqlite") });
           events?.sync(healthy); const payload = events?.next(Date.now(), controller.pendingId);
-          if (payload) { allowedId = payload.id; controller.offer(payload); }
+          if (payload) { allowedId = payload.id; boardTransport?.cancel(); controller.offer(payload); }
         }
         // A previously offered arrival can become unverifiable after a reorg.
         // Revalidate its identity before retrying USB; test displays are separate.
         controller.tick(healthy && (options.demo || allowedId === controller.pendingId), broadcastLive && Date.now() - broadcastCheckedAt <= 8000);
+        // Public board refresh/thumbnail work never occupies the donation tick.
+        // Every upload uses a fresh wire nonce, so late thumbnail ACKs cannot
+        // acknowledge a new rotation or a real gratitude event.
+        if (leaderboard && boardTransport?.supported && healthy && controller.canShowBoard && !boardTask && Date.now() - lastBoardAttemptAt >= 16000) {
+          lastBoardAttemptAt = Date.now();
+          boardTask = leaderboard.next().then(card => {
+            if (!card || stopping || !healthy || !controller.canShowBoard) return false;
+            return boardTransport.show({ ...card, id: randomBytes(12).toString("hex") });
+          }).catch(() => false).finally(() => { lastBoardAttemptAt = Date.now(); boardTask = null; });
+        }
         if (options.simulate && controller.pendingId) controller.receive({ v: 1, type: "ack", id: controller.pendingId, status: "done" });
       } catch { console.error("Station safety check failed; forwarding is paused. Preserve station and payment databases. Payments were not changed."); healthy = false; events?.sync(false); }
       finally { tickRunning = false; }
@@ -224,7 +252,7 @@ export async function runStationBridge(args = process.argv.slice(2), { onTestSta
       // All queue offers are synchronous. Never replace an in-flight event or
       // jump ahead of a real gratitude already present in the durable queue.
       if (controller.pendingId || events?.next()) return "busy";
-      return controller.test();
+      const result = controller.test(); if (result === "accepted") boardTransport?.cancel(); return result;
     } };
   } catch (error) { await close(); throw error; }
 }

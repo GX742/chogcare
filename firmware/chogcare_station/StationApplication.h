@@ -22,7 +22,7 @@ class StationApplication {
     memoryReady = EEPROM.length() == 64 && EEPROM.getConstDataPtr() != nullptr;
     if (memoryReady) loadLastDone();
     displayReady = display.begin();
-    Serial.print(F("{\"v\":1,\"type\":\"hello\",\"scenes\":2,\"idle\":1,\"last\":\""));
+    Serial.print(F("{\"v\":1,\"type\":\"hello\",\"scenes\":2,\"idle\":1,\"board\":1,\"last\":\""));
     Serial.print(lastDone);
     Serial.println(F("\"}"));
     if (!displayReady || !memoryReady) Serial.println(F("{\"v\":1,\"type\":\"fault\"}"));
@@ -99,14 +99,29 @@ class StationApplication {
     Serial.print(id); Serial.print(F("\",\"status\":\""));
     Serial.print(status); Serial.println(F("\"}"));
   }
+  void boardAck(const char *id, const char *status) {
+    Serial.print(F("{\"v\":1,\"type\":\"boardack\",\"id\":\"")); Serial.print(id);
+    Serial.print(F("\",\"status\":\"")); Serial.print(status);
+    Serial.print(F("\",\"offset\":\"")); Serial.print(display.boardOffset()); Serial.println(F("\"}"));
+  }
   void command(const StationProtocol::Command &next) {
     heardBridge = true; lastPingAt = millis();
     if (next.type == StationProtocol::Type::Ping) {
       broadcastLive = next.live;
-      Serial.println(F("{\"v\":1,\"type\":\"pong\",\"scenes\":2,\"idle\":1}"));
+      Serial.println(F("{\"v\":1,\"type\":\"pong\",\"scenes\":2,\"idle\":1,\"board\":1}"));
       return;
     }
     if (!displayReady || !memoryReady) return;
+    if (next.type != StationProtocol::Type::Donation) {
+      // Presentation only. Never interrupts gratitude, persists an event ID or
+      // enters a donation acknowledgement path. The LED remains off while idle.
+      if (active) return;
+      if (next.type == StationProtocol::Type::Board) { display.beginBoard(next); boardAck(next.id, "ready"); }
+      else if (next.type == StationProtocol::Type::Pixels && display.boardPixels(next)) boardAck(next.id, "chunk");
+      else if (next.type == StationProtocol::Type::BoardShow && display.showBoard(next.id, millis())) boardAck(next.id, "shown");
+      else if (next.type == StationProtocol::Type::BoardClear) display.clearBoard();
+      return;
+    }
     if (!strcmp(lastDone, next.id)) { ack(next.id, "done"); return; }
     if (active) {
       if (!strcmp(current.id, next.id)) ack(next.id, "accepted");

@@ -34,12 +34,12 @@ class StationDisplay {
   void show(const char *nickname, const char *chog, const char *cause, bool isTest, uint32_t now) {
     strlcpy(nick, nickname, sizeof(nick)); formatAmount(chog);
     test = isTest || !strcmp(nick, "TEST - NO PAYMENT") || !strcmp(nick, "DEMO");
-    title1 = "A cause you chose"; title2 = "Real-world care";
-    if (!strcmp(cause, "school-supplies")) { title1 = "School supplies"; title2 = "Crypto education"; }
-    else if (!strcmp(cause, "vida-verde")) { title1 = "+Vida +Verde"; title2 = "Venezuela"; }
-    else if (!strcmp(cause, "solar-foundation")) { title1 = "The Solar"; title2 = "Foundation"; }
-    else if (!strcmp(cause, "animal-ethics")) { title1 = "Animal Ethics"; title2 = ""; }
-    else if (!strcmp(cause, "burundi")) { title1 = "Perfect Villages"; title2 = "Burundi"; }
+    setInitiative("A cause", "you chose");
+    if (!strcmp(cause, "school-supplies")) setInitiative("School", "Supplies", "& Crypto", "Education");
+    else if (!strcmp(cause, "vida-verde")) setInitiative("+Vida", "+Verde", "Venezuela");
+    else if (!strcmp(cause, "solar-foundation")) setInitiative("The Solar", "Foundation");
+    else if (!strcmp(cause, "animal-ethics")) setInitiative("Animal", "Ethics");
+    else if (!strcmp(cause, "burundi")) setInitiative("Perfect", "Villages", "Burundi");
     type.setFont(u8g2_font_10x20_t_cyrillic); nicknameWidth = type.getUTF8Width(nick) + 1;
     int16_t x, y; uint16_t w, h;
     band.setFont(&FreeSansBold24pt7b); band.getTextBounds(amount, 0, 0, &x, &y, &w, &h);
@@ -76,7 +76,9 @@ class StationDisplay {
   float orbitPhase = 0;
   int16_t bandY = 0, nicknameWidth = 0, amountWidth = 0, amountBearing = 0;
   char nick[97] = {}, amount[32] = {};
-  const char *title1 = "", *title2 = "";
+  const char *titleLines[4] = {"", "", "", ""};
+  int16_t titleBaselines[4] = {};
+  uint8_t titleLineCount = 0;
   static uint16_t rgb(uint8_t r, uint8_t g, uint8_t b) { return ((r & 0xf8) << 8) | ((g & 0xfc) << 3) | (b >> 3); }
   static uint16_t background() { return rgb(15, 5, 25); }
   static uint16_t ink() { return rgb(252, 247, 255); }
@@ -100,16 +102,37 @@ class StationDisplay {
     type.setFont(u8g2_font_helvB08_tf); type.setForegroundColor(color);
     type.setCursor(x, baseline - bandY); type.print(value);
   }
-  void gfxCenter(const char *value, const GFXfont *font, int16_t baseline, uint16_t color) {
+  void gfxCenter(const char *value, const GFXfont *font, int16_t baseline, uint16_t color, int16_t center = 120) {
     int16_t x, y; uint16_t w, h;
     band.setFont(font); band.setTextSize(1); band.getTextBounds(value, 0, 0, &x, &y, &w, &h);
-    band.setTextColor(color); band.setCursor((240 - w) / 2 - x, baseline - bandY); band.print(value); band.setFont(nullptr);
+    band.setTextColor(color); band.setCursor(center - (w + 1) / 2 - x, baseline - bandY); band.print(value); band.setFont(nullptr);
+  }
+  void setInitiative(const char *first, const char *second = "", const char *third = "", const char *fourth = "") {
+    titleLines[0] = first; titleLines[1] = second; titleLines[2] = third; titleLines[3] = fourth;
+    titleLineCount = 4;
+    while (titleLineCount && !titleLines[titleLineCount - 1][0]) --titleLineCount;
+    // Use actual glyph bounds: descenders in Supplies / Crypto need more room
+    // than a line of capitals. Center the complete title without shrinking it.
+    int16_t tops[4]; uint16_t heights[4]; int16_t totalHeight = 0;
+    for (uint8_t i = 0; i < titleLineCount; ++i) {
+      int16_t x; uint16_t w;
+      band.setFont(initiativeFont(titleLines[i]));
+      band.getTextBounds(titleLines[i], 0, 0, &x, &tops[i], &w, &heights[i]);
+      totalHeight += heights[i] + (i ? 5 : 0);
+    }
+    int16_t top = 100 + (172 - totalHeight) / 2;
+    for (uint8_t i = 0; i < titleLineCount; ++i) {
+      titleBaselines[i] = top - tops[i]; top += heights[i] + 5;
+    }
+    band.setFont(nullptr);
+  }
+  const GFXfont *initiativeFont(const char *value) {
+    int16_t x, y; uint16_t w, h;
+    band.setFont(&FreeSansBold24pt7b); band.getTextBounds(value, 0, 0, &x, &y, &w, &h);
+    return w <= 216 ? &FreeSansBold24pt7b : &FreeSansBold18pt7b;
   }
   void initiativeTitle(const char *value, int16_t baseline, uint16_t color) {
-    if (!value[0]) return;
-    int16_t x, y; uint16_t w, h;
-    band.setFont(&FreeSansBold18pt7b); band.getTextBounds(value, 0, 0, &x, &y, &w, &h);
-    gfxCenter(value, w <= 216 ? &FreeSansBold18pt7b : &FreeSansBold12pt7b, baseline, color);
+    if (value[0]) gfxCenter(value, initiativeFont(value), baseline, color);
   }
   int16_t textX(int16_t width) const {
     if (width <= 216) return (240 - width) / 2;
@@ -167,15 +190,20 @@ class StationDisplay {
       if (intersects(288, 320)) liveLine();
     } else {
       if (scene() == 0) {
-        if (intersects(64, 96)) gfxCenter("Your care goes to", &FreeSansBold9pt7b, 86, muted());
-        if (intersects(112, 192)) {
-          initiativeTitle(title1, title2[0] ? 145 : 164, ink());
-          initiativeTitle(title2, 187, pink());
+        if (intersects(50, 86)) {
+          band.fillRoundRect(12, 50 - bandY, 216, 36, 18, rgb(39, 20, 53));
+          for (uint8_t stroke = 0; stroke < 2; ++stroke) {
+            line(29, 65 + stroke, 35, 71 + stroke, pink());
+            line(35, 71 + stroke, 46, 60 + stroke, pink());
+          }
+          gfxCenter("Kindness received", &FreeSansBold9pt7b, 73, ink(), 133);
         }
-        if (intersects(208, 240)) line(84, 220, 156, 220, pink());
-        if (intersects(288, 312)) {
-          gfxCenter(test ? "INITIATIVE PREVIEW" : "A cause you supported", &FreeSansBold9pt7b, 304, muted());
+        if (intersects(100, 272)) {
+          for (uint8_t i = 0; i < titleLineCount; ++i) {
+            initiativeTitle(titleLines[i], titleBaselines[i], i + 1 == titleLineCount ? pink() : ink());
+          }
         }
+        if (intersects(280, 288)) line(84, 284, 156, 284, pink());
       } else if (scene() == 1) {
         if (intersects(48, 144)) coin(StationArt::DonationCoin, 96, 72, 48);
         if (intersects(156, 216)) {

@@ -30,10 +30,10 @@ test("screen story has bounded phases, explicit tests and no new network surface
 test("initiative screen is immediately visible text only, without photo or fade",async()=>{
   const display=await readFile(new URL("../firmware/chogcare_station/StationDisplay.h",import.meta.url),"utf8");
   assert.doesNotMatch(display,/StationScenes|void photo\(|float fade\(|brightness|previousFade/);
-  assert.ok(display.includes('initiativeTitle(title1, title2[0] ? 145 : 164'));
-  assert.ok(display.includes('initiativeTitle(title2, 187'));
-  assert.ok(display.includes('gfxCenter("Your care goes to", &FreeSansBold9pt7b, 86'));
-  assert.ok(display.includes('w <= 216 ? &FreeSansBold18pt7b : &FreeSansBold12pt7b'));
+  assert.ok(display.includes('Kindness received'));
+  assert.ok(display.includes('const char *titleLines[4]'));
+  assert.ok(display.includes('initiativeTitle(titleLines[i], titleBaselines[i]'));
+  assert.ok(display.includes('w <= 216 ? &FreeSansBold24pt7b : &FreeSansBold18pt7b'));
 });
 
 test("waiting and gratitude artwork preserves the requested image with rounded corners in flash",async()=>{

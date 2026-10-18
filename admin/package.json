@@ -1,6 +1,6 @@
 {
   "name": "chogcare-admin",
-  "version": "1.0.3",
+  "version": "1.0.4",
   "private": true,
   "type": "module",
   "main": "main.mjs",
@@ -9,7 +9,7 @@
   "build": {
     "appId": "com.chogcare.admin",
     "productName": "ChogCare Admin",
-    "electronVersion": "44.7.0",
+    "electronVersion": "44.9.0",
     "electronDist": "../node_modules/electron/dist",
     "asar": true,
     "electronFuses": {

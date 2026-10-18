@@ -13,6 +13,7 @@ Scope included the current React website, local payment API and transaction/rece
 | Full JavaScript and isolated contract regression suite on Node 24.22.0 | 553 passed, 0 failed, 0 skipped |
 | Solidity compilation | 32 source units compiled; upstream OpenZeppelin future-keyword warnings remain |
 | Full npm audit: root, `ops/payments`, `admin` | 0 known advisories in all three reports at review time |
+| Desktop build and native renderer smoke | Passed on Electron 44.9.0 with embedded Node 24.22.0, isolated mock data and no renderer errors |
 | Source/release guard | No credential-pattern or forbidden-runtime-file finding |
 | Gitleaks 8.30.1, all 45 pre-publication reachable commits | No confirmed secret; two unfiltered matches were the exact public CHOG ERC-20 contract address |
 | Seven existing GitHub Actions logs | No Gitleaks finding; no release assets, Actions artifacts, issues or comments required private-data removal |
@@ -32,6 +33,7 @@ The public CHOG contract address is intentionally documented and is not a wallet
 4. Updated the stale avatar source assertion to accept the responsive image attributes while still requiring the intended avatar and accessible text. The earlier full run had 552 passing tests and this one failing assertion; all 553 now pass locally.
 5. Replaced conflicting historical README instructions with the current architecture, supported Node LTS setup and a payment-free judge walkthrough. Updated the Windows operator guide's obsolete Node 25 instructions.
 6. Removed the hardcoded legacy Twitch channel from current defaults and the environment example. A Twitch fallback now requires explicit configuration; normal Owncast playback is unchanged. Historical client-side account identifiers are not credentials, and Git history was not rewritten.
+7. Updated the source's Electron pin and desktop packaging target from 44.7.0 to 44.9.0. The intermediate 44.8.0 release backports Chromium/V8 fixes and moves its embedded Node to 24.22.0; 44.9.0 also fixes window preference inheritance and a certificate-verification race. A regression assertion keeps the packaging target and locked engine aligned. This source update does not replace an already installed desktop binary.
 
 ## Application safeguards inspected
 
@@ -51,9 +53,15 @@ The public CHOG contract address is intentionally documented and is not a wallet
 5. **Local installation:** the locally built Windows installer is unsigned, and published source is not proof that an already installed binary matches it. No installer replacement, secret rotation, custody unlock, integrity re-enrolment or financial database reset was performed.
 6. **Review limits:** no whole-computer penetration test, independent protocol/contract audit, comprehensive public-internet DDoS test or physical iPhone certification was performed. Secret scanners can miss unknown patterns. Repository and CI status must be checked at the final published revision.
 
+## Infrastructure version check
+
+Owncast 0.3.0 matches its official stable release at review time. The installed nginx is Ubuntu's `1.28.3-2ubuntu1.11`, including the September CVE-2026-42533 backport; its running executable matches that installed binary. The upstream base version alone does not describe its patch status. The October upstream advisories still require continued vendor tracking. The inspected gateway uses loopback HTTP with no HTTP/3, TLS session tickets, AIO, SSI or URI-rewriting directives; those advisory preconditions were not present in the reviewed public configuration. This is a configuration assessment, not a declaration that every nginx build/configuration is unaffected.
+
 ## References
 
 - [Gitleaks CLI and configuration](https://github.com/gitleaks/gitleaks)
 - [GitHub Dependabot alerts](https://docs.github.com/en/code-security/how-tos/secure-your-supply-chain/secure-your-dependencies/configure-dependabot-alerts)
 - [Electron security guidance](https://www.electronjs.org/docs/latest/tutorial/security)
+- [Electron 44.8.0 fixes](https://github.com/electron/electron/releases/tag/v44.8.0), [44.9.0 fixes](https://github.com/electron/electron/releases/tag/v44.9.0)
+- [nginx security advisories](https://nginx.org/en/security_advisories.html)
 - [Earlier internal review](SECURITY-AUDIT-2026-10-11.md)

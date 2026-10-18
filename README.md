@@ -59,7 +59,7 @@ The public website cannot execute local admin commands, edit recipients, list su
 
 ## Security and privacy
 
-The [final 18 October review](docs/FINAL-SECURITY-PRIVACY-2026-10-18.md) records the checks, fixes and remaining risks, including a confirmed personal-email disclosure in GitHub author metadata and remaining anonymous-reservation abuse. CI runs source guards, full-history credential scanning, regression tests, builds and dependency audits. Published source excludes environment files, keys, encrypted custody backups, financial databases, support messages and local work artifacts. Credential scanning alone does not establish that author metadata is private.
+The [final 18 October review, updated after remediation](docs/FINAL-SECURITY-PRIVACY-2026-10-18.md) records the checks, active fixes and remaining risks. Personal email was removed from current public branch histories; retained old GitHub objects still require a separate privacy/support resolution. Anonymous-reservation abuse also remains possible. CI runs source guards, full-history credential scanning, regression tests, builds and dependency audits. Published source excludes environment files, keys, encrypted custody backups, financial databases, support messages and local work artifacts. Credential scanning alone does not establish that author metadata is private.
 
 This remains an **owner-operated payment pilot**, with signing keys unlocked locally during processing. A compromised operator account or computer, third-party protocols and RPC failures remain material risks. Passing checks is not an independent financial audit or a guarantee against every vulnerability. Live blockchain transactions and optional public NFT avatars can reveal identity through correlation.
 

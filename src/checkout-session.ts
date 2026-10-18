@@ -98,6 +98,11 @@ function readHistory(storage: SessionStore): { mode: CheckoutMode; id: string }[
   if (!Array.isArray(value) || value.some(item => !item || !["chog", "nft"].includes(item.mode) || !validInvoiceId(item.id))) throw new Error("Saved payment history needs operator recovery.");
   return value;
 }
+// Read-only access to recent receipts, including v1 history from older tabs.
+// Opening an image must never reactivate or replace an outstanding invoice.
+export function recentSavedInvoices(storage = currentStore()) {
+  return readHistory(storage).slice(-20).reverse();
+}
 export function recoveryBundle(storage = currentStore()) {
   return JSON.stringify({ version: 1, chog: savedInvoice("chog", storage), nft: savedInvoice("nft", storage), pendingChog: pendingCreation("chog", storage), pendingNft: pendingCreation("nft", storage), history: readHistory(storage) }, null, 2);
 }

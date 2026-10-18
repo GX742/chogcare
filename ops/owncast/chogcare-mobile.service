@@ -1,7 +1,7 @@
 [Unit]
 Description=ChogCare mobile HLS rendition
-After=owncast.service
-Wants=owncast.service
+After=owncast.service chogcare-mobile-input.service
+Wants=owncast.service chogcare-mobile-input.service
 
 [Service]
 Type=simple
@@ -13,7 +13,11 @@ WorkingDirectory=/var/lib/chogcare-mobile
 # Read the existing local broadcast. No RTMP key or admin password is needed.
 # Portrait aspect and the camera framing are preserved; the original 1080p
 # stream remains available alongside this lower-bandwidth rendition.
-ExecStart=/opt/owncast/ffmpeg -hide_banner -loglevel warning -nostdin -rw_timeout 15000000 -copyts -live_start_index -3 -i http://127.0.0.1:8080/hls/stream.m3u8 -map 0:v:0 -map 0:a:0? -vf scale=720:1280:force_original_aspect_ratio=decrease:force_divisible_by=2,pad=720:1280:(ow-iw)/2:(oh-ih)/2,fps=24 -c:v libx264 -profile:v main -level:v 3.1 -preset veryfast -tune zerolatency -b:v 550k -maxrate 650k -bufsize 1100k -g 24 -keyint_min 24 -sc_threshold 0 -pix_fmt yuv420p -c:a aac -b:a 64k -ac 2 -ar 48000 -f hls -hls_time 1 -hls_list_size 25 -hls_delete_threshold 5 -hls_flags delete_segments+independent_segments+temp_file -hls_segment_options mpegts_copyts=1 -hls_start_number_source epoch -hls_segment_filename /var/lib/chogcare-mobile/stream-%%d.ts /var/lib/chogcare-mobile/stream.m3u8
+# Join the newest completed source segment. Bound input probing so a quiet
+# camera cannot accumulate tens of seconds before decoding its first frame.
+# The website is always muted. Its video-only mobile rendition avoids an audio
+# scheduler queue; VFR never manufactures old frames across a skipped input gap.
+ExecStart=/opt/owncast/ffmpeg -hide_banner -loglevel warning -nostdin -rw_timeout 15000000 -fflags +nobuffer -flags low_delay -probesize 131072 -analyzeduration 1000000 -filter_threads 2 -threads 2 -copyts -live_start_index -1 -an -thread_queue_size 1 -http_multiple 0 -http_persistent 0 -avioflags direct -i http://127.0.0.1:8091/stream.m3u8 -map 0:v:0 -vf scale=720:1280:force_original_aspect_ratio=decrease:force_divisible_by=2,pad=720:1280:(ow-iw)/2:(oh-ih)/2,framestep=2 -threads 2 -c:v libx264 -profile:v main -level:v 3.1 -preset veryfast -tune zerolatency -b:v 550k -maxrate 650k -bufsize 650k -g 15 -keyint_min 15 -sc_threshold 0 -pix_fmt yuv420p -an -fps_mode vfr -max_interleave_delta 1000000 -flush_packets 1 -f hls -hls_time 1 -hls_list_size 8 -hls_delete_threshold 5 -hls_flags delete_segments+independent_segments+temp_file -hls_segment_options mpegts_copyts=1 -hls_start_number_source epoch -hls_segment_filename /var/lib/chogcare-mobile/stream-%%d.ts /var/lib/chogcare-mobile/stream.m3u8
 Restart=always
 RestartSec=2
 UMask=0022

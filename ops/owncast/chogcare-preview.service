@@ -11,7 +11,7 @@ StateDirectory=chogcare-preview
 StateDirectoryMode=0755
 WorkingDirectory=/var/lib/chogcare-preview
 # One small, atomically replaced frame per second from the existing local HLS.
-ExecStart=/opt/owncast/ffmpeg -hide_banner -loglevel warning -nostdin -live_start_index -1 -i /var/lib/chogcare-mobile/stream.m3u8 -an -vf fps=1,scale=360:640 -c:v mjpeg -q:v 5 -f image2 -update 1 -atomic_writing 1 /var/lib/chogcare-preview/preview.jpg
+ExecStart=/opt/owncast/ffmpeg -hide_banner -loglevel warning -nostdin -fflags +nobuffer -flags low_delay -probesize 65536 -analyzeduration 1000000 -filter_threads 2 -threads 2 -live_start_index -1 -i /var/lib/chogcare-mobile/stream.m3u8 -an -vf fps=1,scale=360:640 -threads 2 -c:v mjpeg -q:v 5 -f image2 -update 1 -atomic_writing 1 /var/lib/chogcare-preview/preview.jpg
 ExecStopPost=/usr/bin/rm -f /var/lib/chogcare-preview/preview.jpg
 Restart=always
 RestartSec=2

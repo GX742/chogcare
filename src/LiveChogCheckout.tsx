@@ -11,6 +11,7 @@ import { formatUnits, parseUnits } from "viem";
 import { validatePayableInvoice, type PayableInvoice } from "./payable-invoice";
 import PaymentActivity from "./PaymentActivity";
 import { paymentPollDelay } from "./payment-progress";
+import { formatDonationAmount } from "./donation-amount";
 import { deliveryNetwork } from "./delivery-network";
 import { supportsChog } from "./chog-beneficiary";
 import { contributionForDonationUnits, NFT_POOL_CONTRIBUTION_PERCENT } from "./pool-contribution";
@@ -32,6 +33,8 @@ export default function LiveChogCheckout({initiativeId,initiativeName,ready,dest
   const heading=useRef<HTMLHeadingElement>(null);
   const amountInput=useRef<HTMLInputElement>(null);
   const currentInvoice=useRef<PayableInvoice|null>(null);
+  const observation=useRef(0),returnFocus=useRef(false);
+  useEffect(()=>{if(!id&&returnFocus.current){returnFocus.current=false;amountInput.current?.focus({preventScroll:true});amountInput.current?.scrollIntoView({block:"center"});}},[id]);
   useEffect(()=>{
     let disposed=false;const controller=new AbortController();
     const load=async()=>{try{const response=await fetch("/api/payments/chog-rate",{signal:AbortSignal.any([controller.signal,AbortSignal.timeout(8000)])});if(!response.ok)return;const value=await response.json();if(value.referenceChog!=="300"||typeof value.estimatedUsdMicros!=="string"||!/^\d{1,12}$/.test(value.estimatedUsdMicros))return;const micros=BigInt(value.estimatedUsdMicros);if(!disposed&&micros>0n)setRateUsdMicros(micros);}catch{/* The checkout remains usable without an indicative display quote. */}};
@@ -43,6 +46,7 @@ export default function LiveChogCheckout({initiativeId,initiativeName,ready,dest
   useEffect(()=>{if(invoice)heading.current?.focus({preventScroll:true});},[invoice?.id]);
   useEffect(()=>{
     if(!id)return;
+    const version=++observation.current;
     let disposed=false;let timer:ReturnType<typeof setTimeout>;const controller=new AbortController();
     const poll=async()=>{
       let failed=false;
@@ -54,9 +58,9 @@ export default function LiveChogCheckout({initiativeId,initiativeName,ready,dest
         if(next.id!==id || next.initiativeId!==initiativeId)throw new Error("Invoice identity or initiative mismatch. Do not pay.");
         const previous=currentInvoice.current;
         if(previous && ["id","initiativeId","recipient","amount","donationAmount","poolContributionAmount","contributionPercent","depositAddress","paymentUri","expiresAt","minUsdc","destinationChainId"].some(key=>previous[key as keyof PayableInvoice]!==next[key as keyof PayableInvoice]))throw new Error("Payment instructions changed unexpectedly. Do not send funds; contact the operator.");
-        if(!disposed){currentInvoice.current=next;setInvoice(next);setOnline(true);setError("");}
-      } catch(problem){failed=true;if(!disposed){setOnline(false);setError(problem instanceof Error?problem.message:"Status unavailable. Do not pay again.");}}
-      finally{if(!disposed)timer=setTimeout(()=>void poll(),paymentPollDelay(currentInvoice.current?.state,failed));}
+        if(!disposed&&version===observation.current){currentInvoice.current=next;setInvoice(next);setOnline(true);setError("");}
+      } catch(problem){failed=true;if(!disposed&&version===observation.current){setOnline(false);setError(problem instanceof Error?problem.message:"Status unavailable. Do not pay again.");}}
+      finally{if(!disposed&&version===observation.current)timer=setTimeout(()=>void poll(),paymentPollDelay(currentInvoice.current?.state,failed));}
     };
     void poll();
     return()=>{disposed=true;controller.abort();clearTimeout(timer);};
@@ -86,15 +90,20 @@ export default function LiveChogCheckout({initiativeId,initiativeName,ready,dest
   };
   const labels={"awaiting-payment":"Waiting for your $CHOG transfer",processing:"$CHOG received · exchanging",bridging:"Sending your donation to the charity",confirming:"Donation received · confirmation in progress",delivered:"Donation delivered",expired:"Invoice expired · do not pay", "manual-review":"Operator review required · do not pay again"};
   const progress=invoice?.state==="delivered"?4:invoice?.state==="confirming"?3:invoice?.state==="bridging"?2:invoice?.state==="processing"?1:0;
-  const reset=()=>{try{closeSavedInvoice("chog");currentInvoice.current=null;setId("");setInvoice(null);setError("");}catch(problem){setError(problem instanceof Error?problem.message:"Keep this invoice for recovery.");}};
+  const reset=()=>{try{closeSavedInvoice("chog");observation.current++;returnFocus.current=true;currentInvoice.current=null;setId("");setInvoice(null);setQr("");setOnline(false);setError("");}catch(problem){setError(problem instanceof Error?problem.message:"Keep this invoice for recovery.");}};
   const paymentAllocation=allocation(amount);
   const received=!!invoice&&["confirming","delivered"].includes(invoice.state);
   const inProgress=invoice?.state==="processing"||invoice?.state==="bridging";
   const receivedTotal=invoice?.receivedAmount??invoice?.amount??"";
   const donationAmount=invoice?.receivedDonationAmount??invoice?.donationAmount??invoice?.amount??"";
+  const selectedDonationAmount=invoice?.donationAmount??invoice?.amount??"";
   const poolAmount=invoice?.receivedPoolContributionAmount??invoice?.poolContributionAmount??"0";
   const overpaid=!!invoice?.receivedAmount&&parseUnits(invoice.receivedAmount,18)>parseUnits(invoice.amount,18);
   const transferOnHold=invoice?.state==="manual-review"&&!!invoice.receivedAmount;
+  const totalDisplay=invoice?.depositHash?formatDonationAmount(receivedTotal):null;
+  const causeDisplay=invoice?.depositHash?formatDonationAmount(donationAmount):null;
+  const poolDisplay=invoice?.depositHash&&parseUnits(poolAmount,18)>0n?formatDonationAmount(poolAmount):null;
+  const roundedAllocation=totalDisplay?.rounded||causeDisplay?.rounded||poolDisplay?.rounded;
   return <section className={`checkout${!id?" is-entry":""}${busy?" is-opening":""}${invoice?" is-invoice":""}${inProgress?" is-processing":""}${received?" is-received":""}${invoice?.state==="delivered"?" is-delivered":""}`} aria-busy={busy} aria-label="$CHOG payment checkout">
     {id&&!received&&<div className="checkout-topline"><span>{inProgress?<><span className={`invoice-processing-mark${!online?" is-paused":""}`} aria-hidden="true"/>Donation in progress</>:transferOnHold?"Transfer on hold · do not pay again":<><QrCode size={17}/> Pay by QR</>}</span></div>}
     {!id ? <form className="chog-giving-form" onSubmit={create}>
@@ -118,13 +127,14 @@ export default function LiveChogCheckout({initiativeId,initiativeName,ready,dest
       </div>
       <button type="submit" className="button primary full checkout-submit" disabled={!serviceAllowed||busy||(!ready&&!pending)||!!saved.error||!supportsChog(initiativeId)}>{busy?"Checking route…":pending?"Retry saved request":!supportsChog(initiativeId)?"Payments coming soon":!ready?"Payments unavailable":"Get payment QR"}{busy?<span className="checkout-loading-ring" aria-hidden="true"/>:<ArrowRight size={18}/>}</button>
     </form> : invoice ? <div className="checkout-invoice">
-      {received?<><DonationThanks amount={donationAmount} headingRef={heading} confirmationPending={invoice.state === "confirming"}/><DonorProfile invoiceId={invoice.id} onViewLeaderboard={onViewLeaderboard}/><DonationShare state={invoice.state} mode="chog" amount={donationAmount} initiativeId={invoice.initiativeId}/></>:<div className="invoice-payment-summary">
-        <div className={`invoice-payment-main${inProgress&&receivedTotal.length>6?" is-long":""}`}><div><h3 ref={heading} tabIndex={-1}>{invoice.state==="expired"?"Payment expired":transferOnHold?"Transfer amount on hold":inProgress?"Total received":"Total to send"}</h3><div className={`invoice-payment-amount${receivedTotal.length>(inProgress?6:9)?" is-long":""}`}><strong>{displayPaymentAmount(receivedTotal)}</strong><span>$CHOG</span></div>{inProgress&&<p className="invoice-processing-note">A little care, on its way.</p>}</div>
+      {received?<><DonationThanks amount={selectedDonationAmount} headingRef={heading} confirmationPending={invoice.state === "confirming"} onDonateAgain={reset}/><DonorProfile invoiceId={invoice.id} onViewLeaderboard={onViewLeaderboard}/><DonationShare state={invoice.state} mode="chog" amount={selectedDonationAmount} initiativeId={invoice.initiativeId}/></>:<div className="invoice-payment-summary">
+        <div className={`invoice-payment-main${inProgress&&(totalDisplay?.display??receivedTotal).length>6?" is-long":""}`}><div><h3 ref={heading} tabIndex={-1}>{invoice.state==="expired"?"Payment expired":transferOnHold?"Transfer amount on hold":inProgress?"Total received":"Total to send"}</h3><div className={`invoice-payment-amount${(totalDisplay?.display??receivedTotal).length>(inProgress?6:9)?" is-long":""}`}><strong title={`${receivedTotal} $CHOG`}>{totalDisplay?.display??displayPaymentAmount(receivedTotal)}</strong><span>$CHOG</span></div>{inProgress&&<p className="invoice-processing-note">A little care, on its way.</p>}</div>
           {inProgress&&<img className="invoice-processing-art" src="/chogcare-care-logo.png" width="1254" height="1254" alt="ChogCare" decoding="async"/>}
         </div>
-        <p className="invoice-payment-allocation"><span><strong>{displayPaymentAmount(donationAmount)} $CHOG</strong> to {initiativeName}</span><span><strong>+{displayPaymentAmount(poolAmount)} $CHOG</strong> to the NFT community pool</span></p>
+        <p className="invoice-payment-allocation"><span><strong title={`${donationAmount} $CHOG`}>{causeDisplay?.display??displayPaymentAmount(donationAmount)} $CHOG</strong> to {initiativeName}</span><span><strong title={`${poolAmount} $CHOG`}>+{poolDisplay?.display??displayPaymentAmount(poolAmount)} $CHOG</strong> to the NFT community pool</span></p>
+        {roundedAllocation&&<p className="checkout-rounded-note">Rounded for display. Exact amounts in Payment details.</p>}
       </div>}
-      {overpaid&&<p className="checkout-help invoice-received-adjustment">Received {displayPaymentAmount(receivedTotal)} $CHOG; requested {displayPaymentAmount(invoice.amount)} $CHOG. {transferOnHold?"This transfer is on hold for review. Do not pay again.":"Your entire transfer is included in the donation and pool split."}</p>}
+      {overpaid&&<p className="checkout-help invoice-received-adjustment">Received {totalDisplay?.rounded?"approximately ":""}{totalDisplay?.display??displayPaymentAmount(receivedTotal)} $CHOG; requested {displayPaymentAmount(invoice.amount)} $CHOG. {transferOnHold?"This transfer is on hold for review. Do not pay again.":"Your entire transfer is included in the donation and pool split."}</p>}
       {canPay && <><p className="checkout-scan-caption">Scan the QR or copy the details below. Send the exact $CHOG amount once, from your own wallet. This address is not the token contract.</p><PaymentInstructions amount={invoice.amount} asset="$CHOG" address={invoice.depositAddress} qr={qr} expiresAt={invoice.expiresAt} onError={setError}/></>}
       {!["expired","delivered","confirming"].includes(invoice.state) && <ol className="checkout-progress" aria-label="Donation progress">{["Transfer","Exchange","Bridge","Receipt"].map((label,index)=><li key={label} className={index<progress?"complete":index===progress?"current":""} aria-current={index===progress?"step":undefined}><span>{index<progress?<Check size={13}/>:index+1}</span>{label}</li>)}</ol>}
       {!received&&<PaymentActivity invoice={invoice} now={now} online={online}/>}
@@ -137,13 +147,12 @@ export default function LiveChogCheckout({initiativeId,initiativeName,ready,dest
       {invoice.destinationHash&&<a className="field-link" href={`${network.explorer}/tx/${invoice.destinationHash}`} target="_blank" rel="noreferrer">Donation receipt ↗</a>}
       {!invoice.destinationHash&&invoice.observedDestinationHash&&<a className="field-link" href={`${network.explorer}/tx/${invoice.observedDestinationHash}`} target="_blank" rel="noreferrer">Receipt · awaiting finality ↗</a>}
       </div></details>}
-      {invoice.state==="delivered"&&<button className="checkout-reference" onClick={reset}>Make another donation <ArrowRight size={16}/></button>}
       {invoice.state==="expired"&&!invoice.depositHash&&<><p className="checkout-help">Already sent $CHOG? Keep this invoice open. Do not pay again.</p><button className="button primary full checkout-submit" onClick={reset}>I haven't paid · start again <ArrowRight size={16}/></button></>}
     </div>:<p className="checkout-help">Restoring your payment status. Do not pay again.</p>}
     <p className="checkout-error" role="alert">{error}</p>
     {onSupport && (error || invoice?.state === "manual-review" || invoice?.state === "expired") && <button className="support-checkout-link" type="button" onClick={() => onSupport({ mode: "chog", ...(validInvoiceId(id) ? { invoiceId: id } : {}), issue: invoice?.state === "manual-review" ? "invoice-review" : "checkout-error" })}>Contact support <ArrowRight size={15}/></button>}
     <details className="checkout-disclosure"><summary>{invoice?"Payment details":"Fees & payment details"}</summary><div>
-      {received&&invoice&&<><p>Donation: {donationAmount} $CHOG. NFT pool contribution: {poolAmount} $CHOG. Total sent: {receivedTotal} $CHOG.</p><p>{invoice.state==="confirming"?"The destination transfer is verified. Final confirmation continues in the background.":"The destination transfer is finalized."}</p><div className="checkout-receipts">{invoice.depositHash&&<a href={`https://monadscan.com/tx/${invoice.depositHash}`} target="_blank" rel="noreferrer">$CHOG transfer ↗</a>}{invoice.bridgeHash&&<a href={`https://monadscan.com/tx/${invoice.bridgeHash}`} target="_blank" rel="noreferrer">Bridge transfer ↗</a>}{(invoice.destinationHash||invoice.observedDestinationHash)&&<a href={`${network.explorer}/tx/${invoice.destinationHash||invoice.observedDestinationHash}`} target="_blank" rel="noreferrer">Donation receipt ↗</a>}</div></>}
+      {invoice?.depositHash&&<><p>{overpaid?<>Selected donation: {selectedDonationAmount} $CHOG. Actual initiative allocation: {donationAmount} $CHOG. Actual NFT pool allocation: {poolAmount} $CHOG. Total received: {receivedTotal} $CHOG.</>:<>Donation: {donationAmount} $CHOG. NFT pool contribution: {poolAmount} $CHOG. Total sent: {receivedTotal} $CHOG.</>}</p>{received&&<p>{invoice.state==="confirming"?"The destination transfer is verified. Final confirmation continues in the background.":"The destination transfer is finalized."}</p>}<div className="checkout-receipts">{invoice.depositHash&&<a href={`https://monadscan.com/tx/${invoice.depositHash}`} target="_blank" rel="noreferrer">$CHOG transfer ↗</a>}{invoice.bridgeHash&&<a href={`https://monadscan.com/tx/${invoice.bridgeHash}`} target="_blank" rel="noreferrer">Bridge transfer ↗</a>}{(invoice.destinationHash||invoice.observedDestinationHash)&&<a href={`${network.explorer}/tx/${invoice.destinationHash||invoice.observedDestinationHash}`} target="_blank" rel="noreferrer">Donation receipt ↗</a>}</div></>}
       <p>Your selected $CHOG amount is allocated to the cause. A mandatory 10% contribution is added on top for the NFT community pool. Small pool contributions are combined before delivery.</p>
       <p>Send $CHOG only on Monad (chain 143). ChogCare exchanges it into the charity's accepted currency. Exchange and delivery fees reduce the amount the charity receives. Your wallet also needs MON for the initial transfer.</p>
       <p>ChogCare controls the deposit address during processing. This is a local mainnet pilot, not independently audited production software. Transfers can pause and need operator recovery. Do not use exchange withdrawals.</p>

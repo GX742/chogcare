@@ -1,5 +1,5 @@
 import { formatUnits, parseUnits } from "viem";
-import { creditedChogDonationAmount, processingChogUnits } from "./chog-received.mjs";
+import { processingChogUnits } from "./chog-received.mjs";
 
 const invoiceIdPattern = /^[a-f0-9]{64}$/;
 const addressPattern = /^0x[0-9a-fA-F]{40}$/;
@@ -15,10 +15,9 @@ const visibleState = state => state === "confirming" || state === "delivered";
 export function verifiedLeaderboardDonation(invoice, id) {
   if (!matches(invoiceIdPattern, id) || invoice?.id !== id || !visibleState(invoice.state)) return null;
   const proof = invoice.depositProof;
-  let processingUnits, amount;
+  let processingUnits;
   try {
     processingUnits = processingChogUnits(invoice);
-    amount = creditedChogDonationAmount(invoice);
   } catch { return null; }
   if (proof?.kind !== "confirmed-chog-transfer" || proof.invoiceId !== id || proof.chainId !== 143 ||
       !matches(addressPattern, proof.sender) || /^0x0{40}$/i.test(proof.sender) ||
@@ -26,9 +25,13 @@ export function verifiedLeaderboardDonation(invoice, id) {
       !matches(/^\d{1,78}$/, proof.amountUnits) ||
       proof.amountUnits !== (Object.hasOwn(invoice, "receivedUnits") ? invoice.receivedUnits : invoice.units) ||
       BigInt(proof.amountUnits) !== processingUnits) return null;
+  // Public recognition uses the donor's original selected cause amount. The
+  // processor still proves and settles the entire received transfer separately;
+  // neither the added pool contribution nor an overpayment inflates this total.
+  const amount = invoice.donationAmount ?? invoice.amount;
   if (!matches(amountPattern, amount)) return null;
   const units = parseUnits(amount, 18);
-  if (units <= 0n || units > BigInt(proof.amountUnits)) return null;
+  if (units <= 0n || units > BigInt(invoice.units) || units > processingUnits) return null;
   return { sender: proof.sender.toLowerCase(), state: invoice.state, amount, initiativeId: invoice.initiativeId ?? "burundi" };
 }
 

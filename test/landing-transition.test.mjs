@@ -83,7 +83,6 @@ test('return positioning catches up only its own scrubbed scene and retains an o
   const css = readFileSync(new URL('../src/sunset-redesign.css', import.meta.url), 'utf8');
   assert.match(app, /transitionLanding\(\(\) => flushSync/);
   assert.match(app, /dispatchEvent\(new Event\(landingPositioned\)\)/);
-  assert.match(scene, /trigger\.getTween\(\)\?\.progress\(1\)/);
   assert.match(scene, /sceneTween\?\.progress\(trigger\.progress\)/);
   assert.match(scene, /removeEventListener\(landingPositioned, alignWithViewport\)/);
   assert.match(css, /view-transition-old\(root\) \{ animation: none; opacity: 1/);

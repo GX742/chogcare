@@ -19,13 +19,25 @@ export function isPositiveChogAmount(value: unknown): value is string {
   return value.match(chogAmount)?.[0] === value && /[1-9]/.test(value);
 }
 
+export function presentChogAmount(value: string): { display: string; rounded: boolean } {
+  if (!isPositiveChogAmount(value)) throw new TypeError("Invalid CHOG amount.");
+  const [whole, fraction = ""] = value.split(".");
+  const units = BigInt(whole) * 10n ** 18n + BigInt(fraction.padEnd(18, "0"));
+  const centUnits = 10n ** 16n, cents = (units + centUnits / 2n) / centUnits;
+  const rounded = units !== cents * centUnits;
+  if (cents === 0n) return { display: "<0.01", rounded: true };
+  const grouped = (cents / 100n).toString().replace(/\B(?=([0-9]{3})+(?![0-9]))/g, ",");
+  const decimals = (cents % 100n).toString().padStart(2, "0").replace(/0+$/, "");
+  return { display: grouped + (decimals ? `.${decimals}` : ""), rounded };
+}
+
+// The operator dashboard retains its existing non-upward four-decimal display.
+// Public care-board presentation uses presentChogAmount instead.
 export function formatChogAmount(value: string): string {
   if (!isPositiveChogAmount(value)) throw new TypeError("Invalid CHOG amount.");
   const [whole, rawFraction = ""] = value.split(".");
   const grouped = whole.replace(/^0+(?=[0-9])/, "").replace(/\B(?=([0-9]{3})+(?![0-9]))/g, ",");
   const fraction = rawFraction.replace(/0+$/, "");
-  // Preserve every whole digit. A shortened fraction is explicitly marked,
-  // never rounded into a larger donation or silently presented as exact.
   return grouped + (fraction ? `.${fraction.slice(0, 4)}${fraction.length > 4 ? "…" : ""}` : "");
 }
 

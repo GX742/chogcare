@@ -2,11 +2,12 @@ import { BaseError, createPublicClient, createTransport, http } from "viem";
 
 // Fixed server-side destinations only. No endpoint comes from a donor or HTTP.
 // Sources: docs.monad.xyz/developer-essentials/network-information and
-// optimism.publicnode.com and drpc.org/docs/optimism-api.
+// optimism.publicnode.com, docs.tenderly.co/node-rpc/overview and
+// drpc.org/docs/optimism-api. Public gateway capabilities are checked read-only.
 // Every endpoint is checked against the pinned chain.
 export const PAYMENT_RPC_URLS = Object.freeze({
   143: Object.freeze(["https://rpc.monad.xyz", "https://rpc-mainnet.monadinfra.com", "https://rpc2.monad.xyz"]),
-  10: Object.freeze(["https://optimism-rpc.publicnode.com", "https://optimism.drpc.org", "https://mainnet.optimism.io"]),
+  10: Object.freeze(["https://optimism-rpc.publicnode.com", "https://optimism.gateway.tenderly.co", "https://optimism.drpc.org"]),
 });
 const READ_METHODS = new Set([
   "eth_chainId", "eth_blockNumber", "eth_getBalance", "eth_getCode", "eth_getStorageAt",
@@ -34,7 +35,7 @@ function failureKind(error, method) {
     // request when its free tier has no archive access. Only this exact access
     // restriction is retryable; genuine invalid parameters and reverts stay fatal.
     if (current.code === -32602 && READ_METHODS.has(method) && /archive requests require a personal token/i.test(message)) return "unsupported";
-    if (method === "eth_getLogs" && [-32614, -32602].includes(current.code) && /eth_getLogs is limited to a \d+ range|block range too large/i.test(message)) return "unsupported";
+    if (method === "eth_getLogs" && [35, -32614, -32602].includes(current.code) && /eth_getLogs is limited to (?:a \d+ range|\d+ - \d+ blocks range)|block range too large|ranges over \d+ blocks are not supported on free plan/i.test(message)) return "unsupported";
     if ([-32601, -32004, 4200].includes(current.code)) return "unsupported";
     if ([-32005, -32002, -32603].includes(current.code)) return "network";
     if ([401, 403, 408, 429].includes(current.status) || current.status >= 500) return "network";
@@ -59,7 +60,9 @@ export function paymentRpcTransport({ chainId, urls = PAYMENT_RPC_URLS[chainId],
       logRange: url === "https://optimism.drpc.org" ? 50n : ["https://rpc.monad.xyz", "https://rpc-mainnet.monadinfra.com"].includes(url) ? 100n : null,
       blockedUntil: 0, failures: 0, verifiedUntil: 0, verifying: null, methods: new Map(),
     }));
-    let preferred = 0;
+    // Archive/log restrictions are method-specific. A successful historical
+    // fallback must not move every balance/heartbeat read onto that provider.
+    const preferred = new Map();
     const pending = new Map();
     const call = async (endpoint, args) => {
       // Respect public Monad/dRPC getLogs limits. Preserve the exact
@@ -104,7 +107,7 @@ export function paymentRpcTransport({ chainId, urls = PAYMENT_RPC_URLS[chainId],
       const cost=endpoint=>ranged&&endpoint.logRange?Number((ranged+endpoint.logRange-1n)/endpoint.logRange):1;
       const order = endpoints.map((endpoint, index) => ({ endpoint, index }))
         .filter(({ endpoint }) => endpoint.blockedUntil <= now() && (endpoint.methods.get(args.method) ?? 0) <= now())
-        .sort((a, b) => cost(a.endpoint)-cost(b.endpoint)||Number(b.index === preferred) - Number(a.index === preferred));
+        .sort((a, b) => cost(a.endpoint)-cost(b.endpoint)||Number(b.index === (preferred.get(args.method) ?? 0)) - Number(a.index === (preferred.get(args.method) ?? 0)));
       const attempt=async({endpoint,index})=>{
         // Failure here is definitely BEFORE submission, so another endpoint is safe.
         try { if (args.method !== "eth_chainId") await verify(endpoint); }
@@ -145,10 +148,10 @@ export function paymentRpcTransport({ chainId, urls = PAYMENT_RPC_URLS[chainId],
           };
           launch();
         });
-        preferred=winner.index;return winner.result;
+        preferred.set(args.method,winner.index);return winner.result;
       }
       for(const candidate of order){
-        try{const value=await attempt(candidate);preferred=value.index;return value.result;}
+        try{const value=await attempt(candidate);preferred.set(args.method,value.index);return value.result;}
         catch(failure){if(failure.terminal)throw failure.error;}
       }
       throw new PaymentRpcUnavailableError(chainId);

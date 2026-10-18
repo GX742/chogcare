@@ -30,6 +30,7 @@ const ACTIVE_LIMIT = 3;
 const NEW_INVOICE_WINDOW_MS = 5 * 60_000;
 const MAX_UNPAID_EXPIRIES_PER_DAY = 2;
 const MAX_PROOF_FAILURES = 8;
+const FUNDING_SCAN_BLOCKS = 50n;
 
 // Owner-unlocked local worker. Dedicated Optimism treasury; shares only the
 // durable deposit allocator with CHOG. Never reuses the Monad operator nonce.
@@ -138,7 +139,11 @@ export function createNftProcessor({ filename, vault, root, checkpoint = () => {
       cursor=String(tip.number);
       db.prepare("UPDATE nft_pool_meta SET funding_cursor=? WHERE singleton=1").run(cursor);
     }
-    const from=BigInt(cursor)+1n, end=from+1999n<tip.number?from+1999n:tip.number;
+    // Commit one provider-sized page per tick. A 2,000-block transport request
+    // used to discard up to 39 successful subpages when a later page failed or
+    // exceeded its deadline, retrying the same history forever. Never skip the
+    // saved cursor, including after downtime, and never credit from a balance.
+    const from=BigInt(cursor)+1n, end=from+FUNDING_SCAN_BLOCKS-1n<tip.number?from+FUNDING_SCAN_BLOCKS-1n:tip.number;
     if (from<=end) {
       const logs=await destination.getContractEvents({address:network.usdc,abi:erc20Abi,eventName:"Transfer",args:{from:[...NFT_POOL_FUNDERS],to:wallet.address},fromBlock:from,toBlock:end,strict:true});
       for(const l of logs) {
@@ -284,7 +289,7 @@ export function createNftProcessor({ filename, vault, root, checkpoint = () => {
     publicStatus() {
       const s=ledger.summary(now());
       const availableCheckoutSlots=Math.max(0,ACTIVE_LIMIT-activeCount());
-      return {nftWorkerVersion:"2026-10-16-rpc-scan-v10",nftReadiness:!healthy()?"network-unavailable":gas<NFT_POOL_GAS_MIN?"gas-needed":usdc<pendingUnits()+BigInt(SUBSIDY_UNITS)||s.fundedAvailableUnits<SUBSIDY_UNITS?"funding-needed":s.availableClaims<=0?"daily-limit":availableCheckoutSlots<=0?"queue-full":"ready",nftSupported:true,nftPaymentsEnabled:healthy()&&gas>=NFT_POOL_GAS_MIN&&usdc>=pendingUnits()+BigInt(SUBSIDY_UNITS)&&s.availableClaims>0&&availableCheckoutSlots>0,
+      return {nftWorkerVersion:"2026-10-18-rpc-pages-v11",nftReadiness:!healthy()?"network-unavailable":gas<NFT_POOL_GAS_MIN?"gas-needed":usdc<pendingUnits()+BigInt(SUBSIDY_UNITS)||s.fundedAvailableUnits<SUBSIDY_UNITS?"funding-needed":s.availableClaims<=0?"daily-limit":availableCheckoutSlots<=0?"queue-full":"ready",nftSupported:true,nftPaymentsEnabled:healthy()&&gas>=NFT_POOL_GAS_MIN&&usdc>=pendingUnits()+BigInt(SUBSIDY_UNITS)&&s.availableClaims>0&&availableCheckoutSlots>0,
         nftSupportedInitiatives:[...NFT_INITIATIVES],poolChainId:10,poolTreasury:wallet.address,poolUsdc:network.usdc,poolFunder:NFT_POOL_FUNDER,poolFunders:[...NFT_POOL_FUNDERS],poolFunded:s.fundedAvailableUnits>=SUBSIDY_UNITS,
         availableClaims:s.availableClaims,availableCheckoutSlots,nftQueueFull:availableCheckoutSlots===0,reservedTodayUsdc:(s.reservedTodayUnits/1000000).toFixed(2),poolGasReady:gas>=NFT_POOL_GAS_MIN,poolHealthy:healthy()};
     },

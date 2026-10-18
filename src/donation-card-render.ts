@@ -83,9 +83,10 @@ export async function renderDonationCard(card: DonationCard, signal: AbortSignal
     ctx.font = `800 ${size}px "${FONT}"`;
     const m = ctx.measureText(value);
     return { width: m.actualBoundingBoxLeft + m.actualBoundingBoxRight, ascent: m.actualBoundingBoxAscent, descent: m.actualBoundingBoxDescent };
-  });
+  }, card.rounded);
   const box = CARD_AMOUNT_BOX;
   for (const row of rows) centerText(ctx, row.text, box.x + box.width / 2, row.baseline, row.size, "#fff8ff");
+  if (card.rounded) centerText(ctx, "Approx. amount", box.x + box.width / 2, box.y + box.height - 8, 18, "#cda5de");
   signal.throwIfAborted();
   return new Promise((resolve, reject) => canvas.toBlob(blob => {
     canvas.width = canvas.height = 1;

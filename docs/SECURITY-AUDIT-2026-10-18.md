@@ -10,7 +10,7 @@ Scope included the current React website, local payment API and transaction/rece
 
 | Check | Result |
 | --- | --- |
-| Full JavaScript and isolated contract regression suite on Node 24.22.0 | 553 passed, 0 failed, 0 skipped |
+| Full JavaScript and isolated contract regression suite on Node 24.22.0 | 565 passed, zero failures or skips, including file replacement, staged symlinks, environment substitution and bounded download regressions |
 | Solidity compilation | 32 source units compiled; upstream OpenZeppelin future-keyword warnings remain |
 | Full npm audit: root, `ops/payments`, `admin` | 0 known advisories in all three reports at review time |
 | Desktop build and native renderer smoke | Passed on Electron 44.9.0 with embedded Node 24.22.0, isolated mock data and no renderer errors |
@@ -34,6 +34,7 @@ The public CHOG contract address is intentionally documented and is not a wallet
 5. Replaced conflicting historical README instructions with the current architecture, supported Node LTS setup and a payment-free judge walkthrough. Updated the Windows operator guide's obsolete Node 25 instructions.
 6. Removed the hardcoded legacy Twitch channel from current defaults and the environment example. A Twitch fallback now requires explicit configuration; normal Owncast playback is unchanged. Historical client-side account identifiers are not credentials, and Git history was not rewritten.
 7. Updated the source's Electron pin and desktop packaging target from 44.7.0 to 44.9.0. The intermediate 44.8.0 release backports Chromium/V8 fixes and moves its embedded Node to 24.22.0; 44.9.0 also fixes window preference inheritance and a certificate-verification race. A regression assertion keeps the packaging target and locked engine aligned. This source update does not replace an already installed desktop binary.
+8. Enabled native GitHub secret scanning/push protection, private vulnerability reporting, extended CodeQL for JavaScript/TypeScript, Python and Actions, and protected `main`. The first CodeQL run produced 19 JavaScript signals; the [follow-up](CODEQL-REVIEW-2026-10-18.md) records fixes and per-alert local/test dispositions. The scanner findings are not hidden by the initial clean secret/dependency results.
 
 ## Application safeguards inspected
 

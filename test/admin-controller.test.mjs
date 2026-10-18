@@ -162,6 +162,28 @@ test("one-use custody IPC waits for the child's preflight request, never argv/en
   } finally { await f.dispose(); }
 });
 
+test("inherited system-directory variables cannot choose worker command binaries", async () => {
+  const previous = Object.fromEntries(["SystemRoot", "WINDIR", "ComSpec"].map(key => [key, process.env[key]]));
+  let f;
+  try {
+    process.env.SystemRoot = "Z:\\untrusted"; process.env.WINDIR = "Z:\\untrusted"; process.env.ComSpec = "Z:\\untrusted\\cmd.exe";
+    f = await fixture();
+    await f.admin.action({ type: "payments.start", password: SECRET });
+    const environment = f.calls.find(item => item.fork).fork.options.env;
+    assert.equal(environment.SystemRoot, "C:\\Windows"); assert.equal(environment.WINDIR, "C:\\Windows");
+    assert.equal(environment.ComSpec, join("C:\\Windows", "System32", "cmd.exe"));
+    assert.equal(environment.PSModulePath, join("C:\\Windows", "System32", "WindowsPowerShell", "v1.0", "Modules"));
+    assert.equal(environment.PATH.includes("untrusted"), false);
+    await f.admin.action({ type: "broadcast.start", confirmed: true });
+    const serviceCalls = f.calls.filter(item => item.args?.includes("/bin/systemctl"));
+    assert.ok(serviceCalls.length > 0);
+    assert.ok(serviceCalls.every(item => item.file === "C:\\Windows\\System32\\wsl.exe"));
+  } finally {
+    for (const [key, value] of Object.entries(previous)) { if (value === undefined) delete process.env[key]; else process.env[key] = value; }
+    await f?.dispose();
+  }
+});
+
 test("sanitized Windows worker environment supports real private operations ACL initialization without custody", { skip: process.platform !== "win32" }, async () => {
   const f = await fixture();
   try {

@@ -135,11 +135,15 @@ async function regularFile(filename, maximum = 65536) {
 
 function safeWorkerEnvironment(workspace, nodePath) {
   const environment = {};
-  for (const key of ["SystemRoot", "WINDIR", "ComSpec", "TEMP", "TMP", "USERPROFILE", "APPDATA", "LOCALAPPDATA"]) if (typeof process.env[key] === "string") environment[key] = process.env[key];
+  for (const key of ["TEMP", "TMP", "USERPROFILE", "APPDATA", "LOCALAPPDATA"]) if (typeof process.env[key] === "string") environment[key] = process.env[key];
   // The ACL helper requires this Windows marker. Derive it from the runtime,
   // not arbitrary inherited environment values, and retain the strict allowlist.
   if (process.platform === "win32") environment.OS = "Windows_NT";
-  const systemRoot = process.env.SystemRoot ?? "C:\\Windows";
+  // This Windows installation already uses fixed system paths for its ACL,
+  // serial and OBS helpers. Do not let inherited variables select binaries.
+  const systemRoot = "C:\\Windows";
+  environment.SystemRoot = systemRoot; environment.WINDIR = systemRoot;
+  environment.ComSpec = join(systemRoot, "System32", "cmd.exe");
   environment.PATH = [dirname(nodePath), join(systemRoot, "System32"), join(systemRoot, "System32", "WindowsPowerShell", "v1.0")].join(";");
   // Only built-in PowerShell modules are needed by the storage/serial helpers.
   // Avoid scanning unrelated installed SDKs or loading per-user modules when
@@ -261,7 +265,7 @@ export async function createAdminController({ workspacePath, nodePath, onChange 
       support: { open: Number.isSafeInteger(summary.new + summary.read) ? summary.new + summary.read : 0, total: Number.isSafeInteger(summary.total) ? summary.total : 0 }, events });
   }
   const settings = () => ({ workspacePath: workspace, stationPort, owncastPasswordSet });
-  const wslPath = join(process.env.SystemRoot ?? "C:\\Windows", "System32", "wsl.exe");
+  const wslPath = "C:\\Windows\\System32\\wsl.exe";
   const systemctl = async (verb, unit) => {
     if (!["is-active", "start", "stop"].includes(verb) || !["owncast", "nginx"].includes(unit)) throw failure("Unsupported local service action.");
     return exec(wslPath, ["--distribution", "Ubuntu", "--user", "root", "--exec", "/bin/systemctl", verb, unit], { cwd: workspace, env: safeWorkerEnvironment(workspace, nodePath), ...(verb === "is-active" ? { acceptedExitCodes: [0, 3, 4] } : {}) });

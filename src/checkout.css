@@ -193,6 +193,16 @@
   .checkout-total > strong { max-width: 100%; }
 }
 .donation-share { margin: 24px 0 16px; padding-top: 22px; border-top: 1px solid #bda4ee24; }
+.donation-card { margin: 0 0 18px; min-width: 0; }
+.donation-card-image { display: block; width: 100%; max-width: 100%; height: auto; border-radius: 12px; background: #1c0b2a; }
+.donation-card-placeholder { aspect-ratio: 1672 / 941; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 14px; padding: 20px; border-radius: 12px; background: linear-gradient(135deg,#28103d,#180c29); color: #d2bce6; font-size: 14px; text-align: center; }
+.donation-card-placeholder button { display: inline-flex; align-items: center; gap: 8px; min-height: 44px; padding: 10px 16px; border: 1px solid #bb83e66b; border-radius: 9px; background: transparent; color: #f1d9ff; font: inherit; cursor: pointer; }
+.donation-card-caption { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 8px 14px; padding-top: 10px; color: #c0a4d2; font-size: 12px; }
+.donation-card-download { display: inline-flex; align-items: center; justify-content: center; gap: 8px; min-height: 44px; padding: 9px 13px; border: 1px solid #be83e66b; border-radius: 9px; color: #f6dfff; background: #9b4dc115; font: 650 13px "Manrope Variable",sans-serif; text-decoration: none; transition: background .2s ease; }
+.donation-card-download:hover { background: #b05ce92b; }
+.donation-card-download:focus-visible,.donation-card-placeholder button:focus-visible { outline: 2px solid #e4b2ff; outline-offset: 3px; }
+.donation-card-format { color: #a68ab8; font-size: 11px; }
+.donation-share .donation-share-image-hint { margin: 12px 0 0; color: #b8a1ca; font-size: 12px; line-height: 1.6; }
 .donation-share-actions { display: flex; gap: 10px; align-items: stretch; }
 .donation-share-x, .donation-share-copy { min-height: 48px; display: inline-flex; align-items: center; justify-content: center; gap: 10px; border-radius: 10px; padding: 12px 18px; font-size: 13px; font-weight: 650; text-decoration: none; transition: background .2s ease, transform .2s ease; }
 .donation-share-x { flex: 1; color: #fff; background: #7532d4; border: 1px solid #a66aef; box-shadow: inset 0 1px #ffffff20; }

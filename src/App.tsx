@@ -16,6 +16,7 @@ import CheckoutSizeTransition from "./CheckoutSizeTransition";
 import Leaderboard from "./Leaderboard";
 import SupportDialog from "./SupportDialog";
 import BroadcastPreview from "./BroadcastPreview";
+import DonationImageHistory from "./DonationImageHistory";
 import type { SupportContext } from "./support-model";
 import { createLiveDriftSync, createLiveLoadState, createLiveResumeSync, createLiveRetryBudget, liveHlsConfig, livePlaybackStrategy, liveSegmentSeconds, portraitFrameAspect, recoverLiveNetwork, DEFAULT_LIVE_SEGMENT_SECONDS, type LiveLoadState } from "./live-player";
 import { broadcastPreviewUrl, broadcastStreamUrl } from "./broadcast-source";
@@ -578,6 +579,7 @@ export default function App() {
       </header>
 
       <main id="main" className="lp-main">
+        <DonationImageHistory/>
         <div hidden={stationOpen}>
           <section ref={heroRef} className="care-intro" aria-labelledby="hero-heading">
             <div className="care-intro-broadcast">{!stationOpen && <BroadcastPanel headingId="intro-broadcast-heading" portraitAspect={portraitAspect} onAspect={setPortraitAspect} />}</div>

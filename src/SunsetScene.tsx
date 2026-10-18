@@ -29,7 +29,8 @@ export default function SunsetScene({ checkout, heroRef, bridgeRef }: { checkout
       if (!trigger) return;
       trigger.refresh();
       trigger.update();
-      trigger.getTween()?.progress(1);
+      const scrubTween = trigger.getTween();
+      if (scrubTween && typeof scrubTween.progress === "function") scrubTween.progress(1);
       sceneTween?.progress(trigger.progress);
     };
     // An anchor return is not a scroll animation: settle the heart layer before

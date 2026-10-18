@@ -163,6 +163,37 @@ test("impact uses a read-only finalized-event snapshot, exact cause amount and e
   assert.equal(db.prepare("SELECT COUNT(*) AS n FROM chog_invoices").get().n, before); db.close();
 });
 
+test("public impact adds selected 300 to 4200 when the verified transfer is 333, preserving all financial terms", t => {
+  const directory=mkdtempSync(join(tmpdir(),"chogcare-impact-overpayment-test-")),filename=join(directory,"processor.sqlite");
+  const db=new DatabaseSync(filename);let source;
+  t.after(()=>{source?.close();db.close();rmSync(directory,{recursive:true,force:true});});
+  db.exec("CREATE TABLE chog_invoices(id TEXT PRIMARY KEY,state TEXT NOT NULL,document TEXT NOT NULL); CREATE TABLE delivered_events(event_id TEXT PRIMARY KEY,invoice_id TEXT UNIQUE);");
+  const hash="0x"+"ab".repeat(32),overpaidId="c".repeat(64);
+  const add=(id,donationAmount,amount,receivedAmount)=>{
+    const units=parseUnits(amount,18).toString(),actualUnits=parseUnits(receivedAmount??amount,18).toString();
+    const document={id,state:"delivered",donationAmount,amount,units,contributionPercent:10,depositHash:hash,
+      depositProof:{kind:"confirmed-chog-transfer",invoiceId:id,chainId:143,sender:"0x"+"11".repeat(20),txHash:hash,amountUnits:actualUnits,
+        logIndex:0,blockNumber:"100",blockHash:"0x"+"bc".repeat(32)},...(receivedAmount?{receivedUnits:actualUnits}:{})};
+    db.prepare("INSERT INTO chog_invoices VALUES (?,?,?)").run(id,document.state,JSON.stringify(document));
+    db.prepare("INSERT INTO delivered_events VALUES (?,?)").run(id,id);
+    return document;
+  };
+  add("a".repeat(64),"1500","1650");add("b".repeat(64),"2700","2970");
+  source=openReadOnlyImpactSource(filename);
+  assert.deepEqual(source.summary(),{chogDonated:"4200",donations:2});
+  const overpaid=add(overpaidId,"300","330","333"),snapshot=db.prepare("SELECT document FROM chog_invoices ORDER BY id").all();
+  assert.deepEqual(source.summary(),{chogDonated:"4500",donations:3});
+  assert.deepEqual(db.prepare("SELECT document FROM chog_invoices ORDER BY id").all(),snapshot,"the aggregate reader never writes original or actual accounting");
+  assert.throws(()=>db.prepare("INSERT INTO delivered_events VALUES (?,?)").run("duplicate",overpaidId),/UNIQUE/);
+  assert.deepEqual(source.summary(),{chogDonated:"4500",donations:3});
+  db.prepare("UPDATE chog_invoices SET state='bridging',document=? WHERE id=?").run(JSON.stringify({...overpaid,state:"bridging"}),overpaidId);
+  assert.deepEqual(source.summary(),{chogDonated:"4200",donations:2});
+  db.prepare("UPDATE chog_invoices SET state='delivered',document=? WHERE id=?").run(JSON.stringify(overpaid),overpaidId);
+  assert.deepEqual(source.summary(),{chogDonated:"4500",donations:3});
+  db.prepare("UPDATE chog_invoices SET document=? WHERE id=?").run(JSON.stringify({...overpaid,depositProof:{...overpaid.depositProof,amountUnits:overpaid.units}}),overpaidId);
+  assert.throws(()=>source.summary(),/failed verification/,"using the original total as fake proof must not authorize a received333 record");
+});
+
 function quoteFixture(overrides = {}) {
   let calls = 0, now = 1000, sent;
   const dependencies = {

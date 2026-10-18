@@ -16,6 +16,15 @@ test("USD conversion preserves large exact quantities without floating point", (
   assert.equal(value.estimatedUsd, "$9,007,199,254,740,993.00");
   assert.equal(parsePublicImpact({ impact: { chogDonated: "0.000000000000000001", donations: 1 } }, rate, now).estimatedUsd, "$0.00");
 });
+test("public total retains selected base amounts and supports the same 78-digit aggregate boundary as rows", () => {
+  const selected = parsePublicImpact({ impact: { chogDonated: "4500", donations: 12 } }, null, now);
+  assert.equal(selected.chogDonated, "4500");
+  const exact = "9".repeat(78) + ".999999999999999999";
+  const value = parsePublicImpact({ impact: { chogDonated: exact, donations: 12 } }, { ...rate, estimatedUsdMicros: "300000000" }, now);
+  assert.equal(value.chogDonated, exact);
+  assert.equal(value.estimatedUsd, "$" + ("1" + "0".repeat(78)).replace(/\B(?=(\d{3})+(?!\d))/g, ",") + ".00");
+  assert.throws(() => parsePublicImpact({ impact: { chogDonated: "9".repeat(79), donations: 12 } }, rate, now));
+});
 test("missing, stale or invalid quotes never fabricate a dollar amount", () => {
   for (const quote of [null, {}, { ...rate, quotedAt: now - 120001 }, { ...rate, quotedAt: now + 60001 }, { ...rate, referenceChog: "1" }, { ...rate, estimatedUsdMicros: "NaN" }, { ...rate, estimatedUsdMicros: "12\n" }]) {
     const result = parsePublicImpact(dashboard, quote, now);

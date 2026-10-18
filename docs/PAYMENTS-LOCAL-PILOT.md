@@ -1,6 +1,6 @@
 # ChogCare payment pilot operator runbook
 
-## Current operation on 11 October 2026
+## Current operation on 18 October 2026
 
 This is an owner-operated custody pilot, not independently audited unattended production software. Vercel serves the frontend; the local worker must be running separately. Website deployment does not start or refresh that worker. Vite is optional for local development, not required for the deployed frontend.
 
@@ -21,6 +21,12 @@ Invoke-RestMethod 'https://chogcare.vercel.app/api/payments/config' | ConvertTo-
 CHOG issuance requires `paymentsEnabled`, an unlocked custody state, network/gas readiness and no integrity lock. NFT issuance additionally needs `nftPaymentsEnabled`, `poolHealthy`, `poolGasReady`, available funded claims and a checkout slot. Do not pay again when a worker is offline or a transaction is uncertain.
 
 Current CHOG donations support 300–1,000,000 CHOG with 10% added on top for the NFT pool: 300 to the initiative means 330 total. The board and physical thank-you display show the donation excluding that addition. Supported initiatives are Burundi, School Supplies & Crypto Education, The Solar Foundation, Vida Verde and Animal Ethics. Current new USDC routes use Optimism; Animal Ethics has its pinned native SOL route. Historical invoices retain their original route and amount. Included receipts are not finalized delivery; the physical station requires finalized CHOG delivery and a healthy worker.
+
+A single canonical, finalized CHOG transfer received within the original invoice window is accepted when it is at least the requested total and within the existing processing cap: 1,100,000 CHOG for current invoices, 1,000,000 for legacy invoices without a pool contribution. The entire received amount is processed; the original quote, address, QR and deadline remain unchanged. Current invoices divide the actual amount in a 10:1 cause/pool ratio using integer token units. For example, 333 received against a 330 request allocates 302.727272727272727272 CHOG to the cause and 30.272727272727272728 CHOG to the pool, before external conversion and delivery fees. The receipt, image, board and station use the actual cause allocation.
+
+An underpayment is held without starting the exchange. Multiple transfers are not combined into a payment, and late transfers or amounts above the cap need operator review. No automatic refund is available. Temporary RPC, receipt or finality failures preserve the scan position and retry; they do not establish a permanent amount mismatch.
+
+Worker `2026-10-18-overpayment-recovery-v13` can reconsider an old amount-mismatch hold only when it has no deposit proof, transaction journal or processing history. It scans the complete original address history through a frozen finalized head, in pages of at most 2,000 blocks and at most 10,000 blocks in total. It requires exactly one eligible transfer, an unchanged invoice, an empty source journal and an available queue slot before recording the verified actual amount. Other holds remain for review. Restart both the station bridge and payment worker to load these changes; enter the existing vault password only in the local admin app or hidden prompt.
 
 New NFT grants are **$1 each, three recipients maximum and $3 total per UTC day**, with both wallet/day and collection/token-ID/day eligibility. Transferring the same NFT does not reset its daily claim. Existing $0.50 invoices remain unchanged. Verification requires exactly 1 MON, a non-refundable donation held in its separate custody address. See [NFT pool operations](NFT-POOL-OPERATIONS.md) for funding and gas details.
 
@@ -97,7 +103,7 @@ npm run payments:status -- <full-invoice-id>
 
 These commands are read-only, require no password, and never print private keys or signed raw transactions. They show persisted invoice information. They do not repair an invoice or prove the current onchain balance.
 
-Wrong amounts, multiple transfers in the scanned range, late payments, reverted source calls and explicit bridge failure/refund require operator review. Expired addresses continue to be scanned one per worker tick in rotation. Later transfers to an already-processing/completed address, other tokens, native MON deposits and internal/exchange transfers are **not a supported automatic recovery path**. Never reuse an address. No automatic refund, sweep or manual-signing recovery CLI has been shipped; recovery requires a separately reviewed, invoice-specific process. Do not export child private keys alongside the branch xpub.
+Underpayments, over-cap amounts, multiple transfers in the scanned range, late payments, reverted source calls and explicit bridge failure/refund require operator review. Eligible single overpayments follow the current policy above. Expired addresses continue to be scanned one per worker tick in rotation. Later transfers to an already-processing/completed address, other tokens, native MON deposits and internal/exchange transfers are **not a supported automatic recovery path**. Never reuse an address. No automatic refund, sweep or manual-signing recovery CLI has been shipped; recovery requires a separately reviewed, invoice-specific process. Do not export child private keys alongside the branch xpub.
 
 Before recovery: stop new invoices, preserve the vault/database, inspect all recorded hashes and actual token balances, establish whether bridge execution is still pending, and only then prepare a bounded recovery transaction. Never replace a nonce or create a second bridge job merely because an API timed out.
 

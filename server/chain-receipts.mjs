@@ -1,4 +1,4 @@
-import { decodeEventLog, erc20Abi, isAddress, zeroAddress } from "viem";
+import { decodeEventLog, erc20Abi, formatUnits, isAddress, zeroAddress } from "viem";
 import { CHOG, ETHEREUM_USDC } from "../src/route.ts";
 import { deliveryNetwork } from "../src/delivery-network.ts";
 
@@ -13,6 +13,11 @@ export class AwaitingFinalityError extends Error {
 }
 export class NonCanonicalReceiptError extends Error {
   constructor(){super("Receipt is not canonical.");this.name="NonCanonicalReceiptError";}
+}
+// Only conclusions drawn after canonical source finality may permanently hold a
+// CHOG invoice. RPC availability and observation failures must remain retryable.
+export class ChogDepositMismatchError extends Error {
+  constructor(message){super(message);this.name="ChogDepositMismatchError";}
 }
 
 // Inclusion and finality are distinct. An included, canonical transfer can be
@@ -52,16 +57,24 @@ function transferAt(receipt, token, logIndex) {
 }
 
 // Trusted invoice only: never construct it from a browser's recipient/amount fields.
-// Partial/late/excess transfers are rejected for automatic settlement, NOT erased.
-export async function verifyChogDeposit(client, invoice, txHash, logIndex) {
+// Partial/late transfers are rejected for automatic settlement, NOT erased.
+// Exact payment is the default; trusted processor code may explicitly accept a
+// full overpayment up to its immutable pilot cap, retaining the actual proof.
+export async function verifyChogDeposit(client, invoice, txHash, logIndex, options={}) {
   if (invoice?.kind !== "chog-donation" || invoice.state !== "awaiting-payment" || !/^[a-zA-Z0-9-]{1,80}$/.test(invoice.id) ||
       !address(invoice.depositAddress) || typeof invoice.amountUnits !== "bigint" || invoice.amountUnits < 300n * 10n ** 18n ||
       invoice.amountUnits >= 2n ** 256n || typeof invoice.createdBlock !== "bigint" || invoice.createdBlock < 0n ||
       !Number.isSafeInteger(invoice.expiresAt) || invoice.expiresAt <= 0) throw new Error("Invalid payable CHOG invoice.");
+  const allowOverpayment=options.allowOverpayment===true,maxAmountUnits=options.maxAmountUnits;
+  if(allowOverpayment&&(typeof maxAmountUnits!=="bigint"||maxAmountUnits<invoice.amountUnits||maxAmountUnits>1_100_000n*10n**18n))throw new Error("Invalid trusted CHOG processing limit.");
   const { receipt, block } = await finalizedReceipt(client, 143, txHash);
-  if (receipt.blockNumber <= invoice.createdBlock || block.timestamp * 1000n > BigInt(invoice.expiresAt)) throw new Error("Payment outside invoice window: manual review required.");
-  const event = transferAt(receipt, CHOG, logIndex);
-  if (!same(event.to, invoice.depositAddress) || same(event.from, invoice.depositAddress) || event.value !== invoice.amountUnits) throw new Error("CHOG destination or exact amount mismatch: manual review required.");
+  if (receipt.blockNumber <= invoice.createdBlock || block.timestamp * 1000n > BigInt(invoice.expiresAt)) throw new ChogDepositMismatchError("Payment outside invoice window: manual review required.");
+  let event;
+  try { event = transferAt(receipt, CHOG, logIndex); }
+  catch { throw new ChogDepositMismatchError("Canonical CHOG transfer does not match the expected deposit event: manual review required."); }
+  if (!same(event.to, invoice.depositAddress) || same(event.from, invoice.depositAddress)) throw new ChogDepositMismatchError("CHOG transfer parties do not match this invoice. Processing is on hold; do not pay again.");
+  if(event.value!==invoice.amountUnits&&(!allowOverpayment||event.value<invoice.amountUnits))throw new ChogDepositMismatchError(`Received ${formatUnits(event.value,18)} CHOG. This invoice requires ${formatUnits(invoice.amountUnits,18)} CHOG. Processing is on hold; do not pay again.`);
+  if(allowOverpayment&&event.value>maxAmountUnits)throw new ChogDepositMismatchError(`Received ${formatUnits(event.value,18)} CHOG. The processing limit is ${formatUnits(maxAmountUnits,18)} CHOG. Processing is on hold; do not pay again.`);
   return { kind: "confirmed-chog-transfer", invoiceId: invoice.id, chainId: 143, txHash: txHash.toLowerCase(), logIndex, sender: event.from, amountUnits: event.value.toString(), blockNumber: receipt.blockNumber.toString(), blockHash: receipt.blockHash };
 }
 

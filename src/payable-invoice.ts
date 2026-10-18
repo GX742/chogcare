@@ -2,7 +2,7 @@ import { getAddress, isAddress, parseUnits, zeroAddress } from "viem";
 import { CHOG, GIVETH_PROJECT_RECIPIENT } from "./route.ts";
 import { deliveryNetwork } from "./delivery-network.ts";
 import { chogBeneficiary } from "./chog-beneficiary.ts";
-import { contributionForDonationUnits } from "./pool-contribution.ts";
+import { contributionForDonationUnits, splitSettlementUnits } from "./pool-contribution.ts";
 import { validInvoiceId } from "./checkout-session.ts";
 import { matchesInvoiceField as matches, pickInvoiceFields } from "./invoice-validation.ts";
 export type PayableInvoice = {
@@ -15,6 +15,7 @@ export type PayableInvoice = {
   processingStartedAt?: number | null; bridgeStartedAt?: number | null; destinationIncludedAt?: number | null;
   destinationChainId?: 1 | 10 | 792703809; destinationAsset?: "USDC" | "SOL"; destinationDecimals?: 6 | 9; minimumUsd?: string; bridgeEstimatedSeconds?: number | null;
   donationAmount?: string; poolContributionAmount?: string | null; contributionPercent?: 0 | 10; poolContributionState?: "pending" | "collected" | null;
+  receivedAmount?: string; receivedDonationAmount?: string; receivedPoolContributionAmount?: string;
 };
 const evmHash=/^0x[0-9a-f]{64}$/i,solanaSignature=/^[1-9A-HJ-NP-Za-km-z]{64,88}$/;
 export function validatePayableInvoice(raw: unknown): PayableInvoice {
@@ -40,11 +41,20 @@ export function validatePayableInvoice(raw: unknown): PayableInvoice {
   if(units<(contributionInvoice?330n:300n)*10n**18n || units>(contributionInvoice?1_100_000n:1_000_000n)*10n**18n)throw new Error("Payment amount outside pilot limits.");
   const uri=`ethereum:${CHOG}@143/transfer?address=${getAddress(x.depositAddress)}&uint256=${units}`;
   if(x.paymentUri!==uri || [x.depositHash,x.bridgeHash].some(h=>h!==null && !matches(h,evmHash)) || !destinationHashValid(x.destinationHash))throw new Error("Payment address or receipt failed verification.");
+  const receivedFields=[x.receivedAmount,x.receivedDonationAmount,x.receivedPoolContributionAmount];
+  if(receivedFields.some(value=>value!==undefined)){
+    const [receivedTotal,receivedDonation,receivedPool]=receivedFields;
+    if(!matches(receivedTotal,/^\d{1,7}(\.\d{1,18})?$/)||!matches(receivedDonation,/^\d{1,7}(\.\d{1,18})?$/)||!matches(receivedPool,/^\d{1,7}(\.\d{1,18})?$/)||!x.depositHash||!["processing","bridging","confirming","delivered","manual-review"].includes(x.state))throw new Error("Received payment details are not verified.");
+    const receivedUnits=parseUnits(receivedTotal,18);
+    if(receivedUnits<units||receivedUnits>(contributionInvoice?1_100_000n:1_000_000n)*10n**18n)throw new Error("Received payment amount is below the invoice or outside pilot limits.");
+    const allocation=contributionInvoice?splitSettlementUnits(receivedUnits):{causeUnits:receivedUnits,poolUnits:0n};
+    if(parseUnits(receivedDonation,18)!==allocation.causeUnits||parseUnits(receivedPool,18)!==allocation.poolUnits)throw new Error("Received payment allocation failed verification.");
+  }
   if(x.deliveredUsdc!=null&&!matches(x.deliveredUsdc,/^\d{1,20}$/)||x.observedUsdc!=null&&!matches(x.observedUsdc,/^\d{1,20}$/))throw new Error("Invalid destination amount.");
   if(x.state==="delivered" && (!x.destinationHash || !x.depositHash || !x.bridgeHash || !matches(x.deliveredUsdc,/^\d{1,20}$/) || BigInt(x.deliveredUsdc)<BigInt(x.minUsdc)))throw new Error("Destination receipt is missing or below the invoice minimum.");
   if(!destinationHashValid(x.observedDestinationHash))throw new Error("Invalid observed transaction.");
   for(const value of [x.processingStartedAt,x.bridgeStartedAt,x.destinationIncludedAt])if(value!=null && (!Number.isSafeInteger(value)||value<=0))throw new Error("Invalid payment timing.");
   if(x.bridgeEstimatedSeconds!=null && (!Number.isSafeInteger(x.bridgeEstimatedSeconds)||x.bridgeEstimatedSeconds<1||x.bridgeEstimatedSeconds>3600))throw new Error("Invalid bridge estimate.");
   if(x.state==="confirming" && (!x.observedDestinationHash || !x.depositHash || !x.bridgeHash || x.destinationHash || x.deliveredUsdc || !matches(x.observedUsdc,/^\d{1,20}$/) || BigInt(x.observedUsdc)<BigInt(x.minUsdc)))throw new Error("Unverified destination observation.");
-  return {...pickInvoiceFields(x,["kind","id","mode","asset","chainId","amount","initiativeId","recipient","depositAddress","paymentUri","minUsdc","state","expiresAt","depositHash","bridgeHash","destinationHash","message","deliveredUsdc","observedDestinationHash","observedUsdc","processingStartedAt","bridgeStartedAt","destinationIncludedAt","destinationChainId","destinationAsset","destinationDecimals","minimumUsd","bridgeEstimatedSeconds","donationAmount","poolContributionAmount","contributionPercent","poolContributionState"]),destinationChainId:network!.id};
+  return {...pickInvoiceFields(x,["kind","id","mode","asset","chainId","amount","initiativeId","recipient","depositAddress","paymentUri","minUsdc","state","expiresAt","depositHash","bridgeHash","destinationHash","message","deliveredUsdc","observedDestinationHash","observedUsdc","processingStartedAt","bridgeStartedAt","destinationIncludedAt","destinationChainId","destinationAsset","destinationDecimals","minimumUsd","bridgeEstimatedSeconds","donationAmount","poolContributionAmount","contributionPercent","poolContributionState","receivedAmount","receivedDonationAmount","receivedPoolContributionAmount"]),destinationChainId:network!.id};
 }

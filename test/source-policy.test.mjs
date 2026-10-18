@@ -38,3 +38,20 @@ test("mandatory contribution binds the exact pool collector and exact USDC units
   assert.throws(()=>validateSourceCall("pool-contribution",{...call,data:encodeFunctionData({abi:erc20Abi,functionName:"transfer",args:[poolCollector,99999n]})},contributionInvoice,operator,now));
   assert.throws(()=>validateSourceCall("pool-contribution",call,{...contributionInvoice,poolCollector:operator},operator,now));
 });
+
+test("source approvals and sale bind full proof-backed excess while preserving the original invoice limits",()=>{
+  const txHash=`0x${"ac".repeat(32)}`,received=333n*10n**18n;
+  const overpaid={...invoice,id:"a".repeat(64),units:String(330n*10n**18n),contributionPercent:10,receivedUnits:String(received),depositHash:txHash,
+    depositProof:{kind:"confirmed-chog-transfer",invoiceId:"a".repeat(64),chainId:143,txHash,sender:operator,amountUnits:String(received),logIndex:0,blockNumber:"100",blockHash:`0x${"bd".repeat(32)}`}};
+  const approval=approve(CHOG,NAD_DEX_ROUTER,received);
+  const sale={...calls.sell,data:encodeFunctionData({abi:sellAbi,functionName:"sell",args:[{amountIn:received,amountOutMin:10n**18n,token:CHOG,to:payer,deadline:BigInt(now/1000+300)}]})};
+  assert.doesNotThrow(()=>validateSourceCall("approve-chog",approval,overpaid,operator,now));
+  assert.doesNotThrow(()=>validateSourceCall("sell",sale,overpaid,operator,now));
+  assert.throws(()=>validateSourceCall("approve-chog",approve(CHOG,NAD_DEX_ROUTER,330n*10n**18n),overpaid,operator,now));
+  assert.throws(()=>validateSourceCall("sell",calls.sell,overpaid,operator,now));
+  for(const invalid of [{...overpaid,depositProof:null},{...overpaid,units:"1"},{...overpaid,units:String(1_100_001n*10n**18n)},
+    {...overpaid,receivedUnits:String(received+1n)}, {...overpaid,depositProof:{...overpaid.depositProof,blockHash:"0x"}}]){
+    assert.throws(()=>validateSourceCall("approve-chog",approval,invalid,operator,now));
+    assert.throws(()=>validateSourceCall("gas",calls.gas,invalid,operator,now));
+  }
+});

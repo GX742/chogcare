@@ -35,6 +35,19 @@ test("verified source proof binds donor identity and original donation excluding
   assert.equal(verifiedLeaderboardDonation(legacy, id(1)).initiativeId, "burundi");
 });
 
+test("proof-backed excess credits the actual cause allocation once per invoice and keeps the source donor identity", () => {
+  const receivedUnits=parseUnits("333",18).toString();
+  const overpaid=invoice({contributionPercent:10,receivedUnits});
+  overpaid.depositProof={...overpaid.depositProof,amountUnits:receivedUnits,logIndex:0,blockNumber:"100",blockHash:`0x${"b".repeat(64)}`};
+  const verified=verifiedLeaderboardDonation(overpaid,id(1));
+  assert.deepEqual(verified,donation(address(1),{amount:"302.727272727272727272"}));
+  const leaderboard=buildDonorLeaderboard([profile(1),profile(1)],()=>verified);
+  assert.deepEqual(leaderboard.map(row=>[row.rank,row.amount]),[[1,"302.727272727272727272"]]);
+  assert.equal(verifiedLeaderboardDonation({...overpaid,receivedUnits:parseUnits("334",18).toString()},id(1)),null);
+  assert.equal(verifiedLeaderboardDonation({...overpaid,depositProof:{...overpaid.depositProof,blockHash:"0x"}},id(1)),null);
+  assert.equal(verifiedLeaderboardDonation({...overpaid,depositProof:{...overpaid.depositProof,sender:address(0)}},id(1)),null);
+});
+
 test("same wallet ignores address casing and uses its latest verified public name and avatar", () => {
   const sender = "0xabcdefabcdefabcdefabcdefabcdefabcdefabcd";
   const profiles = [profile(2, { nickname: "New GX", avatarTokenId: "77", avatarName: "CHOG #77", avatarImage: "https://gateway.pinata.cloud/ipfs/example/77.webp" }), profile(1)];

@@ -64,6 +64,17 @@ test("station wire has exact donation amount, public nickname and no financial i
   assert.equal(paymentStateDigest(f.settings.profileFilename), profileBefore, "station never writes financial/profile databases");
 });
 
+test("finalized overpayment station amount uses the proof-backed actual cause allocation", async t => {
+  const f=await fixture(t),events=f.start(),txHash=`0x${"a".repeat(64)}`,receivedUnits=String(333n*10n**18n);
+  f.add(1,"delivered",{units:String(330n*10n**18n),receivedUnits,contributionPercent:10,depositHash:txHash,
+    depositProof:{kind:"confirmed-chog-transfer",invoiceId:f.id(1),chainId:143,txHash,amountUnits:receivedUnits,sender:`0x${"2".repeat(40)}`,logIndex:0,blockNumber:"100",blockHash:`0x${"b".repeat(64)}`}});
+  f.publish(1,"GX"); const before=paymentStateDigest(f.settings.processorFilename);
+  assert.equal(events.sync(true,2000),1); const payload=events.next(2000);
+  assert.equal(payload.amount,"302.727272727272727272");
+  assert.doesNotMatch(JSON.stringify(payload),/invoice|0x|deposit|receivedUnits/);
+  assert.equal(paymentStateDigest(f.settings.processorFilename),before);
+});
+
 test("initiative art comes only from finalized source and preserves durable payloads", async t => {
   const f = await fixture(t); let events = f.start();
   f.add(1, "delivered", {initiativeId:"solar-foundation"}); f.publish(1,"GX");
@@ -148,6 +159,24 @@ test("verified arrival triggers gratitude before finality without writing paymen
   f.deliver(1); assert.equal(events.sync(true, 4000), 0);
   assert.equal(events.next(4000), null, "finality must not trigger a second show");
   assert.deepEqual(events.summary(), { cursor: 1, pending: 0, completed: 1 });
+});
+
+test("overpaid receipt arrival credits actual kindness once and refuses forged excess before queuing", async t => {
+  const f=await fixture(t),events=f.start(),txHash=`0x${"c".repeat(64)}`,receivedUnits=String(333n*10n**18n);
+  const fields={...arrival,units:String(330n*10n**18n),contributionPercent:10,receivedUnits,depositHash:txHash,
+    depositProof:{kind:"confirmed-chog-transfer",invoiceId:f.id(1),chainId:143,txHash,amountUnits:receivedUnits,sender:`0x${"2".repeat(40)}`,logIndex:0,blockNumber:"100",blockHash:`0x${"b".repeat(64)}`}};
+  const invoice=f.add(1,"confirming",{...fields,depositProof:{...fields.depositProof,amountUnits:String(334n*10n**18n)}});
+  f.publish(1,"GX");
+  assert.throws(()=>events.sync(true,2500),/verified deposit proof/);
+  assert.equal(events.summary().pending,0);
+  f.processor.prepare("UPDATE chog_invoices SET document=? WHERE id=?").run(JSON.stringify({...invoice,depositProof:fields.depositProof}),invoice.id);
+  const before=paymentStateDigest(f.settings.processorFilename);
+  assert.equal(events.sync(true,3000),1); const payload=events.next(3000);
+  assert.equal(payload.amount,"302.727272727272727272");
+  assert.equal(payload.cause,"solar-foundation");
+  assert.equal(paymentStateDigest(f.settings.processorFilename),before);
+  events.complete(payload.id,3100); f.deliver(1);
+  assert.equal(events.sync(true,4000),0); assert.equal(events.next(4000),null);
 });
 
 test("arrival persists through restart and finality with the same USB identity", async t => {

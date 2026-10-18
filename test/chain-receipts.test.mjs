@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { encodeEventTopics, encodeAbiParameters, erc20Abi } from "viem";
-import { verifyChogDeposit, verifyPoolFunding, verifyPoolPayout, inspectReceipt, finalizedReceipt, AwaitingFinalityError } from "../server/chain-receipts.mjs";
+import { verifyChogDeposit, verifyPoolFunding, verifyPoolPayout, inspectReceipt, finalizedReceipt, AwaitingFinalityError, NonCanonicalReceiptError, ChogDepositMismatchError } from "../server/chain-receipts.mjs";
 import { CHOG, ETHEREUM_USDC } from "../src/route.ts";
 
 const from = "0x1111111111111111111111111111111111111111";
@@ -54,8 +54,35 @@ test("CHOG verifier rejects counterfeit tokens, recipient/amount substitutions a
     f => f.receipt.logs.push({ ...f.log }),
   ]) {
     const f = fixture(); mutate(f);
-    await assert.rejects(verifyChogDeposit(f.rpc, invoice, hash, 2));
+    await assert.rejects(verifyChogDeposit(f.rpc, invoice, hash, 2), ChogDepositMismatchError);
   }
+});
+
+test("CHOG mismatch classification never absorbs RPC, finality or canonical observation failures",async()=>{
+  const outage=new Error("temporary receipt RPC failure"),f=fixture();
+  f.rpc.getTransactionReceipt=async()=>{throw outage;};
+  await assert.rejects(verifyChogDeposit(f.rpc,invoice,hash,2),error=>error===outage);
+  const pending=fixture();pending.rpc.getBlock=async args=>args.blockTag?{number:99n}:pending.block;
+  await assert.rejects(verifyChogDeposit(pending.rpc,invoice,hash,2),AwaitingFinalityError);
+  const reorg=fixture();reorg.block.hash=hash;
+  await assert.rejects(verifyChogDeposit(reorg.rpc,invoice,hash,2),NonCanonicalReceiptError);
+  const late=fixture();late.block.timestamp=201n;
+  await assert.rejects(verifyChogDeposit(late.rpc,invoice,hash,2),ChogDepositMismatchError);
+  await assert.rejects(verifyChogDeposit(fixture().rpc,{...invoice,createdBlock:100n},hash,2),ChogDepositMismatchError);
+  await assert.rejects(verifyChogDeposit(fixture().rpc,{...invoice,kind:"preview"},hash,2),error=>!(error instanceof ChogDepositMismatchError));
+});
+
+test("trusted CHOG overpayment acceptance binds the full canonical amount and retains exact default and pilot caps",async()=>{
+  const maximum=1_100_000n*10n**18n,options={allowOverpayment:true,maxAmountUnits:maximum};
+  const extra=333n*10n**18n,over=fixture(CHOG,extra);
+  await assert.rejects(verifyChogDeposit(over.rpc,invoice,hash,2),ChogDepositMismatchError);
+  const proof=await verifyChogDeposit(over.rpc,invoice,hash,2,options);assert.equal(proof.amountUnits,String(extra));
+  assert.equal((await verifyChogDeposit(fixture(CHOG,maximum).rpc,invoice,hash,2,options)).amountUnits,String(maximum));
+  await assert.rejects(verifyChogDeposit(fixture(CHOG,amount-1n).rpc,invoice,hash,2,options),ChogDepositMismatchError);
+  await assert.rejects(verifyChogDeposit(fixture(CHOG,maximum+1n).rpc,invoice,hash,2,options),ChogDepositMismatchError);
+  await assert.rejects(verifyChogDeposit(fixture(CHOG,1_000_000n*10n**18n+1n).rpc,invoice,hash,2,{allowOverpayment:true,maxAmountUnits:1_000_000n*10n**18n}),ChogDepositMismatchError);
+  for(const invalid of [undefined,amount-1n,maximum+1n,"1100000"]){await assert.rejects(verifyChogDeposit(over.rpc,invoice,hash,2,{allowOverpayment:true,maxAmountUnits:invalid}),/Invalid trusted/);}
+  const late=fixture(CHOG,extra);late.block.timestamp=201n;await assert.rejects(verifyChogDeposit(late.rpc,invoice,hash,2,options),ChogDepositMismatchError);
 });
 
 test("CHOG verifier rejects stale, late, failed, unfinalized, reorganized or wrong-network payments", async () => {

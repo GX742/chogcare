@@ -81,13 +81,17 @@ test("public JSON-RPC rate limits switch reads to a backup, but never resend a s
 });
 
 test("recognized log-range limits fail over only for log reads", async () => {
-  for(const [code,message] of [[-32614,"eth_getLogs is limited to a 100 range"],[-32602,"block range too large"]]){
+  for(const [code,message] of [[-32614,"eth_getLogs is limited to a 100 range"],[-32602,"block range too large"],[35,"ranges over 10000 blocks are not supported on free plan"],[-32602,"eth_getLogs is limited to 0 - 50 blocks range"]]){
     const limited=args=>{if(args.method==="eth_chainId")return "0xa";throw Object.assign(new Error(message),{code});};
     const f=fixture([limited,healthy]);
     assert.equal(await f.request({method:"eth_getLogs",params:[{fromBlock:"0x1",toBlock:"0x7d0"}]}),"0x123");
     const other=fixture([limited,healthy]);
     await assert.rejects(other.request({method:"eth_call",params:[]}));
     assert.ok(other.calls.every(x=>x.index===0));
+    const sending=fixture([limited,healthy]);
+    await assert.rejects(sending.request({method:"eth_sendRawTransaction",params:["0x1234"]}));
+    assert.equal(sending.calls.filter(x=>x.method==="eth_sendRawTransaction").length,1);
+    assert.ok(sending.calls.every(x=>x.index===0));
   }
 });
 
@@ -103,6 +107,17 @@ test("archive access restrictions use a backup without retrying invalid paramete
   await assert.rejects(sending.request({method:"eth_sendRawTransaction",params:["0x1234"]}));
   assert.equal(sending.calls.filter(x=>x.method==="eth_sendRawTransaction").length,1);
   assert.ok(sending.calls.every(x=>x.index===0));
+});
+
+test("historical log fallback does not redirect healthy balance heartbeats to the backup",async()=>{
+  const f=fixture([args=>{
+    if(args.method==="eth_getLogs")throw Object.assign(new Error("Archive requests require a personal token"),{code:-32602});
+    return healthy(args);
+  },healthy]);
+  const logs={method:"eth_getLogs",params:[{fromBlock:"0x1",toBlock:"0x32"}]};
+  await f.request(logs);await f.request(balance);await f.request(logs);await f.request(balance);
+  assert.deepEqual(f.calls.filter(x=>x.method==="eth_getLogs").map(x=>x.index),[0,1,1]);
+  assert.deepEqual(f.calls.filter(x=>x.method==="eth_getBalance").map(x=>x.index),[0,0]);
 });
 
 for(const url of ["https://rpc.monad.xyz","https://rpc-mainnet.monadinfra.com"])test(`Monad 2000-block invoice scans respect the 100-block limit at ${new URL(url).hostname}`, async () => {

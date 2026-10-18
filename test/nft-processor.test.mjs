@@ -89,6 +89,52 @@ test("NFT funding/network recovery preserves the reservation without restart or 
   assert.equal(f.broadcasts.length,0);
 });
 
+test("NFT funding catches up in durable provider-sized pages across an outage and restart",async t=>{
+  const f=await fixture(t);await f.fund();
+  const invoice=await f.worker.issue(f.input()),getBlock=f.destination.getBlock,getReceipt=f.destination.getTransactionReceipt;
+  const pages=[];let unavailable=false;
+  const funding=transfer(usdc,NFT_POOL_FUNDER,f.worker.treasuryAddress,2_000_000n,h(901),200n);
+  f.destination.getBlock=async args=>args.blockTag?{number:10_000n,hash:h(10_000),timestamp:1n}:getBlock(args);
+  f.destination.getTransactionReceipt=async args=>args.hash===h(901)?{status:"success",transactionHash:h(901),blockNumber:200n,blockHash:h(200),logs:[funding]}:getReceipt(args);
+  f.destination.getContractEvents=async args=>{
+    assert.ok(args.toBlock-args.fromBlock<50n,"one tick must fit one free-provider page");
+    pages.push([args.fromBlock,args.toBlock]);
+    if(unavailable)throw new Error("temporary historical RPC outage");
+    return args.fromBlock<=200n&&args.toBlock>=200n?[funding]:[];
+  };
+  const state=()=>{const db=new DatabaseSync(f.filename,{readOnly:true});try{return {
+    cursor:db.prepare("SELECT funding_cursor FROM nft_pool_meta").get().funding_cursor,
+    credits:db.prepare("SELECT COUNT(*) AS n FROM pool_funding").get().n,
+  };}finally{db.close();}};
+  await f.worker.tick();assert.deepEqual(state(),{cursor:"160",credits:1});
+  unavailable=true;await assert.rejects(f.worker.tick());
+  assert.deepEqual(state(),{cursor:"160",credits:1});
+  await f.worker.refreshReadiness();assert.equal(f.worker.publicStatus().poolHealthy,false);
+  unavailable=false;await f.worker.tick();
+  assert.deepEqual(state(),{cursor:"210",credits:2});
+  assert.equal(f.worker.publicStatus().nftPaymentsEnabled,true);
+  assert.equal(f.worker.get(invoice.id).depositAddress,invoice.depositAddress);
+  await f.restart();assert.deepEqual(state(),{cursor:"260",credits:2});
+  assert.deepEqual(pages,[[111n,160n],[161n,210n],[161n,210n],[211n,260n]]);
+  assert.equal(f.broadcasts.length,0);
+});
+
+test("an invalid funding receipt cannot advance the NFT scan cursor or enable checkout",async t=>{
+  const f=await fixture(t);
+  const db=new DatabaseSync(f.filename,{readOnly:true});
+  try{
+    f.corruptFunding(ETHEREUM_USDC);
+    await assert.rejects(f.fund());
+    assert.equal(db.prepare("SELECT funding_cursor FROM nft_pool_meta").get().funding_cursor,"100");
+    assert.equal(db.prepare("SELECT COUNT(*) AS n FROM pool_funding").get().n,0);
+    assert.equal(f.worker.publicStatus().poolHealthy,false);
+    f.corruptFunding(usdc);await f.worker.tick();
+    assert.equal(db.prepare("SELECT funding_cursor FROM nft_pool_meta").get().funding_cursor,"110");
+    assert.equal(db.prepare("SELECT COUNT(*) AS n FROM pool_funding").get().n,1);
+  }finally{db.close();}
+  assert.equal(f.broadcasts.length,0);
+});
+
 for(const initiativeId of ["school-supplies","solar-foundation","vida-verde"])test(`NFT ${initiativeId}: exact recipient, restart, finality and no duplicate payout`,async t=>{
   const f=await fixture(t);await f.fund();
   const invoice=await f.worker.issue({...f.input(),initiativeId});

@@ -1,10 +1,11 @@
-import { createPublicClient, http, erc20Abi, parseAbi } from "viem";
+import { erc20Abi, parseAbi } from "viem";
 import { monad, optimism } from "viem/chains";
 import { PAYMENT_POLICY } from "../server/policy.mjs";
 import { NFT_POOL_FUNDERS } from "../server/nft-pool-config.mjs";
 import { deliveryNetwork } from "../src/delivery-network.ts";
-const source=createPublicClient({chain:monad,transport:http("https://rpc.monad.xyz",{timeout:15000,retryCount:0})});
-const destination=createPublicClient({chain:optimism,transport:http("https://mainnet.optimism.io",{timeout:15000,retryCount:0})});
+import { paymentRpcClient } from "../server/payment-rpc.mjs";
+const source=paymentRpcClient(monad);
+const destination=paymentRpcClient(optimism);
 try {
   const [sourceChain,poolChain,is721,decimals]=await Promise.all([
     source.getChainId(),destination.getChainId(),

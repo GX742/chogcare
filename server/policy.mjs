@@ -11,7 +11,7 @@ export const PAYMENT_POLICY = Object.freeze({
   dayReset: "00:00 UTC",
   poolFunded: false,
   paymentsEnabled: false,
-  claimFrequency: "once per wallet and once per NFT per UTC calendar day; three recipients maximum",
+  claimFrequency: "once per wallet and once per NFT per UTC calendar day, except the operator-allowlisted repeat holder; three grants maximum",
 });
 export const DAILY_POOL_UNITS = NFT_POOL_DAILY_UNITS;
 export const SUBSIDY_UNITS = NFT_POOL_GRANT_UNITS;

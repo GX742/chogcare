@@ -149,8 +149,8 @@ test('two explicit giving scenarios keep pool limits, custody, the split and ver
   assert.match(giving, /Two ways to give\./);
   assert.match(giving, /<h3 id="token-mechanic-title">Give with \$CHOG<\/h3>/);
   assert.match(giving, /<h3 id="nft-mechanic-title">Give as an NFT holder<\/h3>/);
-  for (const term of ['$1 on your behalf', 'Three holders a day. $3 daily pool',
-    'One donation per wallet and NFT', 'ChogCare holds funds during processing',
+  for (const term of ['$1 on your behalf', 'Three donations a day. $3 daily pool',
+    'Standard allowance: one donation per wallet and NFT', 'ChogCare holds funds during processing',
     'An extra 10%', 'Exchange and delivery fees still apply; keep MON for wallet gas',
     'separate 1 MON donation']) {
     assert.ok(giving.includes(term), `Required term missing: ${term}`);

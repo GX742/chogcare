@@ -3,6 +3,7 @@ import { isAddress, zeroAddress } from "viem";
 import { atomic as transaction } from "./sqlite-transaction.mjs";
 import { migratePoolRepeatScope } from "./pool-repeat-migration.mjs";
 import { migratePoolGrantPolicy } from "./pool-grant-migration.mjs";
+import { canRepeatNftGrant, nftGrantScope } from "./nft-repeat-policy.mjs";
 
 const hashPattern = /^0x[0-9a-fA-F]{64}$/;
 const dayKey = now => {
@@ -75,7 +76,8 @@ export function createPoolLedger(db, chainId = 1) {
       const normalized = String(BigInt(tokenId));
       if(holderAddress!==undefined&&(!isAddress(holderAddress)||holderAddress.toLowerCase()===zeroAddress))throw new Error("Invalid NFT holder.");
       const holder=holderAddress?.toLowerCase()??null;
-      const scope = "daily";
+      const repeat = canRepeatNftGrant(holder);
+      const scope = nftGrantScope(holder,invoiceId);
       return atomic(() => {
         const old = db.prepare("SELECT * FROM pool_reservations WHERE invoice_id=?").get(invoiceId);
         if (old) {
@@ -85,10 +87,10 @@ export function createPoolLedger(db, chainId = 1) {
         const used = db.prepare("SELECT COALESCE(SUM(units),0) AS units,COUNT(*) AS claims FROM pool_reservations WHERE day=?").get(day);
         if (used.units + SUBSIDY_UNITS > DAILY_POOL_UNITS || used.claims>=PAYMENT_POLICY.maxDailyClaims) throw new Error("The $3 daily pool limit has been reached.");
         if (balance() < SUBSIDY_UNITS) throw new Error("Pool funding is insufficient. Do not request a verification payment.");
-        if(holder&&db.prepare("SELECT 1 FROM pool_reservations WHERE holder_address=? AND day=?").get(holder,day))throw new Error("This wallet already has a daily grant.");
+        if(!repeat&&holder&&db.prepare("SELECT 1 FROM pool_reservations WHERE holder_address=? AND day=?").get(holder,day))throw new Error("This wallet already has a daily grant.");
         // Collection + canonical token ID + UTC day stays used after a transfer,
-        // including any legacy exceptional reservation that already exists.
-        if(db.prepare("SELECT 1 FROM pool_reservations WHERE collection=? AND token_id=? AND day=?").get(collection.toLowerCase(),normalized,day))throw new Error("This NFT already has a daily grant.");
+        // including exceptional reservations, for every non-allowlisted holder.
+        if(!repeat&&db.prepare("SELECT 1 FROM pool_reservations WHERE collection=? AND token_id=? AND day=?").get(collection.toLowerCase(),normalized,day))throw new Error("This NFT already has a daily grant.");
         db.prepare("INSERT INTO pool_reservations (invoice_id,collection,token_id,day,units,state,payout_hash,claim_scope,holder_address) VALUES (?, ?, ?, ?, ?, 'reserved', NULL, ?, ?)").run(invoiceId, collection.toLowerCase(), normalized, day, SUBSIDY_UNITS,scope,holder);
         return db.prepare("SELECT * FROM pool_reservations WHERE invoice_id=?").get(invoiceId);
       });

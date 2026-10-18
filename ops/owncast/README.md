@@ -4,13 +4,34 @@ loopback nginx proxy on port 8090. Tailscale Funnel exposes this proxy; Vercel's
 and media responses are not cached by the Vercel rewrite.
 
 The source stream remains in Owncast. `chogcare-mobile.service` reads that local
-stream and produces a 720 × 1280, 24 fps H.264/AAC rendition at about 650 kbps,
-including audio and transport overhead. The original 1080 × 1920 rendition
+stream and produces a 720 × 1280, 15 fps H.264 video rendition with a 550 kbps
+video target. The website always plays muted, so this rendition has no audio
+scheduler or additional AAC encoding queue. The original 1080 × 1920 rendition
+retains its audio and frame rate and
 remains in the master playlist. Small screens and touch devices load the mobile
 playlist directly, preventing native Safari from switching back to the heavy
 rendition. Desktop players can select automatically from the master. Both
 renditions use the same portrait aspect ratio and original
 transport timestamps, so changing quality does not change the webpage's frame.
+
+The mobile encoder joins the newest completed segment with a bounded 128 KiB
+probe and one-second analysis limit, rather than buffering an unbounded amount
+of a quiet camera feed during startup. Its playlist keeps eight one-second
+segments. Input buffering and B-frame delay are disabled; the output VBV is
+about one second. Check media timestamps against Owncast's source segments when
+measuring delay: a freshly modified playlist can still contain old frames.
+Decoder, filter and encoder threads are explicitly bounded. Frames are selected
+from the existing 30 fps source with `framestep=2`; VFR preserves source timestamps
+without duplicating obsolete frames across a skipped source interval. Packets
+are flushed promptly. The loopback-only input helper on 127.0.0.1:8091 exposes
+only the latest three source segments to the encoder, never a long archive.
+Its only upstream is the fixed local Owncast video playlist; paths and segment
+names are strictly validated, redirects and environment proxies are refused.
+The public gateway has no route to this helper.
+The browser targets three segments behind the published edge and limits drift;
+native Safari also catches substantial accumulated lag after playback starts.
+This is ordinary HLS, so total camera-to-viewer delay still includes segment
+completion, re-encoding, transport and the player's safety buffer.
 
 The additional encoder runs as `owncast`, using `/opt/owncast/ffmpeg`. Its only
 writable persistent directory is `/var/lib/chogcare-mobile`. Temporary segments,
@@ -18,7 +39,9 @@ directory listings, and symlinks are excluded by nginx. No admin password or
 RTMP key is used. The master playlist's mobile codec string is verified from
 the encoder's SPS: Main profile, constraint flag 1, level 3.1 (`avc1.4d401f`).
 
-To install this configuration on the existing host, place the unit in
+Install `mobile-input.py` as root-owned mode 0644 at
+`/usr/local/lib/chogcare/mobile-input.py`, install and enable
+`chogcare-mobile-input.service`, then place the mobile unit in
 `/etc/systemd/system/chogcare-mobile.service`, verify it with
 `systemd-analyze verify`, and run `systemctl daemon-reload` followed by
 `systemctl enable --now chogcare-mobile`. Confirm the playlist is advancing

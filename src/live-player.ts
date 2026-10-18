@@ -2,7 +2,7 @@ import type { HlsConfig } from "hls.js";
 
 export const DEFAULT_LIVE_SEGMENT_SECONDS = 3;
 export const LIVE_SYNC_SEGMENT_COUNT = 3;
-export const LIVE_MAX_LATENCY_SEGMENT_COUNT = 12;
+export const LIVE_MAX_LATENCY_SEGMENT_COUNT = 6;
 
 // Let portrait camera footage fill its frame without cropping the terminal.
 // Landscape/offline footage retains the existing contained fallback layout.
@@ -27,11 +27,11 @@ export function liveHlsConfig(): Partial<HlsConfig> {
     lowLatencyMode: true,
     liveSyncDurationCount: LIVE_SYNC_SEGMENT_COUNT,
     liveMaxLatencyDurationCount: LIVE_MAX_LATENCY_SEGMENT_COUNT,
-    maxLiveSyncPlaybackRate: 1,
-    liveSyncOnStallIncrease: 1,
-    maxBufferLength: 8,
-    maxMaxBufferLength: 16,
-    backBufferLength: 8,
+    maxLiveSyncPlaybackRate: 1.03,
+    liveSyncOnStallIncrease: 0,
+    maxBufferLength: 6,
+    maxMaxBufferLength: 10,
+    backBufferLength: 4,
   };
 }
 
@@ -179,5 +179,39 @@ export function createLiveRetryBudget(now = Date.now) {
       return delay;
     },
     dispose() { disposed = true; attempts = []; },
+  };
+}
+
+// Safari has no hls.js latency controller. Catch up only after substantial
+// drift, never on every playlist update or while the user/browser is paused.
+export function createLiveDriftSync({
+  media, active = () => true, segmentSeconds = () => DEFAULT_LIVE_SEGMENT_SECONDS,
+  now = Date.now, schedule = setTimeout, cancel = clearTimeout,
+}: {
+  media: LiveMedia & { readonly paused: boolean; readonly ended: boolean; readonly seeking: boolean; readonly readyState: number };
+  active?: () => boolean;
+  segmentSeconds?: () => number;
+  now?: () => number;
+  schedule?: (callback: () => void, delay: number) => Timer;
+  cancel?: (timer: Timer) => void;
+}) {
+  let running = false, disposed = false, timer: Timer | null = null, lastSeek = -Infinity;
+  const tick = () => {
+    timer = null;
+    if (!running || disposed) return;
+    try {
+      if (active() && !media.paused && !media.ended && !media.seeking && media.readyState >= 2 && now() - lastSeek >= 10_000) {
+        const range = latestLiveRange(media.seekable), segment = liveSegmentSeconds(segmentSeconds());
+        if (range && range.end - media.currentTime > LIVE_MAX_LATENCY_SEGMENT_COUNT * segment) {
+          const target = safeLiveResumeTarget(media.currentTime, media.seekable, segment);
+          if (target !== null) { media.currentTime = target; lastSeek = now(); }
+        }
+      }
+    } catch { /* Native ranges/seeking may change while a playlist refreshes. */ }
+    if (running && !disposed) timer = schedule(tick, 1500);
+  };
+  return {
+    start() { if (disposed || running) return; running = true; timer = schedule(tick, 1500); },
+    dispose() { disposed = true; running = false; if (timer !== null) cancel(timer); timer = null; },
   };
 }

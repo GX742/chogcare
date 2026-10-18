@@ -19,6 +19,7 @@ import { deliveryNetwork } from "../src/delivery-network.ts";
 import { NFT_POOL_FUNDER, NFT_POOL_FUNDERS, NFT_POOL_CHAIN, NFT_TREASURY_PATH, NFT_POOL_GAS_MIN, NFT_PAYOUT_FEE_CAP } from "./nft-pool-config.mjs";
 import { createPaymentPerformance } from "./payment-performance.mjs";
 import { paymentRpcClient } from "./payment-rpc.mjs";
+import { canRepeatNftGrant } from "./nft-repeat-policy.mjs";
 
 const network = deliveryNetwork(NFT_POOL_CHAIN);
 const nftAbi = parseAbi(["function ownerOf(uint256) view returns (address)", "function tokensOfOwner(address) view returns (uint256[])"]);
@@ -79,6 +80,9 @@ export function createNftProcessor({ filename, vault, root, checkpoint = () => {
       (lower(json_extract(document,'$.holderAddress'))=? OR json_extract(document,'$.tokenId')=?) LIMIT 1`).get(holder,token)) {
       throw new Error("An invoice for this holder or NFT is already active. Keep the original invoice; do not pay again.");
     }
+    // The allowlisted holder may repeat sequentially. An active or ambiguous
+    // invoice above still blocks another address, including for this holder.
+    if(canRepeatNftGrant(holder))return;
     const today = day(now());
     if (db.prepare("SELECT 1 FROM pool_reservations WHERE day=? AND (holder_address=? OR (collection=? AND token_id=?))").get(today,holder,PAYMENT_POLICY.nftCollection,token)) {
       throw Object.assign(new Error("This wallet or NFT already has a grant reserved for today."),{code:"NFT_DAILY_LIMIT"});
@@ -289,7 +293,7 @@ export function createNftProcessor({ filename, vault, root, checkpoint = () => {
     publicStatus() {
       const s=ledger.summary(now());
       const availableCheckoutSlots=Math.max(0,ACTIVE_LIMIT-activeCount());
-      return {nftWorkerVersion:"2026-10-18-rpc-pages-v11",nftReadiness:!healthy()?"network-unavailable":gas<NFT_POOL_GAS_MIN?"gas-needed":usdc<pendingUnits()+BigInt(SUBSIDY_UNITS)||s.fundedAvailableUnits<SUBSIDY_UNITS?"funding-needed":s.availableClaims<=0?"daily-limit":availableCheckoutSlots<=0?"queue-full":"ready",nftSupported:true,nftPaymentsEnabled:healthy()&&gas>=NFT_POOL_GAS_MIN&&usdc>=pendingUnits()+BigInt(SUBSIDY_UNITS)&&s.availableClaims>0&&availableCheckoutSlots>0,
+      return {nftWorkerVersion:"2026-10-18-owner-repeat-v12",nftReadiness:!healthy()?"network-unavailable":gas<NFT_POOL_GAS_MIN?"gas-needed":usdc<pendingUnits()+BigInt(SUBSIDY_UNITS)||s.fundedAvailableUnits<SUBSIDY_UNITS?"funding-needed":s.availableClaims<=0?"daily-limit":availableCheckoutSlots<=0?"queue-full":"ready",nftSupported:true,nftPaymentsEnabled:healthy()&&gas>=NFT_POOL_GAS_MIN&&usdc>=pendingUnits()+BigInt(SUBSIDY_UNITS)&&s.availableClaims>0&&availableCheckoutSlots>0,
         nftSupportedInitiatives:[...NFT_INITIATIVES],poolChainId:10,poolTreasury:wallet.address,poolUsdc:network.usdc,poolFunder:NFT_POOL_FUNDER,poolFunders:[...NFT_POOL_FUNDERS],poolFunded:s.fundedAvailableUnits>=SUBSIDY_UNITS,
         availableClaims:s.availableClaims,availableCheckoutSlots,nftQueueFull:availableCheckoutSlots===0,reservedTodayUsdc:(s.reservedTodayUnits/1000000).toFixed(2),poolGasReady:gas>=NFT_POOL_GAS_MIN,poolHealthy:healthy()};
     },
@@ -305,7 +309,7 @@ export function createNftProcessor({ filename, vault, root, checkpoint = () => {
           const tokens=await source.readContract({address:PAYMENT_POLICY.nftCollection,abi:nftAbi,functionName:"tokensOfOwner",args:[input.holderAddress],blockNumber:created.number});
           if(!Array.isArray(tokens)||tokens.length>1969||tokens.some(t=>typeof t!=="bigint"||t<0n||t>=2n**256n))throw new Error("Invalid NFT lookup response.");
           if(!tokens.length)throw Object.assign(new Error("No CHOG NFT found."),{code:"NFT_NOT_OWNED"});
-          const token=tokens.find(t=>!db.prepare("SELECT 1 FROM pool_reservations WHERE collection=? AND token_id=? AND day=?").get(PAYMENT_POLICY.nftCollection,String(t),day(now())));
+          const token=tokens.find(t=>canRepeatNftGrant(input.holderAddress)||!db.prepare("SELECT 1 FROM pool_reservations WHERE collection=? AND token_id=? AND day=?").get(PAYMENT_POLICY.nftCollection,String(t),day(now())));
           if(token===undefined)throw Object.assign(new Error("Daily NFT grants already used."),{code:"NFT_DAILY_LIMIT"});
           input={...input,tokenId:String(token)};
         }

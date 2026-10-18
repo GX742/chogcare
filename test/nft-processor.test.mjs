@@ -16,6 +16,7 @@ import { GIVETH_PROJECT_RECIPIENT, ETHEREUM_USDC } from "../src/route.ts";
 import { deliveryNetwork } from "../src/delivery-network.ts";
 import { validateNftInvoice } from "../src/nft-invoice.ts";
 import { chogBeneficiary } from "../src/chog-beneficiary.ts";
+import { NFT_REPEAT_HOLDER } from "../server/nft-repeat-policy.mjs";
 
 const h=n=>`0x${BigInt(n).toString(16).padStart(64,"0")}`;
 const holder="0x1111111111111111111111111111111111111111";
@@ -150,19 +151,77 @@ for(const initiativeId of ["school-supplies","solar-foundation","vida-verde"])te
   assert.equal(f.broadcasts.length,1);assert.equal(f.worker.publicStatus().availableClaims,2);
 });
 
-test("legacy repeat holder gets one $1 grant per UTC day, including across restarts",async t=>{
-  const f=await fixture(t,{holderAddress:"0x19a863aec37c83c7cb34548c29f1f7e41bcb51ca"});await f.fund();
-  const invoice=await f.worker.issue(f.input("1638"));
-  f.deposit(invoice);await f.worker.tick();await f.settle(true);
-  assert.equal(f.worker.get(invoice.id).state,"delivered");
-  await f.restart();
-  await assert.rejects(f.worker.issue(f.input("1638")),/reserved for today/);
-  await assert.rejects(f.worker.issue(f.input("1639")),/reserved for today/);
-  assert.equal(f.worker.publicStatus().availableClaims,2);
-  assert.equal(f.broadcasts.length,1);
+test("authorized holder repeats the same NFT three times with unique proofs and payouts across restart, then the global pool cap blocks a fourth",async t=>{
+  const f=await fixture(t,{holderAddress:NFT_REPEAT_HOLDER});await f.fund();
+  const invoices=[],proofHashes=[];
+  for(let index=0;index<3;index++){
+    const invoice=await f.worker.issue(f.input("1638"));invoices.push(invoice);
+    proofHashes.push(f.deposit(invoice));await f.worker.tick();await f.settle(true);
+    assert.equal(f.worker.get(invoice.id).state,"delivered");
+    assert.equal(f.worker.publicStatus().availableClaims,2-index);
+    await f.restart();assert.equal(f.broadcasts.length,index+1);
+    if(index===0){
+      f.setOwner(other);
+      await assert.rejects(f.worker.issue({...f.input("1638"),holderAddress:other}),error=>error.code==="NFT_DAILY_LIMIT");
+      await assert.rejects(f.worker.issue({...f.input("0001638"),holderAddress:other}),error=>error.code==="NFT_DAILY_LIMIT");
+      f.setOwner(NFT_REPEAT_HOLDER);
+    }
+  }
+  assert.equal(new Set(invoices.map(invoice=>invoice.id)).size,3);
+  assert.equal(new Set(invoices.map(invoice=>invoice.depositAddress)).size,3);
+  assert.equal(new Set(proofHashes).size,3);assert.equal(new Set(f.broadcasts).size,3);
+  const db=new DatabaseSync(f.filename,{readOnly:true});try{
+    assert.equal(db.prepare("SELECT COUNT(*) AS n FROM nft_proofs").get().n,3);
+    assert.equal(db.prepare("SELECT COUNT(*) AS n FROM pool_outbox").get().n,3);
+    assert.equal(db.prepare("SELECT COUNT(*) AS n FROM pool_reservations WHERE state='paid'").get().n,3);
+    const scopes=db.prepare("SELECT invoice_id,claim_scope FROM pool_reservations").all();
+    for(const row of scopes)assert.equal(row.claim_scope,`repeat:${row.invoice_id}`);
+  }finally{db.close();}
+  assert.equal(f.worker.publicStatus().reservedTodayUsdc,"3.00");
+  await assert.rejects(f.worker.issue(f.input("1638")),/not ready/);
+  await assert.rejects(f.worker.issue(f.input("1639")),/not ready/);
+  await f.restart();assert.equal(f.broadcasts.length,3);
   await f.advance(86400000);
   const tomorrow=await f.worker.issue(f.input("1638"));
   assert.equal(tomorrow.subsidyUsdc,"1.00");
+});
+
+test("repeat permission cannot open concurrent invoices for the same wallet or an active NFT",async t=>{
+  const f=await fixture(t,{holderAddress:NFT_REPEAT_HOLDER});await f.fund();
+  const attempts=await Promise.allSettled([f.worker.issue(f.input("1638")),f.worker.issue(f.input("1639"))]);
+  assert.equal(attempts.filter(result=>result.status==="fulfilled").length,1);
+  const invoice=attempts.find(result=>result.status==="fulfilled").value;
+  await assert.rejects(f.worker.issue(f.input("1638")),/already active/);
+  await assert.rejects(f.worker.issue(f.input("1639")),/already active/);
+  f.setOwner(other);
+  await assert.rejects(f.worker.issue({...f.input("1638"),holderAddress:other}),/already active/);
+  await f.restart();assert.equal(f.worker.get(invoice.id).state,"awaiting-payment");
+  await assert.rejects(f.worker.issue(f.input("1638")),/already active/);
+  assert.equal(f.worker.publicStatus().reservedTodayUsdc,"1.00");assert.equal(f.broadcasts.length,0);
+});
+
+test("authorized holder auto-discovers the already-used owned NFT without a client token ID",async t=>{
+  const f=await fixture(t,{holderAddress:NFT_REPEAT_HOLDER});await f.fund();
+  const first=await f.worker.issue(f.input("1638"));f.deposit(first);await f.worker.tick();await f.settle(true);await f.restart();
+  const read=f.source.readContract;
+  f.source.readContract=async args=>args.functionName==="tokensOfOwner"?[1638n]:read(args);
+  const input=f.input();delete input.tokenId;
+  const second=await f.worker.issue(input);assert.equal(second.tokenId,"1638");
+  assert.notEqual(second.id,first.id);assert.notEqual(second.depositAddress,first.depositAddress);
+  f.deposit(second);await f.worker.tick();await f.settle(true);await f.restart();
+  assert.equal(f.worker.get(second.id).state,"delivered");assert.equal(f.broadcasts.length,2);
+});
+
+test("authorized holder can request a fresh invoice after two unpaid expiries while old addresses remain inactive",async t=>{
+  const f=await fixture(t,{holderAddress:NFT_REPEAT_HOLDER});await f.fund();const expired=[];
+  for(let index=0;index<2;index++){
+    const invoice=await f.worker.issue(f.input("1638"));expired.push(invoice);
+    await f.advance(361000);assert.equal(f.worker.get(invoice.id).state,"expired");
+  }
+  await f.restart();const fresh=await f.worker.issue(f.input("1638"));
+  assert.equal(f.worker.get(fresh.id).state,"awaiting-payment");
+  assert.equal(new Set([...expired,fresh].map(invoice=>invoice.depositAddress)).size,3);
+  assert.equal(f.worker.publicStatus().reservedTodayUsdc,"1.00");assert.equal(f.broadcasts.length,0);
 });
 
 test("smart-wallet deposits are discovered after a legacy cursor skipped them; double payment produces one grant",async t=>{

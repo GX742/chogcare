@@ -15,7 +15,7 @@ export function donationCard(input: DonationCardInput): DonationCard | null {
   return {
     key: `${input.mode}:${input.initiativeId}:${input.amount}`,
     initiativeId: input.initiativeId, initiative, mode: input.mode, exactAmount: presentation.exactAmount, amount, rounded: presentation.rounded,
-    filename: `chogcare-${input.initiativeId}-${amount.replaceAll(",", "").replace("<", "less-than-")}-${input.mode === "chog" ? "chog" : "usdc"}.png`,
+    filename: `chogcare-${input.initiativeId}-${amount.replaceAll(",", "").replaceAll("<", "less-than-")}-${input.mode === "chog" ? "chog" : "usdc"}.png`,
     alt: input.mode === "chog" ? `I donated ${readable} $CHOG to ${initiative} through ChogCare.` : `${readable} USDC from the ChogCare NFT pool for ${initiative}.`,
   };
 }

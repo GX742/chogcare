@@ -2,6 +2,7 @@ import { decodeFunctionData, encodeFunctionData, erc20Abi, isAddress, parseAbi, 
 import { CHOG, NAD_CURVE_ROUTER, NAD_DEX_ROUTER, MONAD_USDC, UNISWAP_ROUTER, UNISWAP_FEES, WMON, sellAbi, swapRouterAbi } from "../src/route.ts";
 import { RELAY_DEPOSITORY } from "./relay-route.mjs";
 import {sourceGasGrant,validateSourceGas} from "./source-gas-policy.mjs";
+import {processingChogUnits} from "./chog-received.mjs";
 
 const depositAbi=parseAbi(["function depositErc20(address depositor,address token,uint256 amount,bytes32 id)"]);
 const same=(a,b)=>typeof a==="string"&&typeof b==="string"&&a.toLowerCase()===b.toLowerCase();
@@ -14,6 +15,7 @@ export function validateSourceCall(phase,call,invoice,operator,now=Date.now(),pe
   const contributionInvoice=invoice?.contributionPercent===10;
   const minimumUnits=(contributionInvoice?330n:300n)*10n**18n,maximumUnits=(contributionInvoice?1_100_000n:1_000_000n)*10n**18n;
   if(!invoice || !positive(invoice.units) || BigInt(invoice.units)<minimumUnits || BigInt(invoice.units)>maximumUnits || typeof call.data!=="string" || call.data.length>2048)fail();
+  const processingUnits=processingChogUnits(invoice);
   validateSourceGas(phase,call,invoice);
   const payer=invoice.depositAddress;
   const minimumSourceUsdc=invoice.minimumUsd??invoice.minOutput;
@@ -27,13 +29,13 @@ export function validateSourceCall(phase,call,invoice,operator,now=Date.now(),pe
   if(phase==="approve-chog"||phase==="sell") {
     if(![NAD_CURVE_ROUTER,NAD_DEX_ROUTER].some(x=>same(x,invoice.sale?.router))||!positive(invoice.sale?.minMon))fail();
     if(phase==="approve-chog") {
-      target=CHOG;expected=encodeFunctionData({abi:erc20Abi,functionName:"approve",args:[invoice.sale.router,BigInt(invoice.units)]});
+      target=CHOG;expected=encodeFunctionData({abi:erc20Abi,functionName:"approve",args:[invoice.sale.router,processingUnits]});
     }else {
       target=invoice.sale.router;
       let data;try{data=decodeFunctionData({abi:sellAbi,data:call.data});}catch{fail();}
       const deadline=data.args[0].deadline;
       if(deadline<=0n || (!persisted && (deadline<BigInt(Math.floor(now/1000)) || deadline>BigInt(Math.floor(now/1000)+600))))fail();
-      expected=encodeFunctionData({abi:sellAbi,functionName:"sell",args:[{amountIn:BigInt(invoice.units),amountOutMin:BigInt(invoice.sale.minMon),token:CHOG,to:payer,deadline}]});
+      expected=encodeFunctionData({abi:sellAbi,functionName:"sell",args:[{amountIn:processingUnits,amountOutMin:BigInt(invoice.sale.minMon),token:CHOG,to:payer,deadline}]});
     }
   }else if(phase==="swap") {
     if(!positive(invoice.monToSwap)||!positive(invoice.swap?.minUsdc)||!positive(minimumSourceUsdc)||!UNISWAP_FEES.includes(invoice.swap?.fee)||BigInt(invoice.swap.minUsdc)<BigInt(minimumSourceUsdc)||call.value!==BigInt(invoice.monToSwap))fail();

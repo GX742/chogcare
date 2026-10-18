@@ -8,7 +8,7 @@ export default function PaymentActivity({ invoice, now, online }: { invoice: Pay
   if(invoice.state === "confirming")return <div className="checkout-arrival" role="status">
     <CheckCircle size={42} weight="light" aria-hidden="true"/>
     <h4>Received by the initiative</h4>
-    <strong>{invoice.amount} <small>$CHOG sent</small></strong>
+    <strong>{invoice.receivedAmount??invoice.amount} <small>$CHOG sent</small></strong>
     <p>{activity.note} No further payment needed.</p>
     <span>Final confirmation continues in the background.</span>
     {(!online || invoice.message) && <p>{invoice.message || "Connection lost. Rechecking the original transfer."}</p>}

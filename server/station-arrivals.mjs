@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import { creditedChogDonationAmount } from "./chog-received.mjs";
 
 const hash = value => createHash("sha256").update(value).digest("hex");
 const receiptHash = /^0x[a-fA-F0-9]{64}$/;
@@ -27,7 +28,7 @@ export function openStationArrivals({ source, sidecar, profile, started, amount,
           !Number.isSafeInteger(invoice.destinationIncludedAt) || invoice.destinationIncludedAt <= 0 ||
           invoice.message) return null;
     } else if (!finalized.get(row.id)) return null;
-    const value = amount(invoice.donationAmount ?? invoice.amount);
+    const value = amount(creditedChogDonationAmount(invoice));
     const cause = causes.includes(invoice.initiativeId) ? invoice.initiativeId : undefined;
     const fingerprint = hash(JSON.stringify([row.id, value, cause ?? null]));
     return { invoiceId: row.id, amount: value, cause, fingerprint,

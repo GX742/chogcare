@@ -4,6 +4,7 @@ import { existsSync, lstatSync, mkdirSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { atomic } from "./sqlite-transaction.mjs";
 import { openStationArrivals } from "./station-arrivals.mjs";
+import { creditedChogDonationAmount } from "./chog-received.mjs";
 
 export const STATION_NICKNAME_GRACE_MS = 8_000;
 export const STATION_MAX_LINE_BYTES = 384;
@@ -71,7 +72,7 @@ function sourceRecord(row) {
   if (!row || !Number.isSafeInteger(row.sequence) || row.sequence < 1 || !invoiceIdPattern.test(row.invoice_id)) throw new Error("Invalid finalized station source event.");
   const invoice = JSON.parse(row.document);
   if (!invoice || invoice.id !== row.invoice_id || invoice.state !== "delivered" || typeof row.event_id !== "string" || !row.event_id.length) throw new Error("Station source is not a finalized donation.");
-  const amount = stationAmount(invoice.donationAmount ?? invoice.amount);
+  const amount = stationAmount(creditedChogDonationAmount(invoice));
   const fingerprint = digest(JSON.stringify([row.sequence, row.event_id, row.invoice_id, amount]));
   const cause = STATION_CAUSES.includes(invoice.initiativeId) ? invoice.initiativeId : undefined;
   return { sequence: row.sequence, invoiceId: row.invoice_id, amount, cause, fingerprint, id: digest(`chogcare-station-v1:${fingerprint}`).slice(0, 24) };

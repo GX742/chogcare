@@ -13,14 +13,14 @@ function invoice(changes={}){
 }
 function settlement(total){const allocation=splitSettlementUnits(parseUnits(total,18));return {receivedAmount:total,receivedDonationAmount:formatUnits(allocation.causeUnits,18),receivedPoolContributionAmount:formatUnits(allocation.poolUnits,18)};}
 
-test("verified excess transfer preserves immutable quote and shares the entire actual cause allocation",()=>{
+test("verified excess transfer retains exact accounting while the card shares the original chosen donation",()=>{
   const received=settlement("333"),raw=invoice({...received,state:"delivered",bridgeHash:hash,destinationHash:hash,deliveredUsdc:"450000"});
   const parsed=validatePayableInvoice(raw);
   assert.equal(parsed.amount,"330");assert.equal(parsed.donationAmount,"300");assert.equal(parsed.poolContributionAmount,"30");assert.equal(parsed.paymentUri,raw.paymentUri);
   assert.equal(parsed.receivedAmount,"333");assert.equal(parsed.receivedDonationAmount,"302.727272727272727272");assert.equal(parsed.receivedPoolContributionAmount,"30.272727272727272728");
   assert.equal(parseUnits(parsed.receivedDonationAmount,18)+parseUnits(parsed.receivedPoolContributionAmount,18),333n*10n**18n);
-  const card=donationCard({state:parsed.state,mode:parsed.mode,initiativeId:parsed.initiativeId,amount:parsed.receivedDonationAmount});
-  assert.equal(card.amount,"302.727272727272727272");assert.equal(card.filename,"chogcare-school-supplies-302.727272727272727272-chog.png");
+  const card=donationCard({state:parsed.state,mode:parsed.mode,initiativeId:parsed.initiativeId,amount:parsed.donationAmount??parsed.amount});
+  assert.equal(card.exactAmount,"300");assert.equal(card.amount,"300");assert.equal(card.rounded,false);assert.equal(card.filename,"chogcare-school-supplies-300-chog.png");
 });
 
 test("received allocation is optional for historical invoices and accepted only after a verified deposit",()=>{

@@ -6,7 +6,9 @@ import assert from "node:assert/strict";
 // Layout QA, not an ESP emulator: uses the actual RGB565 header pixels and
 // actual Adafruit glyph bitmaps. U8g2 captions are approximated with a scaled
 // bitmap sans font; no system-font substitution or accidental serif fallback.
-const require = createRequire(resolve(process.argv[2], "package.json"));
+const arguments_ = process.argv.slice(2);
+const previewLeaderboard = arguments_.includes("--leaderboard");
+const require = createRequire(resolve(arguments_.find(value => value !== "--leaderboard") ?? ".", "package.json"));
 const sharp = require("sharp");
 const library = resolve(process.env.USERPROFILE, "Documents/Arduino/libraries/Adafruit_GFX_Library/Fonts");
 const colors = { bg: [15,5,25], ink:[252,247,255], pink:[255,163,215], muted:[181,165,203], live:[110,220,174] };
@@ -87,3 +89,81 @@ await sharp({create:{width:816,height:392,channels:3,background:"#180d26"}}).com
 await sharp({create:{width:1080,height:392,channels:3,background:"#180d26"}}).composite([{input:idlePng,left:24,top:48},...outputs.map(item=>({...item,left:item.left+264}))]).png().toFile("work/station-art/station-preview.png");
 await sharp({create:{width:1344,height:392,channels:3,background:"#180d26"}}).composite(initiativeOutputs).png().toFile("work/station-art/initiative-preview.png");
 console.log("Checked all five initiative names and actual Adafruit text bounds. Wrote waiting + three-scene preview.");
+
+if (previewLeaderboard) {
+  // Optional host-only QA. This reads public presentation data and never opens
+  // USB or a payment database. Existing donation previews remain unchanged.
+  let source = "fixture", failure = null, cards;
+  try {
+    const { createStationLeaderboard } = await import("./station-leaderboard.mjs");
+    const leaderboard = createStationLeaderboard();
+    cards = [];
+    try {
+      await leaderboard.refresh();
+      const ranks = new Set();
+      for (let index = 0; index < 5; index++) {
+        const card = await leaderboard.next();
+        if (!card || ranks.has(card.rank)) break;
+        ranks.add(card.rank); cards.push(card);
+      }
+    } finally { leaderboard.close(); }
+    if (!cards.length) throw new Error("No public leaderboard cards available.");
+    source = "live public leaderboard";
+  } catch (error) {
+    failure = error.message;
+    cards = [{ rank: 1, nick: "GX", amount: "1,800", image: null }];
+  }
+  function boardText(p, value, size, baseline, color, at = null) {
+    const font = fonts.get(size), bounds = textBounds(value, size);
+    let cursor = at ?? (bounds.width <= 216 ? 120 - Math.ceil(bounds.width / 2) - bounds.left : 12 - bounds.left);
+    for (const character of value) {
+      const [offset, width, height, advance, dx, dy] = font.glyphs[character.charCodeAt(0) - 32];
+      for (let bit = 0; bit < width * height; bit++) {
+        const x = cursor + dx + bit % width;
+        if (x >= 12 && x < 228 && (font.bits[offset + (bit >> 3)] & (0x80 >> (bit % 8)))) pixel(p, x, baseline + dy + Math.floor(bit / width), color);
+      }
+      cursor += advance;
+    }
+  }
+  const displaySource = await readFile("firmware/chogcare_station/StationDisplay.h", "utf8");
+  const amountBaseline = Number(displaySource.match(/boardTextX\(boardAmountWidth\) - boardAmountBearing, (\d+) - bandY/)?.[1]);
+  assert.ok(Number.isInteger(amountBaseline), "Firmware leaderboard amount baseline was not found.");
+  const boardOutputs = [], report = [];
+  for (const card of cards) {
+    const p = canvas();
+    text(p, "LEADERBOARD", 12, 30, colors.ink);
+    rect(p, 12, 45, 64, 1, [55, 34, 76]); rect(p, 165, 45, 64, 1, [55, 34, 76]);
+    label(p, `TOP ${String(card.rank).padStart(2, "0")}`, 120, 49, "pink", true);
+    rounded(p, 52, 56, 136, 136, 19, [106, 57, 138]);
+    rounded(p, 53, 57, 134, 134, 18, colors.bg);
+    let words;
+    if (Buffer.isBuffer(card.image) && card.image.length === 8192) {
+      words = Array.from({ length: 4096 }, (_, at) => card.image.readUInt16BE(at * 2));
+      bitmap(p, words, 64, 64, 56, 60, 128, 128, 15);
+    } else bitmap(p, image(artHeader, "DonationCoin"), 96, 96, 56, 60, 128, 128, 15);
+    const ascii = /^[\x20-\x7e]+$/.test(card.nick);
+    const nickBounds = ascii ? textBounds(card.nick, 18) : null;
+    if (nickBounds?.width <= 216) boardText(p, card.nick, 18, 223, colors.ink);
+    else {
+      // The firmware uses its 10x20 Cyrillic font on this branch. ASCII glyph
+      // geometry here is an approximation, as with existing U8g2 captions.
+      assert.ok(ascii, "Non-ASCII nickname needs a U8g2 preview renderer; the hardware supports Cyrillic.");
+      label(p, card.nick, 12, 220, "ink");
+      rect(p, 0, 196, 12, 30, colors.bg); rect(p, 228, 196, 12, 30, colors.bg);
+    }
+    const amountSize = [24, 18, 12].find(size => textBounds(card.amount, size).width <= 216) ?? 12;
+    const amountBounds = textBounds(card.amount, amountSize);
+    assert.ok(amountBaseline + amountBounds.top >= 230 && amountBaseline + amountBounds.bottom <= 278, "Leaderboard amount leaves its firmware slot.");
+    boardText(p, card.amount, amountSize, amountBaseline, colors.pink);
+    label(p, "CHOG DONATED", 120, 287, "muted", true);
+    rect(p, 97, 297, 8, 8, colors.live); label(p, "LIVE", 128, 307, "live", true, true);
+    const png = await sharp(p, { raw: { width: 240, height: 320, channels: 3 } }).png().toBuffer();
+    await writeFile(`work/station-art/leaderboard-${source === "fixture" ? "fixture-" : ""}${card.rank}-preview.png`, png);
+    boardOutputs.push({ input: png, left: 24 + boardOutputs.length * 264, top: 48 });
+    report.push({ rank: card.rank, nick: card.nick, amount: card.amount, avatar: !!words, amountFont: amountSize, amountBaseline, nicknameFont: nickBounds?.width <= 216 ? "FreeSansBold18pt7b" : "U8g2 approximate" });
+  }
+  const sheet = sharp({ create: { width: boardOutputs.length * 264 + 24, height: 392, channels: 3, background: source === "fixture" ? "#43252a" : "#180d26" } });
+  await sheet.composite(boardOutputs).png().toFile(`work/station-art/leaderboard-${source === "fixture" ? "fixture-" : ""}preview.png`);
+  await writeFile("work/station-art/leaderboard-preview.json", `${JSON.stringify({ source, failure, note: "Actual Adafruit glyphs/RGB565 pixels; U8g2 captions approximated. LIVE status is illustrative.", cards: report }, null, 2)}\n`);
+  console.log(`Leaderboard preview source: ${source}${failure ? ` (${failure})` : ""}. Wrote ${report.length} 240x320 cards and montage.`);
+}

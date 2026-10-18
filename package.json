@@ -28,7 +28,7 @@
     "station": "node scripts/station-bridge.mjs",
     "station:demo": "node scripts/station-bridge.mjs --demo",
     "station:simulate": "node scripts/station-bridge.mjs --simulate",
-    "station:test": "node --test test/station-events.test.mjs test/station-bridge.test.mjs test/station-art.test.mjs test/station-scenes.test.mjs",
+    "station:test": "node --test test/station-events.test.mjs test/station-bridge.test.mjs test/station-art.test.mjs test/station-scenes.test.mjs test/station-avatar.test.mjs test/station-board-wire.test.mjs test/station-leaderboard.test.mjs test/station-leaderboard-firmware.test.mjs",
     "station:compile": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/check-station-firmware.ps1",
     "payments:test": "node --test test/checkout.test.mjs test/payment-service.test.mjs test/nft-proof.test.mjs test/payment-custody.test.mjs test/pool-ledger.test.mjs test/chain-receipts.test.mjs test/payout-outbox.test.mjs test/web-security.test.mjs test/chog-processor.test.mjs test/relay-route.test.mjs test/source-journal.test.mjs",
     "security:check": "npm run build && npm test && npm audit --audit-level=low",
@@ -52,6 +52,7 @@
     "qrcode": "^1.5.4",
     "react": "19.3.0",
     "react-dom": "19.3.0",
+    "sharp": "0.35.5",
     "viem": "2.57.3",
     "wagmi": "3.7.7"
   },

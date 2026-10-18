@@ -144,6 +144,29 @@ test("LIVE requires an online broadcast and a bounded read-only local status res
   assert.equal(await stationBroadcastLive(async()=>new Response("not JSON")),false);
 });
 
+test("leaderboard capability is optional and idle eligibility ends immediately when a donation is offered", () => {
+  const f = controller();
+  assert.equal(f.device.canShowBoard, false);
+  assert.equal(f.device.receive({ v: 1, type: "hello", last: "", scenes: 2, idle: 1, board: 1 }), true);
+  assert.equal(f.device.canShowBoard, true);
+  f.advance(5001);
+  assert.equal(f.device.canShowBoard, false, "a stale USB heartbeat cannot start a card");
+  f.device.receive({ v: 1, type: "pong", board: 1 });
+  assert.equal(f.device.canShowBoard, true);
+  f.device.offer(donation);
+  assert.equal(f.device.canShowBoard, false, "pending gratitude preempts an idle image even before its ACK");
+  f.device.receive({ v: 1, type: "ack", id: donation.id, status: "done" });
+  assert.equal(f.device.canShowBoard, true);
+  f.device.receive({ v: 1, type: "fault" });
+  assert.equal(f.device.canShowBoard, false);
+  f.device.resetConnection();
+  assert.equal(f.device.canShowBoard, false);
+  for (const board of [0, 2, true, "1", null]) {
+    assert.equal(validStationDeviceMessage({ v: 1, type: "pong", board }), false);
+  }
+  assert.equal(validStationDeviceMessage({ v: 1, type: "pong" }), true, "old firmware remains compatible");
+});
+
 test("scene tests rotate allowlisted initiative photos and always carry a test marker", () => {
   const f = controller(), causes = [];
   for (let index = 0; index < 6; index++) {

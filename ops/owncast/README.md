@@ -12,6 +12,21 @@ rendition. Desktop players can select automatically from the master. Both
 renditions use the same portrait aspect ratio and original
 transport timestamps, so changing quality does not change the webpage's frame.
 
+The mobile encoder joins the newest completed segment with a bounded 128 KiB
+probe and one-second analysis limit, rather than buffering an unbounded amount
+of a quiet camera feed during startup. Its playlist keeps eight one-second
+segments. Input buffering and B-frame delay are disabled; the output VBV is
+about one second. Check media timestamps against Owncast's source segments when
+measuring delay: a freshly modified playlist can still contain old frames.
+Decoder, filter and encoder threads are explicitly bounded; allowing this host
+to spawn about a hundred media threads caused the rendition to fall behind
+despite apparently moderate total CPU use. Audio/video interleaving is bounded
+to one second and packets are flushed promptly.
+The browser targets two segments behind the published edge and limits drift;
+native Safari also catches substantial accumulated lag after playback starts.
+This is ordinary HLS, so total camera-to-viewer delay still includes segment
+completion, re-encoding, transport and the player's safety buffer.
+
 The additional encoder runs as `owncast`, using `/opt/owncast/ffmpeg`. Its only
 writable persistent directory is `/var/lib/chogcare-mobile`. Temporary segments,
 directory listings, and symlinks are excluded by nginx. No admin password or

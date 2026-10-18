@@ -5,6 +5,6 @@
   "type":"module",
   "engines":{"node":">=24.22 <25"},
   "scripts":{"start":"node scripts/cloud-payments.mjs"},
-  "dependencies":{"ethers":"6.15.0","viem":"2.57.3"},
+  "dependencies":{"ethers":"6.15.0","viem":"2.57.7"},
   "overrides":{"ws":"8.21.0"}
 }

@@ -1,7 +1,8 @@
 import { createHash, randomBytes } from "node:crypto";
-import { closeSync, existsSync, fsyncSync, lstatSync, mkdirSync, openSync, readFileSync, renameSync, writeFileSync } from "node:fs";
+import { closeSync, existsSync, fsyncSync, lstatSync, mkdirSync, openSync, renameSync, writeFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { DatabaseSync } from "node:sqlite";
+import { readRegularFileSync } from "./regular-file.mjs";
 
 // Local crash/rollback tripwire, NOT an independent anti-tampering authority.
 // Restoring both files or compromising this OS account defeats this boundary.
@@ -47,8 +48,7 @@ function durableWrite(path, value, exclusive=false) {
   if(process.platform!=="win32") {const dir=openSync(dirname(path),"r");try{fsyncSync(dir);}finally{closeSync(dir);}}
 }
 function readCheckpoint(path,filename,companions) {
-  if(!existsSync(path) || lstatSync(path).isSymbolicLink() || !lstatSync(path).isFile() || lstatSync(path).size>4096)throw new PaymentIntegrityError();
-  const value=JSON.parse(readFileSync(path,"utf8"));
+  const value=JSON.parse(readRegularFileSync(path,4096).toString("utf8"));
   if(value.version!==1 || value.database!==resolve(filename) || serialize(value.companions)!==serialize(companions.map(path=>resolve(path))) || !/^[a-f0-9]{64}$/.test(value.digest) || !Number.isSafeInteger(value.generation) || value.generation<0)throw new PaymentIntegrityError();
   return value;
 }

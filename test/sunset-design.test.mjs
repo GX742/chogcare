@@ -288,7 +288,8 @@ test('original local composition and quiet 100 percent plus 10 percent strip are
 
 test('redesigned sources remain keyboard accessible with protected external links', () => {
   assert.equal((giving.match(/target="_blank" rel="noopener noreferrer"/g) ?? []).length, 2);
-  assert.match(giving, /https:\/\/www.animal-ethics.org\/cryptocurrencies\//);
+  const externalTargets = new Set([...giving.matchAll(/href="([^"]+)"/g)].map(match => match[1]));
+  assert.ok(externalTargets.has("https://www.animal-ethics.org/cryptocurrencies/"));
   assert.match(read('../src/station-redesign.css'), /care-source-row:focus-visible \{ outline: 2px/);
   assert.match(giving, /id="how-it-works" tabIndex=\{-1\}/);
 });

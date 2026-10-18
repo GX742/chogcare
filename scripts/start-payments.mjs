@@ -77,7 +77,7 @@ const stop = async () => { stopping = true; cancelTimer(timer); await startupDon
 registerStop(stop);
 try {
   const publicOrigin=(process.env.CHOGCARE_PUBLIC_ORIGIN?.trim()||"https://chogcare.xyz");
-  if(!["https://chogcare.xyz","https://chogcare.vercel.app","https://chogcare.com","https://www.chogcare.com","http://127.0.0.1:4173"].includes(publicOrigin))throw new Error("Payment site origin is not approved.");
+  if(!new Set(["https://chogcare.xyz","https://chogcare.vercel.app","https://chogcare.com","https://www.chogcare.com","http://127.0.0.1:4173"]).has(publicOrigin))throw new Error("Payment site origin is not approved.");
   lease=await acquireLease(); assertActive();
   // Fail before asking for a password if another process occupies the API port.
   const probe=netServer();

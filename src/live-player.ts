@@ -178,6 +178,9 @@ export function createLiveRetryBudget(now = Date.now) {
       attempts.push(timestamp);
       return delay;
     },
+    retryAfter(): number {
+      return attempts.length ? Math.max(1000, 60_000 - (now() - attempts[0])) : 1000;
+    },
     dispose() { disposed = true; attempts = []; },
   };
 }

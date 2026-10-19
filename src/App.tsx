@@ -17,7 +17,8 @@ import Leaderboard from "./Leaderboard";
 import SupportDialog from "./SupportDialog";
 import BroadcastPreview from "./BroadcastPreview";
 import type { SupportContext } from "./support-model";
-import { createLiveDriftSync, createLiveLoadState, createLiveResumeSync, createLiveRetryBudget, liveHlsConfig, livePlaybackStrategy, liveSegmentSeconds, portraitFrameAspect, recoverLiveNetwork, DEFAULT_LIVE_SEGMENT_SECONDS, type LiveLoadState } from "./live-player";
+import { createLiveDriftSync, createLiveLoadState, createLiveResumeSync, liveHlsConfig, livePlaybackStrategy, liveSegmentSeconds, portraitFrameAspect, recoverLiveNetwork, DEFAULT_LIVE_SEGMENT_SECONDS, type LiveLoadState } from "./live-player";
+import { createLivePlaybackRecovery } from "./live-recovery";
 import { broadcastPreviewUrl, broadcastStreamUrl } from "./broadcast-source";
 
 import "./station-redesign.css";
@@ -182,105 +183,117 @@ function NativeLivePlayer({ src, onReady, onWaiting, onAspect }: { src: string; 
   const [loadState, setLoadState] = useState<LiveLoadState>("loading");
   const [hasFrame, setHasFrame] = useState(false);
   const [previewReady, setPreviewReady] = useState(false);
+  const [inView, setInView] = useState(true);
   const [attempt, setAttempt] = useState(0);
   const preview = broadcastPreviewUrl(src, window.location.origin);
 
   useEffect(() => { callbacks.current = { onReady, onWaiting, onAspect }; }, [onReady, onWaiting, onAspect]);
 
   useEffect(() => {
-    const video = videoRef.current;
-    if (!video) return;
-    // The dedicated mobile encoder emits one-second segments. Native Safari
-    // does not emit hls.js LEVEL_UPDATED, so it needs this actual duration too.
-    let cancelled = false, wasHidden = document.hidden, segmentSeconds = src.endsWith("/hls/mobile/stream.m3u8") ? 1 : DEFAULT_LIVE_SEGMENT_SECONDS;
-    let hls: HlsType | null = null, retryTimer: ReturnType<typeof setTimeout> | null = null;
-    let lastRecovery: (() => void) | null = null, recoveryHeld = false;
+    const element = videoRef.current;
+    if (!element) return;
+    const video: HTMLVideoElement = element;
+    let cancelled = false, inViewport = true, generation = 0;
+    let segmentSeconds = src.endsWith("/hls/mobile/stream.m3u8") ? 1 : DEFAULT_LIVE_SEGMENT_SECONDS;
+    let hls: HlsType | null = null, nativeActive = false;
     const nativeHlsCapable = Boolean(video.canPlayType("application/vnd.apple.mpegurl"));
     const managedMediaSource = "ManagedMediaSource" in window;
-    // Safari checks both the muted attribute and current media state before
-    // allowing inline autoplay. Set these before assigning any HLS source.
     video.defaultMuted = true;
     video.muted = true;
     video.playsInline = true;
-    let nativeActive = false, mseAttached = false;
-    setLoadState("loading");
-    setHasFrame(false);
-    setPreviewReady(false);
+    setLoadState("loading"); setHasFrame(false); setPreviewReady(false); setInView(true);
+    const active = () => {
+      if (cancelled || document.hidden || !inViewport || navigator.onLine === false) return false;
+      const box = video.getBoundingClientRect();
+      return box.width > 0 && box.height > 0 && box.bottom > 0 && box.right > 0 && box.top < window.innerHeight && box.left < window.innerWidth;
+    };
     const loadMonitor = createLiveLoadState({ onChange: state => { if (!cancelled) setLoadState(state); } });
-    const retryBudget = createLiveRetryBudget();
     const resumeSync = createLiveResumeSync({ media: video, segmentSeconds: () => segmentSeconds, liveSyncPosition: () => hls?.liveSyncPosition ?? null });
-    const driftSync = createLiveDriftSync({ media: video, active: () => nativeActive && !document.hidden, segmentSeconds: () => segmentSeconds });
-    const waiting = () => { if (!cancelled) { if (document.hidden) loadMonitor.suspend(); else loadMonitor.waiting(); callbacks.current.onWaiting(); } };
+    const driftSync = createLiveDriftSync({ media: video, active: () => nativeActive && active(), segmentSeconds: () => segmentSeconds });
     const updateAspect = () => {
-      // iPhone can report its decoded dimensions after loadedmetadata, and
-      // quality switches can emit resize without another metadata event.
       if (!cancelled && video.videoWidth > 0 && video.videoHeight > 0) callbacks.current.onAspect(portraitFrameAspect(video.videoWidth, video.videoHeight));
     };
-    const playing = () => { if (!cancelled) { updateAspect(); setHasFrame(true); loadMonitor.playing(); if (nativeActive) driftSync.start(); callbacks.current.onReady(); } };
-    const pausedPlayback = () => { if (!cancelled && !document.hidden && !video.ended) { loadMonitor.blocked(); callbacks.current.onWaiting(); } };
-    const endedPlayback = () => { if (!cancelled) { loadMonitor.unavailable(); callbacks.current.onWaiting(); } };
-    const startPlayback = () => {
-      if (!cancelled) void video.play().then(() => { if (!video.paused && video.readyState >= 3) playing(); }).catch(problem => {
+    const playback = createLivePlaybackRecovery({
+      media: video, active, monitor: loadMonitor,
+      resumeLoading: () => {
+        if (hls?.levels.length) hls.startLoad(-1, true);
+        resumeSync.request();
+      },
+      reconnect: () => { if (nativeActive) startNative(); else installHls(); },
+      onPlaying: () => {
         if (cancelled) return;
-        if (problem?.name === "NotAllowedError") { loadMonitor.blocked(); callbacks.current.onWaiting(); }
-        else { if (loadMonitor.state === "blocked") loadMonitor.unavailable(); waiting(); }
-      });
+        updateAspect(); setHasFrame(true);
+        if (nativeActive) driftSync.start();
+        callbacks.current.onReady();
+      },
+      onWaiting: () => { if (!cancelled) callbacks.current.onWaiting(); },
+    });
+    const startPlayback = () => playback.play();
+    playAction.current = () => playback.play(true);
+    const waiting = () => playback.waiting();
+    const playing = () => playback.playing();
+    const progress = () => playback.progress();
+    const pausedPlayback = () => playback.paused();
+    const endedPlayback = () => playback.recover(undefined, true);
+    const metadata = () => { updateAspect(); resumeSync.update(); startPlayback(); };
+    const canPlay = () => {
+      resumeSync.update();
+      if (video.paused || loadMonitor.state !== "playing") startPlayback();
     };
-    playAction.current = startPlayback;
-    const recover = (operation: () => void) => {
-      if (cancelled || retryTimer !== null) return;
-      waiting();
-      lastRecovery = operation;
-      const delay = retryBudget.nextDelay();
-      if (delay === null) { recoveryHeld = true; hls?.stopLoad(); loadMonitor.unavailable(); return; }
-      recoveryHeld = false;
-      retryTimer = setTimeout(() => {
-        retryTimer = null;
-        if (cancelled) return;
-        try { operation(); } catch { recover(operation); }
-      }, delay);
-    };
-    const resume = () => {
-      if (cancelled || document.hidden) return;
-      // A user returning after the retry window may try again, but cannot
-      // bypass the bounded fatal-recovery budget by switching tabs repeatedly.
-      if (recoveryHeld && lastRecovery) { recover(lastRecovery); return; }
-      if (retryTimer === null) hls?.startLoad();
-      resumeSync.request();
-      startPlayback();
-    };
-    const metadata = () => {
-      // Adapt to the real portrait camera, but keep landscape offline screens
-      // contained in the established frame instead of cropping them again.
-      updateAspect();
-      // Let the native/HLS engine choose its initial buffered position. Only
-      // an explicit return from a hidden page requests a live-edge seek.
-      resumeSync.update(); startPlayback();
-    };
-    const canPlay = () => { resumeSync.update(); };
-    const visibility = () => {
-      if (document.hidden) { wasHidden = true; loadMonitor.suspend(); return; }
-      if (wasHidden) { wasHidden = false; waiting(); resume(); }
-    };
-    const pageShow = (event: PageTransitionEvent) => { if (event.persisted) resume(); };
-    const nativeError = () => {
-      waiting();
-      if (nativeActive) recover(() => { video.load(); startPlayback(); });
-    };
-    const startNative = () => {
-      if (cancelled || !nativeHlsCapable || mseAttached || nativeActive) return;
-      hls?.destroy(); hls = null;
-      nativeActive = true;
-      video.src = src;
-      video.load();
-      startPlayback();
-    };
+    const visibility = () => { if (document.hidden) playback.suspend(); else playback.resume(); };
+    const pageShow = (event: PageTransitionEvent) => { if (event.persisted) playback.resume(); };
+    const online = () => playback.resume();
+    const offline = () => playback.suspend();
+    const nativeError = () => playback.recover(undefined, true);
 
-    waiting();
+    function startNative() {
+      if (cancelled || !nativeHlsCapable) return;
+      generation++; playback.resetSource();
+      setHasFrame(false); setPreviewReady(false);
+      hls?.destroy(); hls = null; nativeActive = true;
+      video.src = src; video.load(); waiting(); startPlayback();
+    }
+    function installHls() {
+      if (cancelled) return;
+      const current = ++generation;
+      playback.resetSource();
+      setHasFrame(false); setPreviewReady(false);
+      hls?.destroy(); hls = null; nativeActive = false;
+      video.removeAttribute("src"); video.load(); waiting();
+      void import("hls.js").then(({ default: Hls }) => {
+        if (cancelled || current !== generation) return;
+        const strategy = livePlaybackStrategy(Hls.isSupported(), nativeHlsCapable, managedMediaSource);
+        if (strategy !== "hls") { if (strategy === "native") startNative(); else playback.unavailable(); return; }
+        const engine = new Hls(liveHlsConfig());
+        hls = engine;
+        engine.on(Hls.Events.MANIFEST_PARSED, () => { if (hls === engine && !cancelled) startPlayback(); });
+        engine.on(Hls.Events.LEVEL_UPDATED, (_event, data) => {
+          if (hls !== engine || cancelled) return;
+          segmentSeconds = liveSegmentSeconds(data.details.targetduration);
+          if (active()) resumeSync.update();
+        });
+        engine.on(Hls.Events.ERROR, (_event, data) => {
+          if (!data.fatal || hls !== engine || cancelled) return;
+          if (data.type === Hls.ErrorTypes.NETWORK_ERROR) playback.recover(() => {
+            if (hls === engine) { recoverLiveNetwork(engine, src, data.details); startPlayback(); }
+          }, true);
+          else if (data.type === Hls.ErrorTypes.MEDIA_ERROR) playback.recover(() => {
+            if (hls === engine) { engine.recoverMediaError(); startPlayback(); }
+          }, true);
+          else playback.recover(undefined, true);
+        });
+        engine.attachMedia(video); engine.loadSource(src);
+      }).catch(() => {
+        if (cancelled || current !== generation) return;
+        if (nativeHlsCapable) startNative(); else playback.recover();
+      });
+    }
+
     video.addEventListener("loadedmetadata", metadata);
     video.addEventListener("loadeddata", updateAspect);
     video.addEventListener("resize", updateAspect);
     video.addEventListener("playing", playing);
+    video.addEventListener("timeupdate", progress);
     video.addEventListener("pause", pausedPlayback);
     video.addEventListener("ended", endedPlayback);
     video.addEventListener("waiting", waiting);
@@ -289,43 +302,30 @@ function NativeLivePlayer({ src, onReady, onWaiting, onAspect }: { src: string; 
     video.addEventListener("error", nativeError);
     document.addEventListener("visibilitychange", visibility);
     window.addEventListener("pageshow", pageShow);
+    window.addEventListener("online", online);
+    window.addEventListener("offline", offline);
+    const observer = typeof IntersectionObserver === "function" ? new IntersectionObserver(entries => {
+      const entry = entries.find(item => item.target === video);
+      if (!entry || cancelled) return;
+      inViewport = entry.isIntersecting && entry.intersectionRatio > 0;
+      setInView(inViewport);
+      if (inViewport) playback.resume(); else playback.suspend();
+    }, { threshold: [0, 0.01] }) : null;
+    observer?.observe(video);
 
-    // Start native Safari playback immediately; it must not wait for a JS
-    // media engine that iPhone does not need to load or attach.
+    // Safari's native player starts without downloading the MSE engine.
     if (livePlaybackStrategy(typeof window.MediaSource === "function" || managedMediaSource, nativeHlsCapable, managedMediaSource) === "native") startNative();
-    else void import("hls.js").then(({ default: Hls }) => {
-        if (cancelled) return;
-        const strategy = livePlaybackStrategy(Hls.isSupported(), nativeHlsCapable, managedMediaSource);
-        if (strategy !== "hls") { if (strategy === "native") startNative(); else loadMonitor.unavailable(); return; }
-        hls = new Hls(liveHlsConfig());
-        hls.on(Hls.Events.MANIFEST_PARSED, startPlayback);
-        hls.on(Hls.Events.LEVEL_UPDATED, (_event, data) => {
-          segmentSeconds = liveSegmentSeconds(data.details.targetduration);
-          if (!document.hidden) resumeSync.update();
-        });
-        hls.on(Hls.Events.ERROR, (_event, data) => {
-          if (!data.fatal || !hls || cancelled) return;
-          if (data.type === Hls.ErrorTypes.NETWORK_ERROR) recover(() => { if (hls) recoverLiveNetwork(hls, src, data.details); });
-          else if (data.type === Hls.ErrorTypes.MEDIA_ERROR) recover(() => { hls?.recoverMediaError(); });
-          else { waiting(); loadMonitor.unavailable(); hls.destroy(); hls = null; }
-        });
-        mseAttached = true;
-        hls.attachMedia(video);
-        hls.loadSource(src);
-      }).catch(() => { if (cancelled) return; waiting(); if (nativeHlsCapable) startNative(); else loadMonitor.unavailable(); });
+    else installHls();
 
     return () => {
-      cancelled = true;
-      playAction.current = null;
-      loadMonitor.dispose();
-      if (retryTimer !== null) clearTimeout(retryTimer);
-      retryBudget.dispose();
-      resumeSync.dispose();
-      driftSync.dispose();
+      cancelled = true; generation++; playAction.current = null;
+      observer?.disconnect(); playback.dispose(); loadMonitor.dispose();
+      resumeSync.dispose(); driftSync.dispose();
       video.removeEventListener("loadedmetadata", metadata);
       video.removeEventListener("loadeddata", updateAspect);
       video.removeEventListener("resize", updateAspect);
       video.removeEventListener("playing", playing);
+      video.removeEventListener("timeupdate", progress);
       video.removeEventListener("pause", pausedPlayback);
       video.removeEventListener("ended", endedPlayback);
       video.removeEventListener("waiting", waiting);
@@ -334,37 +334,25 @@ function NativeLivePlayer({ src, onReady, onWaiting, onAspect }: { src: string; 
       video.removeEventListener("error", nativeError);
       document.removeEventListener("visibilitychange", visibility);
       window.removeEventListener("pageshow", pageShow);
-      hls?.destroy();
-      video.pause();
-      video.removeAttribute("src");
-      video.load();
+      window.removeEventListener("online", online);
+      window.removeEventListener("offline", offline);
+      hls?.destroy(); video.pause(); video.removeAttribute("src"); video.load();
     };
   }, [src, attempt]);
 
   return <>
-    {preview && !hasFrame && <BroadcastPreview key={preview} src={preview} refresh={loadState === "loading"}
+    {preview && !hasFrame && <BroadcastPreview key={preview} src={preview} refresh={inView && (loadState === "loading" || loadState === "unavailable")}
       onReady={() => setPreviewReady(true)}
       onAspect={(width, height) => callbacks.current.onAspect(portraitFrameAspect(width, height))} />}
-    <video
-      ref={videoRef}
-      className="lp-broadcast-player is-ready"
-      autoPlay
-      muted
-      playsInline
-      preload="auto"
-      disableRemotePlayback
-      disablePictureInPicture
-      controls={false}
-      controlsList="nodownload noplaybackrate noremoteplayback"
-      tabIndex={-1}
-      aria-label="ChogCare live broadcast"
-      onContextMenu={(event) => event.preventDefault()}
-    />
+    <video ref={videoRef} className="lp-broadcast-player is-ready" autoPlay muted playsInline preload="auto"
+      disableRemotePlayback disablePictureInPicture controls={false}
+      controlsList="nodownload noplaybackrate noremoteplayback" tabIndex={-1}
+      aria-label="ChogCare live broadcast" onContextMenu={(event) => event.preventDefault()} />
     {loadState !== "playing" && !((hasFrame || previewReady) && loadState === "loading") && <div className="lp-broadcast-loading lp-broadcast-state" role="status" aria-live="polite">
       {loadState === "loading" ? <><i aria-hidden="true"/><span>Loading live broadcast…</span></> : <>
         <span className="care-broadcast-state-icon" aria-hidden="true"><Broadcast size={30} weight="light" /></span>
-        <strong>{loadState === "blocked" ? "Ready when you are." : "Broadcast unavailable"}</strong>
-        <span>{loadState === "blocked" ? "Your browser needs a tap to start the video." : "We couldn’t load the stream. You can try again."}</span>
+        <strong>{loadState === "blocked" ? "Ready when you are." : "Reconnecting broadcast"}</strong>
+        <span>{loadState === "blocked" ? "Your browser needs a tap to start the video." : "The connection was interrupted. Retrying automatically."}</span>
         <button type="button" onClick={() => { if (loadState === "blocked") playAction.current?.(); else setAttempt(value => value + 1); }}>{loadState === "blocked" ? "Play broadcast" : "Retry broadcast"}</button>
       </>}
     </div>}

@@ -257,7 +257,7 @@ test('concise cause cards retain original descriptions and accessible giving ste
 
 test('unavailable states remain truthful with branded presentation rather than invented activity', () => {
   assert.match(app, /care-broadcast-state-icon/);
-  assert.match(app, /Broadcast unavailable/);
+  assert.match(app, /Reconnecting broadcast/);
   const board = read('../src/Leaderboard.tsx');
   assert.match(board, /care-board-state-icon/);
   assert.match(board, /This does not mean the board is empty/);

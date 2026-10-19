@@ -54,7 +54,7 @@ test("site CSS references real loaded variable font families on desktop as well 
 
 test("player recovery stays local, accessible and free of native controls", () => {
   const source = read("../src/App.tsx");
-  assert.match(source, /problem\?\.name === "NotAllowedError"/);
+  assert.match(read("../src/live-recovery.ts"), /mediaProblem\?\.name === "NotAllowedError"/);
   assert.match(source, /Play broadcast/);
   assert.match(source, /Retry broadcast/);
   assert.match(source, /loadMonitor.dispose\(\)/);

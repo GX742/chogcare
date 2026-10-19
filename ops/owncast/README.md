@@ -27,6 +27,8 @@ are flushed promptly. The loopback-only input helper on 127.0.0.1:8091 exposes
 only the latest three source segments to the encoder, never a long archive.
 Its only upstream is the fixed local Owncast video playlist; paths and segment
 names are strictly validated, redirects and environment proxies are refused.
+Owncast session IDs may contain URL-safe hyphens and underscores; the filename
+allowlist accepts both so a new source session cannot disable the mobile feed.
 The public gateway has no route to this helper.
 The browser targets three segments behind the published edge and limits drift;
 native Safari also catches substantial accumulated lag after playback starts.

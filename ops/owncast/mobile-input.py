@@ -30,7 +30,10 @@ def live_window(text, keep=3):
             pending.append(line)
         elif re.fullmatch(r"#EXT-X-PROGRAM-DATE-TIME:[0-9T:+.Z-]{15,40}", line) and pending:
             pending.append(line)
-        elif re.fullmatch(r"stream-[A-Za-z0-9]{1,64}-[0-9]{1,15}\.ts", line) and pending:
+        # Owncast session IDs use URL-safe characters, including '-' and '_'.
+        # Keep a filename-only allowlist: accepting a valid new session must
+        # never allow an upstream host, path traversal, query or encoded path.
+        elif re.fullmatch(r"stream-[A-Za-z0-9_-]{1,64}-[0-9]{1,15}\.ts", line) and pending:
             segments.append([*pending, SOURCE + line])
             pending = []
         else:

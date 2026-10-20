@@ -1,5 +1,9 @@
 """Loopback-only, bounded live window for the mobile transcoder."""
+import http.client
 import re
+import threading
+import time
+import urllib.error
 import urllib.request
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
@@ -51,6 +55,49 @@ class NoRedirect(urllib.request.HTTPRedirectHandler):
         return None
 
 
+class LivePlaylistSource:
+    """A short upstream hiccup must not terminate the live transcoder."""
+
+    def __init__(self, opener=None, now=time.monotonic, pause=time.sleep):
+        self.opener = opener
+        self.now = now
+        self.pause = pause
+        self.cached_body = None
+        self.cached_at = 0
+        self.lock = threading.Lock()
+
+    def load(self):
+        with self.lock:
+            opener = self.opener or urllib.request.build_opener(urllib.request.ProxyHandler({}), NoRedirect())
+            last_problem = None
+            for attempt in range(3):
+                try:
+                    with opener.open(SOURCE + "stream.m3u8", timeout=1) as response:
+                        raw = response.read(65537)
+                    # Validation errors never use stale data or another URL.
+                    body = live_window(raw.decode("utf-8")).encode("utf-8")
+                    self.cached_body, self.cached_at = body, self.now()
+                    return body
+                except urllib.error.HTTPError as problem:
+                    if problem.code not in (408, 425, 429, 500, 502, 503, 504):
+                        raise
+                    problem.close()
+                    last_problem = problem
+                except (OSError, http.client.HTTPException) as problem:
+                    last_problem = problem
+                # The cache contains only the fixed source's validated three-
+                # segment window. It cannot mask an outage beyond three seconds.
+                age = self.now() - self.cached_at
+                if self.cached_body is not None and 0 <= age <= 3:
+                    return self.cached_body
+                if attempt < 2:
+                    self.pause(0.1 * (attempt + 1))
+            raise last_problem
+
+
+playlist_source = LivePlaylistSource()
+
+
 class Handler(BaseHTTPRequestHandler):
     def log_message(self, *args):
         pass
@@ -60,11 +107,8 @@ class Handler(BaseHTTPRequestHandler):
             self.send_error(404)
             return
         try:
-            opener = urllib.request.build_opener(urllib.request.ProxyHandler({}), NoRedirect())
-            with opener.open(SOURCE + "stream.m3u8", timeout=3) as response:
-                raw = response.read(65537)
-            body = live_window(raw.decode("utf-8")).encode("utf-8")
-        except (OSError, ValueError, UnicodeError):
+            body = playlist_source.load()
+        except (OSError, http.client.HTTPException, ValueError, UnicodeError):
             self.send_error(503)
             return
         self.send_response(200)

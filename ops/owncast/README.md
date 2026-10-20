@@ -4,7 +4,7 @@ loopback nginx proxy on port 8090. Tailscale Funnel exposes this proxy; Vercel's
 and media responses are not cached by the Vercel rewrite.
 
 The source stream remains in Owncast. `chogcare-mobile.service` reads that local
-stream and produces a 720 × 1280, 15 fps H.264 video rendition with a 550 kbps
+stream and produces a 720 × 1280, 15 fps H.264 video rendition with a 1,100 kbps
 video target. The website always plays muted, so this rendition has no audio
 scheduler or additional AAC encoding queue. The original 1080 × 1920 rendition
 retains its audio and frame rate and
@@ -21,7 +21,8 @@ segments. Input buffering and B-frame delay are disabled; the output VBV is
 about one second. Check media timestamps against Owncast's source segments when
 measuring delay: a freshly modified playlist can still contain old frames.
 Decoder, filter and encoder threads are explicitly bounded. Frames are selected
-from the existing 30 fps source with `framestep=2`; VFR preserves source timestamps
+from the existing 30 fps source with `framestep=2`; an explicit 15 fps encoder
+rate matches the actual frame selection. VFR preserves source timestamps
 without duplicating obsolete frames across a skipped source interval. Packets
 are flushed promptly. The loopback-only input helper on 127.0.0.1:8091 exposes
 only the latest three source segments to the encoder, never a long archive.
@@ -29,6 +30,12 @@ Its only upstream is the fixed local Owncast video playlist; paths and segment
 names are strictly validated, redirects and environment proxies are refused.
 Owncast session IDs may contain URL-safe hyphens and underscores; the filename
 allowlist accepts both so a new source session cannot disable the mobile feed.
+Transient upstream network/HTTP failures get at most three bounded fetch
+attempts. An already validated playlist can bridge a hiccup for at most three
+seconds; malformed playlists, redirects and rejected paths never use that
+fallback. FFmpeg also has two bounded segment retries. HTTP reconnect options
+do not reliably apply to nested HLS playlist reloads, so the helper implements
+that recovery instead of relying on those flags.
 The public gateway has no route to this helper.
 The browser targets three segments behind the published edge and limits drift;
 native Safari also catches substantial accumulated lag after playback starts.

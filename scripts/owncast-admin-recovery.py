@@ -31,7 +31,7 @@ BINARY = ROOT / "owncast"
 BACKUPS = Path("/var/backups/chogcare-owncast")
 UNIT = "owncast.service"
 VERSION = "Owncast v0.3.0-linux-64bit (4b09a1b11693977400fb6f6cb06a7b9891bdca6d)"
-ORIGIN = "http://127.0.0.1:8080"
+ORIGIN = "http://127.0.0.1:8082"
 PHASES = frozenset(("INPUT", "PREFLIGHT", "BACKUP", "STOP", "SPAWN", "SAVE", "CLEANUP", "RESTART", "VERIFY", "INTERNAL"))
 _failure_phase = "INPUT"
 
@@ -131,7 +131,7 @@ def preflight():
     checked_path(unit_path, owner=0)
     unit_text = unit_path.read_text(encoding="utf-8")
     starts = [line.strip() for line in unit_text.splitlines() if line.strip().startswith("ExecStart=")]
-    if starts != ["ExecStart=/opt/owncast/owncast -webserverip 127.0.0.1"]:
+    if starts != ["ExecStart=/opt/owncast/owncast -webserverip 127.0.0.1 -webserverport 8082"]:
         raise RecoveryError("Unexpected Owncast startup command; nothing was changed.")
     status, version = local_status("/api/config", public_config=True)
     if status != 200 or version != VERSION:
@@ -185,7 +185,7 @@ def start_recovery(password, account):
     # A list, not a shell string. No stream-key flag, no DB edits, no secret env.
     # This unavoidable local argv exposure lasts only until the saved marker.
     return subprocess.Popen(
-        [str(BINARY), "--database", str(DATABASE), "--webserverip", "127.0.0.1",
+        [str(BINARY), "--database", str(DATABASE), "--webserverip", "127.0.0.1", "--webserverport", "8082",
          "--adminpassword", password],
         cwd=ROOT, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
         user=account.pw_uid, group=account.pw_gid, extra_groups=(), start_new_session=True,

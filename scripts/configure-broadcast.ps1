@@ -69,7 +69,7 @@ function Invoke-LocalOwncastJson {
   # Fixed literal origin. No URL, port, redirect or proxy supplied by a user/server.
   $request = New-Object System.Net.Http.HttpRequestMessage
   $request.Method = New-Object System.Net.Http.HttpMethod($Method)
-  $request.RequestUri = [uri]('http://127.0.0.1:8080' + $Route)
+  $request.RequestUri = [uri]('http://127.0.0.1:8082' + $Route)
   $response = $null
   $responseText = $null
   $parsed = $null
@@ -83,7 +83,7 @@ function Invoke-LocalOwncastJson {
     if (!$response.IsSuccessStatusCode) {
       # Do not print response bodies, requests, credentials or exception details.
       if ([int]$response.StatusCode -eq 401) {
-        throw 'Owncast admin login rejected (HTTP 401). Use the Owncast ADMIN password, not the OBS/RTMP stream key or another account password. Check the same password at http://127.0.0.1:8080/admin/ (username: admin). Never send the password in chat.'
+        throw 'Owncast admin login rejected (HTTP 401). Use the Owncast ADMIN password, not the OBS/RTMP stream key or another account password. Check the same password at http://127.0.0.1:8082/admin/ (username: admin). Never send the password in chat.'
       }
       throw ('Owncast API rejected the request (HTTP {0}). Check the local admin password and server.' -f [int]$response.StatusCode)
     }

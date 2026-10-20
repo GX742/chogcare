@@ -253,6 +253,8 @@ class RecoveryTests(unittest.TestCase):
         self.assertEqual(argv[0], str(recovery.BINARY))
         self.assertEqual(argv[-2:], ["--adminpassword", PASSWORD])
         self.assertEqual(argv[argv.index("--database") + 1], str(recovery.DATABASE))
+        self.assertEqual(argv[argv.index("--webserverip") + 1], "127.0.0.1")
+        self.assertEqual(argv[argv.index("--webserverport") + 1], "8082")
         self.assertNotIn("--streamkey", argv)
         self.assertFalse(options.get("shell", False))
         self.assertEqual(options["user"], ACCOUNT.pw_uid)
@@ -281,7 +283,7 @@ class RecoveryTests(unittest.TestCase):
             self.assertEqual(recovery.local_status("/api/admin/serverconfig", PASSWORD), (200, None))
         response.read.assert_not_called()
         request = opener.open.call_args.args[0]
-        self.assertEqual(request.full_url, "http://127.0.0.1:8080/api/admin/serverconfig")
+        self.assertEqual(request.full_url, "http://127.0.0.1:8082/api/admin/serverconfig")
         self.assertEqual(request.get_method(), "GET")
         expected = "Basic " + base64.b64encode(("admin:" + PASSWORD).encode()).decode()
         self.assertEqual(request.get_header("Authorization"), expected)
@@ -293,7 +295,7 @@ class RecoveryTests(unittest.TestCase):
 
     def test_http_error_status_is_closed_and_unexpected_routes_are_rejected(self):
         opener = MagicMock()
-        error = urllib.error.HTTPError("http://127.0.0.1:8080", 302, "Redirect", {}, None)
+        error = urllib.error.HTTPError("http://127.0.0.1:8082", 302, "Redirect", {}, None)
         with patch.object(error, "close") as close, patch.object(recovery.urllib.request, "build_opener", return_value=opener):
             opener.open.side_effect = error
             self.assertEqual(recovery.local_status("/api/admin/serverconfig", PASSWORD), (302, None))

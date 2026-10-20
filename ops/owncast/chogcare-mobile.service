@@ -2,6 +2,8 @@
 Description=ChogCare mobile HLS rendition
 After=owncast.service chogcare-mobile-input.service
 Wants=owncast.service chogcare-mobile-input.service
+# An offline OBS source is normal; keep waiting beyond systemd's start burst.
+StartLimitIntervalSec=0
 
 [Service]
 Type=simple
@@ -24,7 +26,7 @@ WorkingDirectory=/var/lib/chogcare-mobile
 # Microsecond numbering prevents reused segment URLs when the encoder restarts.
 ExecStart=/opt/owncast/ffmpeg -hide_banner -loglevel warning -nostdin -rw_timeout 15000000 -fflags +nobuffer -flags low_delay -probesize 131072 -analyzeduration 1000000 -filter_threads 2 -threads 2 -copyts -live_start_index -1 -an -thread_queue_size 1 -http_multiple 0 -http_persistent 0 -seg_max_retry 2 -avioflags direct -i http://127.0.0.1:8091/stream.m3u8 -map 0:v:0 -vf scale=720:1280:force_original_aspect_ratio=decrease:force_divisible_by=2,pad=720:1280:(ow-iw)/2:(oh-ih)/2,framestep=2 -x264-params fps=15/1 -threads 2 -c:v libx264 -profile:v main -level:v 3.1 -preset medium -tune zerolatency -b:v 500k -maxrate 650k -bufsize 650k -g 45 -keyint_min 45 -sc_threshold 0 -pix_fmt yuv420p -an -fps_mode vfr -max_interleave_delta 1000000 -flush_packets 1 -f hls -hls_time 3 -hls_list_size 8 -hls_delete_threshold 5 -hls_flags delete_segments+independent_segments+temp_file -hls_segment_options mpegts_copyts=1 -hls_start_number_source epoch_us -hls_segment_filename /var/lib/chogcare-mobile/stream-%%d.ts /var/lib/chogcare-mobile/stream.m3u8
 Restart=always
-RestartSec=2
+RestartSec=5
 UMask=0022
 NoNewPrivileges=true
 PrivateTmp=true

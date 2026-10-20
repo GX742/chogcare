@@ -14,7 +14,7 @@ test("Owncast recovery is limited to the verified local install and official pas
   assert.match(helper, /"--adminpassword", password/);
   assert.doesNotMatch(helper, /"--streamkey"|shell=True|["']pkill|UPDATE\s+datastore|DELETE\s+FROM|INSERT\s+INTO/i);
   assert.match(helper, /if path\.resolve\(strict=True\) != path/);
-  assert.match(helper, /starts != \["ExecStart=\/opt\/owncast\/owncast -webserverip 127\.0\.0\.1"\]/);
+  assert.match(helper, /starts != \["ExecStart=\/opt\/owncast\/owncast -webserverip 127\.0\.0\.1 -webserverport 8082"\]/);
 });
 
 test("Recovery password uses hidden prompts and stdin, not history, files or Windows argv", () => {

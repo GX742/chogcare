@@ -101,7 +101,7 @@ export function createStationController({ write, done = () => {}, onFault = () =
 // Owncast password. An absent, stale or malformed response cannot assert LIVE.
 export async function stationBroadcastLive(fetcher = fetch) {
   try {
-    const response = await fetcher("http://127.0.0.1:8080/api/status", { headers: { Accept: "application/json" }, redirect: "error", signal: AbortSignal.timeout(2000) });
+    const response = await fetcher("http://127.0.0.1:8082/api/status", { headers: { Accept: "application/json" }, redirect: "error", signal: AbortSignal.timeout(2000) });
     if (!response.ok || Number(response.headers.get("content-length") ?? 0) > 16384 || !response.body) return false;
     const reader = response.body.getReader(), chunks = [];
     let size = 0;

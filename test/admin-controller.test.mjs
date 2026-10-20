@@ -327,7 +327,7 @@ test("config projections strip every unrelated key and reject wrong chain/schema
 });
 
 test("local JSON transport refuses external origins, redirects-by-URL and arbitrary API routes", async () => {
-  for (const url of ["https://127.0.0.1:8080/api/config", "http://localhost:8080/api/config", "http://evil.example/api/config", "http://user:secret@127.0.0.1:8080/api/config", "http://127.0.0.1:8080/api/admin/serverconfig?url=evil", "http://127.0.0.1:4174/private", "http://127.0.0.1:22/api/config"]) await assert.rejects(readLocalJson(url), /Unsupported local service/);
+  for (const url of ["https://127.0.0.1:8082/api/config", "http://localhost:8082/api/config", "http://evil.example/api/config", "http://user:secret@127.0.0.1:8082/api/config", "http://127.0.0.1:8082/api/admin/serverconfig?url=evil", "http://127.0.0.1:4174/private", "http://127.0.0.1:22/api/config"]) await assert.rejects(readLocalJson(url), /Unsupported local service/);
 });
 
 test("native loopback JSON transport rejects redirects, chunked overflow, invalid length and UTF-8", async () => {
@@ -343,7 +343,7 @@ test("native loopback JSON transport rejects redirects, chunked overflow, invali
       });
     }; return req;
   };
-  const url = "http://127.0.0.1:8080/api/config";
+  const url = "http://127.0.0.1:8082/api/config";
   assert.deepEqual(await readLocalJson(url, {}, 16, factory({ chunks: ["{\"ok\":true}"] })), { ok: true });
   for (const response of [
     { status: 302, chunks: ["{}"] }, { length: "99", chunks: ["{}"] }, { length: "2x", chunks: ["{}"] },
@@ -362,7 +362,7 @@ test("absolute local HTTP deadline rejects slow-drip headers/body and is cleared
     };
     return req;
   };
-  await assert.rejects(readLocalJson("http://127.0.0.1:8080/api/config", {}, 1024, factory, 15), /Local service is unavailable/);
+  await assert.rejects(readLocalJson("http://127.0.0.1:8082/api/config", {}, 1024, factory, 15), /Local service is unavailable/);
   assert.equal(destroyed, 1); clearInterval(drip);
   let afterSuccess = 0;
   const success = (_url, _options, callback) => {
@@ -370,10 +370,10 @@ test("absolute local HTTP deadline rejects slow-drip headers/body and is cleared
     req.end = () => { const res = new EventEmitter(); res.statusCode = 200; res.headers = {}; callback(res); res.emit("data", Buffer.from("{}")); res.emit("end"); };
     return req;
   };
-  await readLocalJson("http://127.0.0.1:8080/api/config", {}, 16, success, 10);
+  await readLocalJson("http://127.0.0.1:8082/api/config", {}, 16, success, 10);
   await new Promise(ok => setTimeout(ok, 20)); assert.equal(afterSuccess, 0);
   const noHeaders = () => { const req = new EventEmitter(); req.end = () => {}; req.destroy = () => { destroyed++; }; return req; };
-  await assert.rejects(readLocalJson("http://127.0.0.1:8080/api/config", {}, 16, noHeaders, 10));
+  await assert.rejects(readLocalJson("http://127.0.0.1:8082/api/config", {}, 16, noHeaders, 10));
   assert.equal(destroyed, 2);
 });
 

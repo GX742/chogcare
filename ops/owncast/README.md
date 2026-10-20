@@ -19,6 +19,13 @@ audio are not guaranteed to share one adaptive quality group. Both
 renditions use the same portrait aspect ratio and original
 transport timestamps, so changing quality does not change the webpage's frame.
 
+Owncast's HTTP/admin listener is fixed to `127.0.0.1:8082`; port 8080 can be
+occupied by NVIDIA Broadcast on the mirrored Windows host. OBS keeps its
+existing loopback RTMP input on port 1935 and its existing stream key. Only
+the narrow nginx gateway on port 8090 is exposed through Funnel. Mobile video
+and preview services retry every five seconds while the input is offline,
+without latching into systemd's start-limit failure after an ordinary OBS stop.
+
 The mobile encoder joins the newest completed segment with a bounded 128 KiB
 probe and one-second analysis limit, rather than buffering an unbounded amount
 of a quiet camera feed during startup. Its playlist keeps eight three-second

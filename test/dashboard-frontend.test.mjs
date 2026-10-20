@@ -58,7 +58,7 @@ test("bridge estimates must match the selected amount, exact allocation and live
 });
 test("master playlist variants can only choose the pinned public HLS relay", () => {
   assert.equal(readBroadcastManifest("#EXTM3U\n#EXT-X-STREAM-INF:BANDWIDTH=2000000\n0/stream.m3u8", stream).variant, `${publicBroadcastOrigin}/hls/0/stream.m3u8`);
-  for (const path of ["https://evil.example/hls/stream.m3u8", "http://127.0.0.1:8080/hls/stream.m3u8", "/api/admin/serverconfig", "/hls/stream.m3u8?token=secret", "../admin/stream.m3u8", "https://name:password@chogcare-stream.tail1f833b.ts.net/hls/stream.m3u8"]) assert.equal(readBroadcastManifest(`#EXTM3U\n#EXT-X-STREAM-INF:BANDWIDTH=1\n${path}`, stream).variant, null);
+  for (const path of ["https://evil.example/hls/stream.m3u8", "http://127.0.0.1:8082/hls/stream.m3u8", "/api/admin/serverconfig", "/hls/stream.m3u8?token=secret", "../admin/stream.m3u8", "https://name:password@chogcare-stream.tail1f833b.ts.net/hls/stream.m3u8"]) assert.equal(readBroadcastManifest(`#EXTM3U\n#EXT-X-STREAM-INF:BANDWIDTH=1\n${path}`, stream).variant, null);
   assert.equal(readBroadcastManifest("#EXTM3U" + "x".repeat(32768), stream), null);
   assert.equal(readBroadcastManifest("not a playlist", stream), null);
 });

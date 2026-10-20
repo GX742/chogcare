@@ -10,7 +10,7 @@ type Media = {
   play: () => Promise<void>;
 };
 const STARTUP_LOAD_DEADLINE_MS = 60_000;
-const PLAYBACK_STALL_MS = 12_000;
+const PLAYBACK_STALL_MS = 45_000;
 
 // A paused/offscreen video is not evidence of a browser autoplay rejection.
 // Recover the media itself, with a bounded fast budget and a slow cooldown,
@@ -22,7 +22,7 @@ export function createLivePlaybackRecovery({
   media: Media;
   active: () => boolean;
   monitor: ReturnType<typeof createLiveLoadState>;
-  resumeLoading: () => void;
+  resumeLoading: (catchUp?: boolean) => void;
   reconnect: () => void;
   onPlaying: () => void;
   onWaiting: () => void;
@@ -131,7 +131,7 @@ export function createLivePlaybackRecovery({
       else if ((media.paused || idle >= 4_000) && now() - lastNudge >= 3_000) {
         lastNudge = now();
         waiting();
-        try { resumeLoading(); play(); } catch { recover(); }
+        try { resumeLoading(false); play(); } catch { recover(); }
       }
     }
     armHealth();
@@ -164,7 +164,7 @@ export function createLivePlaybackRecovery({
       invalidatePlay(); lastTime = media.currentTime; lastProgress = now();
       if (media.paused || media.readyState < 3) waiting();
       if (repairRequired) recover(recoveryOperation, true);
-      else if (recoveryTimer === null) { try { resumeLoading(); } catch { recover(); } }
+      else if (recoveryTimer === null) { try { resumeLoading(true); } catch { recover(); } }
       play(); armHealth();
     },
     resetSource() {

@@ -224,11 +224,13 @@ function NativeLivePlayer({ src, onReady, onWaiting, onAspect }: { src: string; 
     };
     const playback = createLivePlaybackRecovery({
       media: video, active, monitor: loadMonitor,
-      resumeLoading: () => {
+      resumeLoading: (catchUp = false) => {
         // Restarting an active loader aborts its in-flight fragment request.
         // A scroll return or watchdog nudge must leave a healthy load alone.
         if (hls?.levels.length && !hls.loadingEnabled) hls.startLoad(-1, true);
-        resumeSync.request();
+        // A watchdog nudge must not chase the moving edge while a fragment
+        // is loading. Catch up only after an actual viewport/online resume.
+        if (catchUp) resumeSync.request();
       },
       reconnect: () => { if (nativeActive) startNative(); else installHls(); },
       onPlaying: () => {

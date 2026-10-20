@@ -45,7 +45,7 @@ function deferred() {
 }
 
 function playerFixture() {
-  const clock = fakeClock(), states = [], calls = { play: [], load: [], reconnect: [], playing: [], waiting: [] };
+  const clock = fakeClock(), states = [], calls = { play: [], load: [], catchUp: [], reconnect: [], playing: [], waiting: [] };
   let active = true, playBehavior, reconnectBehavior;
   const media = {
     currentTime: 10, paused: true, ended: false, seeking: false, readyState: 4,
@@ -62,7 +62,7 @@ function playerFixture() {
   });
   const recovery = createLivePlaybackRecovery({
     media, active: () => active, monitor,
-    resumeLoading() { calls.load.push(clock.now()); },
+    resumeLoading(catchUp = false) { calls.load.push(clock.now()); calls.catchUp.push(catchUp); },
     reconnect() { calls.reconnect.push(clock.now()); reconnectBehavior?.(); },
     onPlaying() { calls.playing.push(clock.now()); },
     onWaiting() { calls.waiting.push(clock.now()); },
@@ -207,11 +207,64 @@ test("a stream frozen without a fatal error is nudged and then reconnected autom
   assert.equal(fixture.calls.reconnect.length, 0);
   await fixture.clock.advance(1);
   assert.equal(fixture.calls.load.length, 1, "Four seconds without progress triggers a lightweight nudge");
-  await fixture.clock.advance(8999);
+  await fixture.clock.advance(40_999);
+  assert.equal(fixture.calls.reconnect.length, 0, "The established stall deadline has not elapsed before forty-five seconds");
+  await fixture.clock.advance(1);
+  assert.equal(fixture.calls.reconnect.length, 0, "Reaching the finite deadline still respects recovery backoff");
+  await fixture.clock.advance(999);
   assert.equal(fixture.calls.reconnect.length, 0, "A reconnect retains a bounded backoff");
   await fixture.clock.advance(1);
   assert.equal(fixture.calls.reconnect.length, 1, "Persistent lack of progress triggers a real reconnect");
   assert.equal(fixture.states.includes("blocked"), false);
+  fixture.dispose();
+});
+
+test("a playlist retry followed by a thirty-four-second segment load can finish without a watchdog rebuild", async () => {
+  const fixture = playerFixture();
+  let fragmentCompletion, completed = 0;
+  fixture.setReconnectBehavior(() => fixture.clock.cancel(fragmentCompletion));
+  await fixture.start();
+  const healthyEvents = fixture.calls.playing.length;
+  fixture.media.readyState = 2;
+  fixture.recovery.waiting();
+  fixture.clock.schedule(() => {
+    fragmentCompletion = fixture.clock.schedule(() => {
+      completed++;
+      fixture.media.currentTime += .25;
+      fixture.recovery.progress();
+    }, 34_000);
+  }, 10_000);
+  await fixture.clock.advance(43_999);
+  assert.equal(completed, 0);
+  assert.equal(fixture.calls.reconnect.length, 0, "A playlist timeout and slow segment retain the original engine");
+  assert.equal(fixture.calls.playing.length, healthyEvents, "The stalled playhead must not fabricate healthy progress");
+  assert.ok(fixture.calls.catchUp.length > 1);
+  assert.ok(fixture.calls.catchUp.every(value => value === false), "Repeated watchdog nudges must not request catch-up seeks");
+  await fixture.clock.advance(1);
+  assert.equal(completed, 1, "The original fragment load was not cancelled by watchdog recovery");
+  assert.equal(fixture.monitor.state, "playing");
+  for (let index = 0; index < 5; index++) {
+    await fixture.clock.advance(1000);
+    fixture.media.currentTime += 1;
+    fixture.recovery.progress();
+  }
+  assert.equal(fixture.calls.reconnect.length, 0, "Fresh frames cancel stale recovery and reset the stall clock");
+  fixture.dispose();
+});
+
+test("only an explicit viewport or online resume requests catch-up synchronization", async () => {
+  const fixture = playerFixture();
+  await fixture.start();
+  await fixture.clock.advance(10_000);
+  assert.deepEqual(fixture.calls.catchUp, [false, false, false]);
+  fixture.setActive(false);
+  fixture.recovery.suspend();
+  await fixture.clock.advance(20_000);
+  assert.deepEqual(fixture.calls.catchUp, [false, false, false], "Suspension cancels background nudges");
+  fixture.setActive(true);
+  fixture.recovery.resume();
+  await flushPromises();
+  assert.deepEqual(fixture.calls.catchUp, [false, false, false, true]);
   fixture.dispose();
 });
 
@@ -229,15 +282,15 @@ test("a slow initial load completes before any rebuild, then uses the normal pla
   fixture.setReconnectBehavior(() => fixture.clock.cancel(completion));
   await fixture.start();
   await fixture.clock.advance(23_999);
-  assert.equal(fixture.calls.reconnect.length, 0, "The initial loader must survive the twelve-second stall watchdog");
+  assert.equal(fixture.calls.reconnect.length, 0, "The initial loader must retain its full first-frame budget");
   assert.equal(fixture.calls.playing.length, 0, "A resolved play promise without a decoded frame is not startup proof");
   await fixture.clock.advance(1);
   assert.equal(firstFrames, 1, "The original slow load delivers its first decoded frame");
   assert.equal(fixture.monitor.state, "playing");
-  await fixture.clock.advance(12_999);
+  await fixture.clock.advance(45_999);
   assert.equal(fixture.calls.reconnect.length, 0);
   await fixture.clock.advance(1);
-  assert.equal(fixture.calls.reconnect.length, 1, "Playback freezes still recover with the original stall deadline and backoff");
+  assert.equal(fixture.calls.reconnect.length, 1, "Playback freezes still recover with the finite stall deadline and backoff");
   fixture.dispose();
 });
 
@@ -279,7 +332,7 @@ test("a resolved play promise alone cannot shorten startup before a decoded play
   assert.equal(fixture.calls.reconnect.length, 0);
   fixture.media.readyState = 2;
   fixture.recovery.playing();
-  await fixture.clock.advance(13_000);
+  await fixture.clock.advance(46_000);
   assert.equal(fixture.calls.reconnect.length, 1, "A decoded playing event activates the normal stall budget");
   fixture.dispose();
 });
@@ -313,7 +366,7 @@ test("replacing a previously playing source restores the full bounded first-fram
   fixture.recovery.resetSource();
   fixture.recovery.waiting();
   await fixture.clock.advance(59_999);
-  assert.equal(fixture.calls.reconnect.length, 0, "A replacement source cannot inherit the old source's twelve-second stall deadline");
+  assert.equal(fixture.calls.reconnect.length, 0, "A replacement source cannot inherit the old source's established-playback deadline");
   await fixture.clock.advance(1001);
   assert.deepEqual(fixture.calls.reconnect, [62_000]);
   fixture.dispose();

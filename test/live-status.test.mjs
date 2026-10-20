@@ -108,6 +108,28 @@ test("offscreen suspension cancels grace, and return starts a fresh bounded wait
   fixture.status.dispose();
 });
 
+test("late offscreen waiting events preserve LIVE and cannot re-arm a suspended grace timer", () => {
+  const fixture = statusFixture();
+  fixture.status.playing(); fixture.status.waiting();
+  fixture.advance(1000);
+  fixture.status.waiting(false);
+  assert.equal(fixture.pending, 0, "An offscreen event cancels an already armed grace timer");
+  fixture.status.suspend();
+  for (let index = 0; index < 6; index++) {
+    fixture.advance(5000);
+    fixture.status.waiting(false);
+    assert.equal(fixture.pending, 0, "Queued offscreen pause/wait events cannot start another countdown");
+  }
+  assert.equal(fixture.status.live, true);
+  assert.deepEqual(fixture.changes, [{ live: true, at: 0 }]);
+  fixture.status.waiting(true);
+  fixture.advance(2499);
+  assert.equal(fixture.status.live, true);
+  fixture.advance(1);
+  assert.equal(fixture.status.live, false, "A genuinely stalled visible return still reports its interruption");
+  fixture.status.dispose();
+});
+
 test("disposal cancels scheduled status changes and makes later events inert", () => {
   const fixture = statusFixture();
   fixture.status.playing(); fixture.status.waiting(); fixture.status.dispose();

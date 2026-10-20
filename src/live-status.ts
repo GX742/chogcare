@@ -16,8 +16,12 @@ export function createLivePlaybackStatus({ onChange, schedule = setTimeout, canc
   };
   return {
     playing() { if (!disposed) { clear(); change(true); } },
-    waiting() {
-      if (disposed || !live || timer !== null) return;
+    waiting(observable = true) {
+      if (disposed) return;
+      // Browsers can queue another pause/waiting event after suspension.
+      // Offscreen events must not re-arm a status change for an unseen video.
+      if (!observable) { clear(); return; }
+      if (!live || timer !== null) return;
       timer = schedule(() => { timer = null; change(false); }, 2500);
     },
     unavailable() { if (!disposed) { clear(); change(false); } },

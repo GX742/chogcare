@@ -16,7 +16,7 @@ const READ_METHODS = new Set([
   "eth_gasPrice", "eth_maxPriorityFeePerGas", "eth_feeHistory", "eth_getProof",
   "debug_traceTransaction", "debug_traceBlockByNumber", "trace_transaction", "trace_block",
 ]);
-const FAST_READS=new Set(["eth_chainId","eth_getBlockByNumber","eth_getBlockByHash","eth_getTransactionReceipt"]);
+const FAST_READS=new Set(["eth_chainId","eth_getBlockByNumber","eth_getBlockByHash","eth_getTransactionReceipt","eth_getBalance","eth_call"]);
 
 export class PaymentRpcUnavailableError extends BaseError {
   constructor(chainId) {
@@ -130,9 +130,9 @@ export function paymentRpcTransport({ chainId, urls = PAYMENT_RPC_URLS[chainId],
         }
       };
       if(hedgeMs>0&&FAST_READS.has(args.method)&&order.length>1){
-        // A hung receipt/head read need not consume the full six-second RPC
-        // timeout before a backup can answer. Only these read-only methods are
-        // raced; estimates, nonce/balance reads, logs and sends stay serialized.
+        // Quotes and readiness must not wait through multiple full RPC timeouts
+        // while a healthy backup is available. Race only these read-only methods;
+        // estimates, nonce reads, logs and sends stay serialized.
         const winner=await new Promise((resolve,reject)=>{
           let next=0,active=0,done=false,timer;
           const finish=(fn,value)=>{if(done)return;done=true;clearTimeout(timer);fn(value);};

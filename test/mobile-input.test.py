@@ -25,7 +25,7 @@ class LiveWindowTests(unittest.TestCase):
         self.assertIn("#EXT-X-MEDIA-SEQUENCE:122\n", result)
         self.assertEqual(result.count("#EXTINF:"), 3)
         self.assertNotIn("stream-TestABC-21.ts", result)
-        self.assertIn("http://127.0.0.1:8080/hls/0/stream-TestABC-24.ts", result)
+        self.assertIn("http://127.0.0.1:8082/hls/0/stream-TestABC-24.ts", result)
 
     def test_short_startup_window_keeps_correct_sequence(self):
         result = module.live_window(playlist(1))

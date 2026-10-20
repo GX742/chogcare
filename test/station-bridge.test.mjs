@@ -132,7 +132,7 @@ test("live status is negotiated separately and never changes a donation payload"
 
 test("LIVE requires an online broadcast and a bounded read-only local status response", async () => {
   const fetcher = value => async (url, options) => {
-    assert.equal(url,"http://127.0.0.1:8080/api/status"); assert.equal(options.redirect,"error");
+    assert.equal(url,"http://127.0.0.1:8082/api/status"); assert.equal(options.redirect,"error");
     assert.equal(options.headers.Authorization,undefined); assert.equal(options.method,undefined);
     return new Response(JSON.stringify(value));
   };

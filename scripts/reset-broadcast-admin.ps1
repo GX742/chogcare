@@ -111,7 +111,7 @@ try {
   Write-Host 'Creating a protected local Owncast backup and resetting its admin password. The stream may briefly disconnect.'
   Invoke-OwncastRecoveryHelper -Helper $helperSource -PasswordChars $recoveryChars
   Write-Host 'VERIFIED: new admin password works. Normal Owncast service is running without the password argument.'
-  Write-Host 'Login at http://127.0.0.1:8080/admin/ as admin using your new password. Keep the new password saved.'
+  Write-Host 'Login at http://127.0.0.1:8082/admin/ as admin using your new password. Keep the new password saved.'
   Write-Host 'If OBS did not reconnect automatically, click Start Streaming. Payment terminals do not need a restart.'
 } finally {
   if ($passwordPointer -ne [IntPtr]::Zero) { [System.Runtime.InteropServices.Marshal]::ZeroFreeBSTR($passwordPointer) }

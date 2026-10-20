@@ -10,7 +10,7 @@ test("Owncast tuning uses the verified build, hidden password and fixed local ad
   assert.match(source, /Read-Host 'Owncast admin password' -AsSecureString/);
   assert.match(source, /AllowAutoRedirect = \$false/);
   assert.match(source, /UseProxy = \$false/);
-  assert.match(source, /http:\/\/127\.0\.0\.1:8080/);
+  assert.match(source, /http:\/\/127\.0\.0\.1:8082/);
   assert.doesNotMatch(source, /\/api\/admin\/config\/(?:admin|streamkey|serverurl)|Set-Content|Restart-Service|Stop-Process/);
 });
 

@@ -2,7 +2,7 @@
 // or connect directly to the relay's split-DNS hostname. Validate configuration
 // first: an unexpected URL must never become a proxy destination or local probe.
 export const publicBroadcastOrigin = "https://chogcare-stream.tail1f833b.ts.net";
-const localBroadcastOrigins = ["http://127.0.0.1:8080", "http://localhost:8080"];
+const localBroadcastOrigins = ["http://127.0.0.1:8082", "http://localhost:8082"];
 export function broadcastPreviewUrl(streamUrl: string, applicationOrigin: string): string | null {
   try {
     const stream = new URL(streamUrl), application = new URL(applicationOrigin);

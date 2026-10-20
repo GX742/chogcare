@@ -193,6 +193,17 @@ test("a slow receipt read uses a verified backup before the original timeout",as
   assert.equal(f.calls.filter(x=>x.index===0&&x.method===receipt.method).length,1,"a late primary must not replace the fast preferred provider");
 });
 
+for (const method of ["eth_getBalance", "eth_call"]) test(`a stalled ${method} uses a verified backup for checkout quotes and readiness`, async () => {
+  let release;
+  const gate = new Promise(resolve => { release = resolve; });
+  const f = fixture([async args => { if (args.method === "eth_chainId") return "0xa"; await gate; return "late-primary"; }, healthy], { transport: { hedgeMs: 10 } });
+  try {
+    assert.equal(await f.request({ method, params: [] }), "0x123");
+    assert.deepEqual(f.calls.filter(x => x.method === method).map(x => x.index), [0, 1]);
+    assert.ok(f.calls.some(x => x.index === 1 && x.method === "eth_chainId"));
+  } finally { release(); }
+});
+
 test("a late failed hedged read is handled without disturbing the successful read",async()=>{
   let release;const gate=new Promise(resolve=>{release=resolve;});
   const f=fixture([async args=>{if(args.method==="eth_chainId")return "0xa";await gate;throw networkError();},healthy],{transport:{hedgeMs:10}});

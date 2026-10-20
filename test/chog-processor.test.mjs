@@ -149,6 +149,22 @@ test("CHOG readiness recovers after network loss without restarting or replacing
   assert.equal(f.broadcasts.length,0);
 });
 
+test("a finalized-head timeout before issuance preserves a safely retryable request", async t => {
+  const f = await harness(t, 10, false, "school-supplies"), id = "d".repeat(64);
+  await f.processor.refreshReadiness();
+  const getBlock = f.source.getBlock;
+  f.source.getBlock = async () => { throw new Error("temporary RPC timeout"); };
+  const input = { mode: "chog", amount: "300", holderAddress: "", initiativeId: "school-supplies" };
+  await assert.rejects(f.processor.issue(input, id), /temporary RPC timeout/);
+  assert.equal(f.processor.get(id), null);
+  assert.equal(f.processor.canRetryUnissuedChog(id), true, "no address may be reserved before the last network read");
+  f.source.getBlock = getBlock;
+  const invoice = await f.processor.issue(input, id);
+  assert.equal(invoice.id, id);
+  assert.deepEqual(await f.processor.issue(input, id), invoice);
+  assert.equal(f.broadcasts.length, 0);
+});
+
 test("NFT metadata requests pin the IPFS gateway and prohibit redirects into local services",async()=>{
   let calls=0;
   const metadata=await fetchProfileMetadata(metadataUri,async(url,options)=>{

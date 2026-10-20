@@ -83,7 +83,7 @@ export function sanitizePaymentConfig(value) {
 export function readLocalJson(url, options = {}, maximum = 262144, requestFactory = httpRequest, deadlineMilliseconds = 10000) {
   const target = new URL(url);
   const allowed = target.protocol === "http:" && target.hostname === "127.0.0.1" && !target.username && !target.password && !target.search && !target.hash &&
-    (target.port === "4174" && target.pathname === "/api/payments/config" || target.port === "8080" && ["/api/config", "/api/admin/serverconfig", "/api/admin/config/video/streamoutputvariants", "/api/admin/config/video/streamlatencylevel"].includes(target.pathname));
+    (target.port === "4174" && target.pathname === "/api/payments/config" || target.port === "8082" && ["/api/config", "/api/admin/serverconfig", "/api/admin/config/video/streamoutputvariants", "/api/admin/config/video/streamlatencylevel"].includes(target.pathname));
   if (!allowed) return Promise.reject(failure("Unsupported local service request."));
   return new Promise((ok, bad) => {
     let settled = false, req, response;
@@ -396,12 +396,12 @@ export async function createAdminController({ workspacePath, nodePath, onChange 
   }
 
   async function configureBroadcast(password) {
-    const publicConfig = await json("http://127.0.0.1:8080/api/config", { headers: { Accept: "application/json" } }, 262144);
+    const publicConfig = await json("http://127.0.0.1:8082/api/config", { headers: { Accept: "application/json" } }, 262144);
     if (publicConfig?.version !== VERSION) throw failure("Unsupported Owncast build. No streaming settings were changed.");
     const bytes = Buffer.from(`admin:${password}`, "utf8"); let authorization;
     try { authorization = `Basic ${bytes.toString("base64")}`; } finally { bytes.fill(0); password = ""; }
     const api = async (method, route, body) => {
-      const value = await json(`http://127.0.0.1:8080${route}`, { method, headers: { Accept: "application/json", "X-Owncast-CSRF-Protection": "1", Authorization: authorization, ...(method === "POST" ? { "Content-Type": "application/json" } : {}) }, ...(body ? { body: JSON.stringify(body) } : {}) }, 262144);
+      const value = await json(`http://127.0.0.1:8082${route}`, { method, headers: { Accept: "application/json", "X-Owncast-CSRF-Protection": "1", Authorization: authorization, ...(method === "POST" ? { "Content-Type": "application/json" } : {}) }, ...(body ? { body: JSON.stringify(body) } : {}) }, 262144);
       if (method === "POST" && value?.success !== true) throw failure("Owncast did not confirm the settings update.");
       return value;
     };

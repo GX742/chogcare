@@ -50,25 +50,25 @@ test("public broadcast stays on the application origin and never contacts relay 
   }
   assert.equal(broadcastStreamUrl(publicBroadcastOrigin, "http://localhost:4173"), `${publicBroadcastOrigin}/hls/stream.m3u8`);
   for (const application of ["file:///local/site.html", "http://chogcare.xyz", "https://user:password@chogcare.xyz"]) assert.equal(broadcastStreamUrl(undefined, application), null);
-  for (const value of ["https://evil.example", "https://127.0.0.1:8080", "https://192.168.1.1", "http://127.0.0.1:8080", "http://localhost:8080", `${publicBroadcastOrigin}:444`, publicBroadcastOrigin.replace(".net", ".net.evil.example"), publicBroadcastOrigin.replace("https://", "https://user:password@"), `${publicBroadcastOrigin}\n`, "javascript:alert(1)", "//evil.example", {}, null]) {
+  for (const value of ["https://evil.example", "https://127.0.0.1:8082", "https://192.168.1.1", "http://127.0.0.1:8082", "http://localhost:8082", `${publicBroadcastOrigin}:444`, publicBroadcastOrigin.replace(".net", ".net.evil.example"), publicBroadcastOrigin.replace("https://", "https://user:password@"), `${publicBroadcastOrigin}\n`, "javascript:alert(1)", "//evil.example", {}, null]) {
     assert.equal(broadcastStreamUrl(value, "https://chogcare.vercel.app"), null, String(value));
   }
 });
 test("loopback Owncast is allowed only from the local app and only on the CSP port", () => {
   for (const app of ["http://127.0.0.1:4173", "http://localhost:4173", "http://[::1]:4173"]) {
-    for (const source of ["http://127.0.0.1:8080", "http://localhost:8080"]) {
+    for (const source of ["http://127.0.0.1:8082", "http://localhost:8082"]) {
       assert.equal(broadcastStreamUrl(source, app), `${source}/hls/stream.m3u8`);
       assert.equal(broadcastStreamUrl(source, app, true), `${source}/hls/stream.m3u8`);
     }
   }
-  for (const app of ["https://localhost.evil.example", "https://example.com", "file:///local/site.html"]) assert.equal(broadcastStreamUrl("http://localhost:8080", app), null);
-  for (const source of ["http://localhost:4174", "http://127.0.0.1:80", "http://[::1]:8080", "http://192.168.1.1:8080"]) assert.equal(broadcastStreamUrl(source, "http://localhost:4173"), null);
+  for (const app of ["https://localhost.evil.example", "https://example.com", "file:///local/site.html"]) assert.equal(broadcastStreamUrl("http://localhost:8082", app), null);
+  for (const source of ["http://localhost:4174", "http://127.0.0.1:80", "http://[::1]:8082", "http://192.168.1.1:8082"]) assert.equal(broadcastStreamUrl(source, "http://localhost:4173"), null);
 });
 
 test("fresh preview is confined to an already-approved broadcast origin and fixed path", () => {
   assert.equal(broadcastPreviewUrl("https://chogcare.xyz/hls/mobile/stream.m3u8", "https://chogcare.xyz"), "https://chogcare.xyz/hls/mobile/preview.jpg");
   assert.equal(broadcastPreviewUrl(`${publicBroadcastOrigin}/hls/stream.m3u8`, "http://localhost:4173"), `${publicBroadcastOrigin}/hls/mobile/preview.jpg`);
-  for (const source of ["http://localhost:8080/hls/stream.m3u8", "https://evil.example/hls/stream.m3u8", "https://chogcare.xyz/api/payments/config", "https://chogcare.xyz/hls/stream.m3u8?secret=1", "file:///hls/stream.m3u8"]) assert.equal(broadcastPreviewUrl(source, "https://chogcare.xyz"), null);
+  for (const source of ["http://localhost:8082/hls/stream.m3u8", "https://evil.example/hls/stream.m3u8", "https://chogcare.xyz/api/payments/config", "https://chogcare.xyz/hls/stream.m3u8?secret=1", "file:///hls/stream.m3u8"]) assert.equal(broadcastPreviewUrl(source, "https://chogcare.xyz"), null);
 });
 
 test("share links never disclose checkout paths, query strings or fragments", () => {

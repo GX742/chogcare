@@ -2,6 +2,7 @@ import { createPublicClient, http, parseUnits, formatUnits } from "viem";
 import { monad } from "viem/chains";
 import { saleQuote, usdcQuote } from "./source-quotes.mjs";
 import { validateRelayOrder } from "./relay-route.mjs";
+import { RELAY_SLIPPAGE_TOLERANCE_BPS } from "./relay-quote-policy.mjs";
 import { MONAD_USDC } from "../src/route.ts";
 import { deliveryNetwork, NEW_DONATION_CHAIN_ID, SOLANA_CHAIN_ID } from "../src/delivery-network.ts";
 import { CHOG_INITIATIVES, chogBeneficiary, initiativeChain } from "../src/chog-beneficiary.ts";
@@ -59,7 +60,7 @@ export function createReadOnlyQuoteService(_options = {}, dependencies = {}) {
         const cause = splitSettlementUnits(BigInt(swap.minUsdc)).causeUnits;
         if (cause <= 0n) throw unavailable();
         const chain = initiativeChain(input.initiativeId, NEW_DONATION_CHAIN_ID), network = deliveryNetwork(chain), recipient = chogBeneficiary(input.initiativeId, chain);
-        const quote = await fetchQuote({ user: ESTIMATE_PAYER, originChainId: 143, destinationChainId: chain, originCurrency: MONAD_USDC, destinationCurrency: network.usdc, recipient, refundTo: ESTIMATE_PAYER, amount: String(cause), tradeType: "EXACT_INPUT", includeProtocolData: true, slippageTolerance: "100" }, fetcher);
+        const quote = await fetchQuote({ user: ESTIMATE_PAYER, originChainId: 143, destinationChainId: chain, originCurrency: MONAD_USDC, destinationCurrency: network.usdc, recipient, refundTo: ESTIMATE_PAYER, amount: String(cause), tradeType: "EXACT_INPUT", includeProtocolData: true, slippageTolerance: RELAY_SLIPPAGE_TOLERANCE_BPS }, fetcher);
         const checkedAt = clock(), validated = await validate(quote, ESTIMATE_PAYER, cause, chain === SOLANA_CHAIN_ID ? 1n : 200_000n, checkedAt, chain, input.initiativeId);
         const usd = value => { if (!matches(/^\d{1,19}$/, value)) throw unavailable(); return BigInt(value); };
         const inputUsd = usd(validated.inputUsdMicros), expected = usd(validated.expectedOutputUsdMicros), minimum = usd(validated.minimumOutputUsdMicros);

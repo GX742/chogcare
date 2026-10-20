@@ -2,13 +2,35 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import { decodeFunctionData, parseAbi } from "viem";
-import { validateRelayOrder, RELAY_DEPOSITORY } from "../server/relay-route.mjs";
+import { bridgeQuote, validateRelayOrder, RELAY_DEPOSITORY } from "../server/relay-route.mjs";
 import { evmRelayOrderId } from "../server/relay-order.mjs";
+import { MONAD_USDC, GIVETH_PROJECT_RECIPIENT } from "../src/route.ts";
+import { deliveryNetwork } from "../src/delivery-network.ts";
 const fixture=JSON.parse(await readFile(new URL("./fixtures/relay-order.json",import.meta.url),"utf8"));
 const payer="0x1111111111111111111111111111111111111111";
 const now=1791437222000;
 const optimismFixture=JSON.parse(await readFile(new URL("./fixtures/relay-optimism-order.json",import.meta.url),"utf8"));
 const optimismNow=optimismFixture.protocol.v2.orderData.output.deadline*1000-60_000;
+
+test("bridge requests a tight signed tolerance without changing recipient, refund or invoice minimum",async t=>{
+  let sent;
+  t.mock.method(Date,"now",()=>optimismNow);
+  t.mock.method(globalThis,"fetch",async(url,options)=>{
+    assert.equal(url,"https://api.relay.link/quote/v2");
+    assert.equal(options.method,"POST");assert.equal(options.redirect,"error");
+    sent=JSON.parse(options.body);
+    return new Response(JSON.stringify(optimismFixture));
+  });
+  const route=await bridgeQuote(payer,1_000_000n,200_000n,10);
+  assert.deepEqual(sent,{
+    user:payer,originChainId:143,destinationChainId:10,originCurrency:MONAD_USDC,
+    destinationCurrency:deliveryNetwork(10).usdc,recipient:GIVETH_PROJECT_RECIPIENT,refundTo:payer,
+    amount:"1000000",tradeType:"EXACT_INPUT",includeProtocolData:true,slippageTolerance:"25",
+  });
+  assert.equal(route.minOutput,optimismFixture.protocol.v2.orderData.output.payments[0].minimumAmount);
+  await assert.rejects(bridgeQuote(payer,1_000_000n,BigInt(route.minOutput)+1n,10),/Bridge terms failed validation/,
+    "a fresh request must still satisfy the already-promised minimum");
+});
 
 test("signed Optimism quote is bound to chain 10, native USDC and the same verified beneficiary",async()=>{
   const route=await validateRelayOrder(optimismFixture,payer,1_000_000n,200_000n,optimismNow,10);

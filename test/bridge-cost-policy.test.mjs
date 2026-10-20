@@ -15,6 +15,16 @@ test("reject costly and malformed bridge outputs",()=>{
   for(const minOutput of ["477087","283994","-1","NaN","480000.0",undefined])assert.throws(()=>assertBridgeDelivery({minOutput},480000n));
   assert.doesNotThrow(()=>assertBridgeDelivery({minOutput:"480000"},480000n));
 });
+test("tighter signed quotes can fit small donations without raising the six-percent loss ceiling",()=>{
+  const required=minimumBridgeDelivery(397429n,CHOG_DONATION_MAX_BRIDGE_LOSS_BPS);
+  assert.equal(required,373584n);
+  assert.throws(()=>assertBridgeDelivery({minOutput:"373255",expectedOutput:"377025"},required),{code:"BRIDGE_COST_LIMIT"},
+    "an attractive expected payout cannot replace the signed worst-case minimum");
+  assert.doesNotThrow(()=>assertBridgeDelivery({minOutput:"376082"},required));
+  assert.doesNotThrow(()=>assertCrossAssetBridgeDelivery({minimumOutputUsdMicros:"374516"},required));
+  assert.doesNotThrow(()=>assertBridgeDelivery({minOutput:String(required)},required));
+  assert.throws(()=>assertBridgeDelivery({minOutput:String(required-1n)},required),{code:"BRIDGE_COST_LIMIT"});
+});
 test("cross-asset ceiling compares conservative USD value rather than unrelated token units",()=>{
   assert.doesNotThrow(()=>assertCrossAssetBridgeDelivery({minimumOutputUsdMicros:"4800000"},4_800_000n));
   for(const minimumOutputUsdMicros of ["4799999","-1","NaN",undefined])assert.throws(()=>assertCrossAssetBridgeDelivery({minimumOutputUsdMicros},4_800_000n));

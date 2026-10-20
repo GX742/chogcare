@@ -1,4 +1,5 @@
 import { relayOrderId } from "./relay-order.mjs";
+import { RELAY_SLIPPAGE_TOLERANCE_BPS } from "./relay-quote-policy.mjs";
 import { encodeFunctionData, parseAbi, recoverMessageAddress, hexToBytes } from "viem";
 import { MONAD_USDC, GIVETH_PROJECT_RECIPIENT } from "../src/route.ts";
 import { deliveryNetwork } from "../src/delivery-network.ts";
@@ -82,7 +83,7 @@ export async function bridgeQuote(payer, amount, minimumOutput = 200_000n, desti
   const quote = await relayJson("/quote/v2", {
     user: payer, originChainId: 143, destinationChainId, originCurrency: MONAD_USDC,
     destinationCurrency: network.usdc, recipient, refundTo: payer,
-    amount: String(amount), tradeType: "EXACT_INPUT", includeProtocolData: true, slippageTolerance: "100",
+    amount: String(amount), tradeType: "EXACT_INPUT", includeProtocolData: true, slippageTolerance: RELAY_SLIPPAGE_TOLERANCE_BPS,
   });
   return validateRelayOrder(quote, payer, amount, minimumOutput, Date.now(), destinationChainId, initiativeId);
 }

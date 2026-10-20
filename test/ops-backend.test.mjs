@@ -210,6 +210,9 @@ function quoteFixture(overrides = {}) {
 test("read-only estimates quote total then split charity, include exact fee and cache cloned safe DTO", async () => {
   const fixture = quoteFixture(), input = { amount: "300", initiativeId: "school-supplies" };
   const first = await fixture.service.quote(input);
+  assert.equal(fixture.sent().slippageTolerance, "25", "display estimates must request the same tight tolerance as checkout");
+  assert.equal(fixture.sent().originChainId, 143); assert.equal(fixture.sent().destinationChainId, 10);
+  assert.equal(fixture.sent().refundTo, fixture.sent().user);
   assert.equal(fixture.sent().amount, "10000000"); assert.equal(first.totalChog, "330"); assert.equal(first.poolContributionChog, "30");
   assert.equal(first.conversionMinimumUsdc, "11"); assert.equal(first.expectedCharityUsd, "9.5"); assert.equal(first.minimumCharityUsd, "9.4"); assert.equal(first.bridgeFeeUsd, "0.5"); assert.equal(first.bridgeFeePercent, "5");
   assert.equal(first.expiresAt, 31000); assert.ok(!JSON.stringify(first).includes("PRIVATE"));

@@ -103,17 +103,32 @@ export function recoveryBundle(storage = currentStore()) {
 }
 export async function createPaymentRequest(pending: PendingCreation, signal: AbortSignal, request: typeof fetch = fetch, storage?: SessionStore) {
   let response: Response;
+  const send = () => request("/api/payments/invoices", { method: "POST", credentials: "same-origin", headers: { "Content-Type": "application/json", "Idempotency-Key": pending.key }, body: JSON.stringify(pending.input), signal });
   try {
-    response = await request("/api/payments/invoices", { method: "POST", credentials: "same-origin", headers: { "Content-Type": "application/json", "Idempotency-Key": pending.key }, body: JSON.stringify(pending.input), signal });
+    response = await send();
   } catch {
     throw new Error("The response was interrupted. Your request is saved. Retry the same request; do not create or send another payment.");
   }
-  const data = await response.json().catch(() => null);
+  let data = await response.json().catch(() => null);
+  // Worker restarts invalidate the signed browser session. Renew it once and
+  // retry the exact durable request; never replace its key or clear its intent.
+  if (response.status === 403 && data?.code === "SESSION_REQUIRED") {
+    try {
+      const config = await request("/api/payments/config", { credentials: "same-origin", cache: "no-store", signal });
+      if (config.ok) {
+        response = await send();
+        data = await response.json().catch(() => null);
+      }
+    } catch {
+      throw new Error("Connection interrupted while restoring your payment session. Your request is saved. Retry the same request; do not send another payment.");
+    }
+  }
   if (!response.ok) {
     if (data?.creationNotStarted === true) clearUnstartedCreation(pending.input.mode, pending.key, storage);
     if (data?.creationNotStarted === true && data?.code === "BRIDGE_COST_LIMIT") throw new Error("Bridge fees are too high for this amount. No payment was created. Increase the amount or try again later.");
     if (data?.creationNotStarted === true && data?.code === "NFT_NOT_OWNED") throw new Error("This NFT is not held by your wallet. No payment was created. Try again: your current CHOG NFT will be found automatically.");
     if (data?.creationNotStarted === true && data?.code === "NFT_DAILY_LIMIT") throw new Error("Your wallet or NFT already has today's donation. Try after 00:00 UTC. No payment was created.");
+    if (data?.code === "PAYMENTS_NOT_READY") throw new Error(data?.creationNotStarted === true ? "The payment connection is recovering. No payment was created. Try again when payments are available." : "The payment connection is recovering. Your original request is saved. Retry it when payments are available; do not send another payment.");
     throw new Error(data?.creationNotStarted === true ? "No payment was created. Check your details and availability, then try again." : "The request is not resolved yet. Retry this same request; do not send another payment. Your recovery reference is saved.");
   }
   return data as unknown;

@@ -441,7 +441,7 @@ export function createChogProcessor({ filename, vault, root, checkpoint=()=>{}, 
     leaderboardDonation(id){return closed||!/^[a-f0-9]{64}$/.test(id??"")?null:verifiedLeaderboardDonation(load(id),id);},
     refreshReadiness,
     track:trackPending,
-    publicStatus(){const networkReady=!closed&&readinessNow()-healthyAt<60_000,queueFull=!closed&&db.prepare("SELECT COUNT(*) AS n FROM chog_invoices WHERE state IN ('awaiting-payment','processing','bridging','confirming')").get().n>=3;return {paymentsEnabled:networkReady&&gasBalance>=OPERATOR_READY_BALANCE&&!queueFull,chogQueueFull:queueFull,chogReadiness:!networkReady?"network-unavailable":gasBalance<OPERATOR_READY_BALANCE?"gas-needed":queueFull?"queue-full":"ready",paymentMode:"local-pilot",workerVersion:"2026-10-20-tight-bridge-quotes-v14",destinationChainId:newDestinationChainId,supportedModes:["chog"],supportedInitiatives:[...CHOG_INITIATIVES],poolContributionPercent:10,poolContributionMode:"added-on-top",poolContributionBatchMinimumUsdc:"5.00",poolContributionPendingUsdc:formatUnits(poolPendingUsdc,6)};},
+    publicStatus(){const networkReady=!closed&&readinessNow()-healthyAt<60_000,queueFull=!closed&&db.prepare("SELECT COUNT(*) AS n FROM chog_invoices WHERE state IN ('awaiting-payment','processing','bridging','confirming')").get().n>=3;return {paymentsEnabled:networkReady&&gasBalance>=OPERATOR_READY_BALANCE&&!queueFull,chogQueueFull:queueFull,chogReadiness:!networkReady?"network-unavailable":gasBalance<OPERATOR_READY_BALANCE?"gas-needed":queueFull?"queue-full":"ready",paymentMode:"local-pilot",workerVersion:"2026-10-20-rpc-recovery-v15",destinationChainId:newDestinationChainId,supportedModes:["chog"],supportedInitiatives:[...CHOG_INITIATIVES],poolContributionPercent:10,poolContributionMode:"added-on-top",poolContributionBatchMinimumUsdc:"5.00",poolContributionPendingUsdc:formatUnits(poolPendingUsdc,6)};},
     cancelUnpaidChog(id){
       if(closed||!/^[a-f0-9]{64}$/.test(id??"")||activeInvoices.has(id))throw Error("Payment observation is in progress. Retry the same cancellation.");
       const x=load(id);
@@ -476,7 +476,10 @@ export function createChogProcessor({ filename, vault, root, checkpoint=()=>{}, 
       const estimate=await quoteBridge(root.address,sourceSplit.causeUnits,invoiceChain===SOLANA_CHAIN_ID?1n:200_000n,invoiceChain,input.initiativeId);
       if(invoiceChain===SOLANA_CHAIN_ID)assertCrossAssetBridgeDelivery(estimate,requiredDelivery);else assertBridgeDelivery(estimate,requiredDelivery);
       if(db.prepare("SELECT COUNT(*) AS n FROM chog_invoices WHERE state IN ('awaiting-payment','processing','bridging','confirming')").get().n>=3)throw new Error("Three payments are already active. Please wait.");
-      const id=requestId??randomBytes(32).toString("hex"), addressAllocation=allocator.allocate(id), created=await source.getBlock({blockTag:"finalized"});
+      // Finish every network read before reserving an address. A timeout after
+      // allocation would otherwise leave an intent with no recoverable invoice.
+      const created=await source.getBlock({blockTag:"finalized"});
+      const id=requestId??randomBytes(32).toString("hex"), addressAllocation=allocator.allocate(id);
       const x={id,initiativeId:input.initiativeId,index:addressAllocation.derivation_index,depositAddress:addressAllocation.address,sourceGasPlanVersion:2,gasGrantUnits:String(SOURCE_GAS_GRANT),
         amount:formatUnits(units,18),donationAmount:formatUnits(donationUnits,18),poolContributionAmount:formatUnits(allocation.contributionUnits,18),contributionPercent:10,poolCollector:poolCollector.address,
         units:String(units),minimumTotalUsdc:swap.minUsdc,minimumCauseSourceUsdc:String(sourceSplit.causeUnits),minOutput:estimate.minOutput,minimumUsd:invoiceChain===SOLANA_CHAIN_ID?estimate.minimumOutputUsdMicros:estimate.minOutput,

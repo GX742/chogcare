@@ -102,6 +102,39 @@ test("only an explicit safe pre-creation rejection unlocks request editing", asy
   assert.equal(pendingCreation("chog",store),null);
   assert.notEqual(beginCreation({...chog,amount:"500"},store).key,pending.key);
 });
+
+test("an expired worker session renews once and recovers the identical saved request", async () => {
+  const store = memory(), pending = beginCreation(chog, store), calls = [];
+  const result = await createPaymentRequest(pending, new AbortController().signal, async (url, init) => {
+    calls.push({ url, ...init });
+    if (calls.length === 1) return Response.json({ code: "SESSION_REQUIRED" }, { status: 403 });
+    if (url === "/api/payments/config") return Response.json({});
+    return Response.json({ id: chogId }, { status: 201 });
+  }, store);
+  assert.equal(result.id, chogId);
+  assert.deepEqual(calls.map(x => x.url), ["/api/payments/invoices", "/api/payments/config", "/api/payments/invoices"]);
+  assert.equal(calls[0].headers["Idempotency-Key"], pending.key);
+  assert.deepEqual(calls[2], calls[0]);
+  assert.equal(calls[1].credentials, "same-origin");
+  assert.equal(calls[1].cache, "no-store");
+  assert.deepEqual(pendingCreation("chog", store), pending);
+});
+
+test("failed session renewal or a second session rejection retains recovery and never loops", async () => {
+  for (const failure of ["offline", "rejected", "session-still-invalid"]) {
+    const store = memory(), pending = beginCreation(chog, store); let calls = 0;
+    await assert.rejects(createPaymentRequest(pending, new AbortController().signal, async url => {
+      calls++;
+      if (url === "/api/payments/config") {
+        if (failure === "offline") throw new Error("private transport error");
+        return Response.json({}, { status: failure === "rejected" ? 503 : 200 });
+      }
+      return Response.json({ code: "SESSION_REQUIRED" }, { status: 403 });
+    }, store), /saved|not resolved/);
+    assert.equal(calls, failure === "session-still-invalid" ? 3 : 2);
+    assert.deepEqual(pendingCreation("chog", store), pending);
+  }
+});
 test("invalid saved references are not silently erased or substituted", () => {
   const store=memory(); store.setItem(activeInvoiceKeys.nft,"../../config");
   assert.equal(checkoutSelection("herd","chog",store).initiativeId,"herd");

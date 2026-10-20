@@ -130,6 +130,20 @@ class LivePlaylistSourceTests(unittest.TestCase):
         self.assertEqual(pause.call_count, 2)
         self.assertTrue(all(call.kwargs == {"timeout": 1} for call in opener.open.call_args_list))
 
+    def test_truncated_http_response_uses_only_a_recent_validated_window(self):
+        source, opener, pause = self.source([io.BytesIO(playlist().encode()), http.client.IncompleteRead(b"partial", 32)])
+        original = source.load()
+        self.assertEqual(source.load(), original)
+        self.assertEqual(opener.open.call_count, 2)
+        pause.assert_not_called()
+
+    def test_persistent_http_protocol_errors_remain_bounded(self):
+        source, opener, pause = self.source([http.client.IncompleteRead(b"partial", 32), http.client.BadStatusLine("truncated"), http.client.IncompleteRead(b"partial", 32)])
+        with self.assertRaises(http.client.IncompleteRead):
+            source.load()
+        self.assertEqual(opener.open.call_count, 3)
+        self.assertEqual(pause.call_count, 2)
+
     def test_invalid_or_redirected_responses_never_fall_back_to_cache(self):
         invalid = playlist().replace("stream-TestABC-24.ts", "../../private")
         for problem, expected in [(io.BytesIO(invalid.encode()), ValueError), (self.problem(302), urllib.error.HTTPError), (self.problem(404), urllib.error.HTTPError), (io.BytesIO(b"x" * 65537), ValueError)]:

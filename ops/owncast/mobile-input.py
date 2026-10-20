@@ -1,4 +1,5 @@
 """Loopback-only, bounded live window for the mobile transcoder."""
+import http.client
 import re
 import threading
 import time
@@ -82,7 +83,7 @@ class LivePlaylistSource:
                         raise
                     problem.close()
                     last_problem = problem
-                except (OSError, TimeoutError) as problem:
+                except (OSError, http.client.HTTPException) as problem:
                     last_problem = problem
                 # The cache contains only the fixed source's validated three-
                 # segment window. It cannot mask an outage beyond three seconds.
@@ -107,7 +108,7 @@ class Handler(BaseHTTPRequestHandler):
             return
         try:
             body = playlist_source.load()
-        except (OSError, ValueError, UnicodeError):
+        except (OSError, http.client.HTTPException, ValueError, UnicodeError):
             self.send_error(503)
             return
         self.send_response(200)

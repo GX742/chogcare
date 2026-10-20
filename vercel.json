@@ -18,11 +18,17 @@
       "headers": [{ "key": "Cache-Control", "value": "public, max-age=31536000, immutable" }]
     },
     {
-      "source": "/hls/:path*",
+      "source": "/hls/((?!mobile/stream-[0-9]+\\.ts$).*)",
       "headers": [
         { "key": "Cache-Control", "value": "no-store" },
         { "key": "CDN-Cache-Control", "value": "no-store" },
         { "key": "x-vercel-enable-rewrite-caching", "value": "0" }
+      ]
+    },
+    {
+      "source": "/hls/(mobile/stream-[0-9]+\\.ts)",
+      "headers": [
+        { "key": "x-vercel-enable-rewrite-caching", "value": "1" }
       ]
     },
     {

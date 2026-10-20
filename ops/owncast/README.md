@@ -1,22 +1,27 @@
 ChogCare serves the public HLS paths and the existing payment API through the
 loopback nginx proxy on port 8090. Tailscale Funnel exposes this proxy; Vercel's
 `/hls/:path*` rewrite keeps browser playback on the site's own origin. Playlists
-and media responses are not cached by the Vercel rewrite.
+are not cached by the Vercel rewrite. Completed successful mobile TS segments
+use a 60-second public cache to reduce repeat upstream transfers after cache fill.
+Preview frames, errors and payment responses remain uncached. Segment numbers
+use microseconds since epoch so encoder restarts do not reuse cached URLs.
 
 The source stream remains in Owncast. `chogcare-mobile.service` reads that local
-stream and produces a 720 × 1280, 15 fps H.264 video rendition with a 1,100 kbps
+stream and produces a 720 × 1280, 15 fps H.264 video rendition with a 500 kbps
 video target. The website always plays muted, so this rendition has no audio
 scheduler or additional AAC encoding queue. The original 1080 × 1920 rendition
 retains its audio and frame rate and
 remains in the master playlist. Small screens and touch devices load the mobile
 playlist directly, preventing native Safari from switching back to the heavy
-rendition. Desktop players can select automatically from the master. Both
+rendition. Desktop players receive the master playlist; switching depends on
+codec compatibility. The video-only mobile rendition and the original with
+audio are not guaranteed to share one adaptive quality group. Both
 renditions use the same portrait aspect ratio and original
 transport timestamps, so changing quality does not change the webpage's frame.
 
 The mobile encoder joins the newest completed segment with a bounded 128 KiB
 probe and one-second analysis limit, rather than buffering an unbounded amount
-of a quiet camera feed during startup. Its playlist keeps eight one-second
+of a quiet camera feed during startup. Its playlist keeps eight three-second
 segments. Input buffering and B-frame delay are disabled; the output VBV is
 about one second. Check media timestamps against Owncast's source segments when
 measuring delay: a freshly modified playlist can still contain old frames.
@@ -37,8 +42,10 @@ fallback. FFmpeg also has two bounded segment retries. HTTP reconnect options
 do not reliably apply to nested HLS playlist reloads, so the helper implements
 that recovery instead of relying on those flags.
 The public gateway has no route to this helper.
-The browser targets three segments behind the published edge and limits drift;
-native Safari also catches substantial accumulated lag after playback starts.
+The mobile browser targets two segments behind the published edge (six seconds)
+and limits substantial drift. Native Safari also catches accumulated lag after
+playback starts. This small safety window absorbs relay latency; caching can
+reduce duplicate upstream traffic but cannot speed up the first cold transfer.
 This is ordinary HLS, so total camera-to-viewer delay still includes segment
 completion, re-encoding, transport and the player's safety buffer.
 

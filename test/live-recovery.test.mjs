@@ -48,7 +48,7 @@ function playerFixture() {
   const clock = fakeClock(), states = [], calls = { play: [], load: [], reconnect: [], playing: [], waiting: [] };
   let active = true, playBehavior, reconnectBehavior;
   const media = {
-    currentTime: 10, paused: true, ended: false, readyState: 4,
+    currentTime: 10, paused: true, ended: false, seeking: false, readyState: 4,
     play() {
       calls.play.push(clock.now());
       if (playBehavior) return playBehavior();
@@ -264,6 +264,79 @@ test("a producer timestamp restart requires fresh forward progress and avoids a 
   }
   assert.equal(fixture.calls.reconnect.length, 0);
   assert.equal(fixture.calls.load.length, 0);
+  fixture.dispose();
+});
+
+test("seek time updates, stale playing events and play promises cannot report LIVE before a frame is ready", async () => {
+  const fixture = playerFixture();
+  await fixture.start();
+  fixture.recovery.waiting();
+  const healthyEvents = fixture.calls.playing.length;
+  fixture.media.currentTime = 90;
+  fixture.media.seeking = true;
+  fixture.media.readyState = 1;
+  fixture.recovery.progress();
+  fixture.recovery.playing();
+  assert.equal(fixture.monitor.state, "loading");
+  fixture.media.readyState = 4;
+  fixture.media.paused = true;
+  fixture.recovery.play();
+  await flushPromises();
+  assert.equal(fixture.monitor.state, "loading", "Even a resolved play promise must respect an in-flight seek");
+  assert.equal(fixture.calls.playing.length, healthyEvents);
+  fixture.media.seeking = false;
+  fixture.media.readyState = 1;
+  fixture.recovery.progress();
+  fixture.recovery.playing();
+  assert.equal(fixture.monitor.state, "loading", "A completed seek with metadata only still has no playable frame");
+  fixture.media.readyState = 4;
+  fixture.media.currentTime += .25;
+  fixture.recovery.progress();
+  assert.equal(fixture.monitor.state, "playing", "Decoded forward progress restores playback without a manual retry");
+  fixture.dispose();
+});
+
+test("a seek does not fabricate recovery or cancel a required fatal loader repair", async () => {
+  const fixture = playerFixture(), repairs = [];
+  await fixture.start();
+  fixture.recovery.recover(() => repairs.push(fixture.clock.now()), true);
+  const healthyEvents = fixture.calls.playing.length;
+  fixture.media.currentTime = 100;
+  fixture.media.seeking = true;
+  fixture.media.readyState = 1;
+  fixture.recovery.progress();
+  await fixture.clock.advance(1000);
+  assert.deepEqual(repairs, [1000]);
+  assert.equal(fixture.monitor.state, "loading");
+  assert.equal(fixture.calls.playing.length, healthyEvents);
+  fixture.media.seeking = false;
+  fixture.media.readyState = 4;
+  fixture.media.currentTime += .25;
+  fixture.recovery.progress();
+  assert.equal(fixture.monitor.state, "playing");
+  fixture.dispose();
+});
+
+test("an unbuffered backwards seek cannot rebase the playback clock before actual frames return", async () => {
+  const fixture = playerFixture();
+  await fixture.start();
+  fixture.media.currentTime = 1000;
+  fixture.recovery.progress();
+  fixture.recovery.waiting();
+  const healthyEvents = fixture.calls.playing.length;
+  fixture.media.currentTime = 0;
+  fixture.media.seeking = true;
+  fixture.media.readyState = 1;
+  fixture.recovery.progress();
+  fixture.media.seeking = false;
+  fixture.media.readyState = 4;
+  fixture.media.currentTime = .25;
+  fixture.recovery.progress();
+  assert.equal(fixture.monitor.state, "loading", "The first actual frame rebases the old session instead of using a seek-generated baseline");
+  assert.equal(fixture.calls.playing.length, healthyEvents);
+  fixture.media.currentTime = .5;
+  fixture.recovery.progress();
+  assert.equal(fixture.monitor.state, "playing");
   fixture.dispose();
 });
 

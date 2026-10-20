@@ -5,6 +5,7 @@ type Media = {
   readonly currentTime: number;
   readonly paused: boolean;
   readonly ended: boolean;
+  readonly seeking: boolean;
   readonly readyState: number;
   play: () => Promise<void>;
 };
@@ -44,15 +45,18 @@ export function createLivePlaybackRecovery({
     monitor.waiting(); onWaiting(); armHealth();
   };
   const markProgress = () => {
+    // A seek changes currentTime before a frame at that position is ready.
+    // Those timeupdate events are not evidence of recovered playback.
+    if (media.paused || media.ended || media.seeking || media.readyState < 2) return false;
     const time = media.currentTime;
-    if (!media.paused && !media.ended && Number.isFinite(time) && time < lastTime - .5) {
+    if (Number.isFinite(time) && time < lastTime - .5) {
       // A restarted producer can establish a new timestamp origin without a
       // new playing event. Rebase once; only subsequent advancement is proof
       // that frames are moving again, not the backwards discontinuity itself.
       lastTime = time; lastProgress = now();
       return false;
     }
-    if (!media.paused && !media.ended && Number.isFinite(time) && time > lastTime + .02) {
+    if (Number.isFinite(time) && time > lastTime + .02) {
       lastTime = time; lastProgress = now(); if (!repairRequired) clearRecovery();
       monitor.playing(); onPlaying(); return true;
     }
@@ -69,7 +73,7 @@ export function createLivePlaybackRecovery({
       if (disposed || epoch !== playEpoch) return;
       playPending = false;
       if (!active()) return;
-      if (!media.paused && media.readyState >= 3) {
+      if (!media.paused && !media.ended && !media.seeking && media.readyState >= 3) {
         // play() on an already unpaused, stalled element can resolve without
         // any new frame. It must not erase a real buffering/connection state.
         const progressed = markProgress();
@@ -131,7 +135,7 @@ export function createLivePlaybackRecovery({
     waiting,
     recover,
     playing() {
-      if (disposed || !active()) return;
+      if (disposed || !active() || media.paused || media.ended || media.seeking || media.readyState < 2) return;
       blocked = false; lastTime = media.currentTime; lastProgress = now();
       if (!repairRequired) clearRecovery(); monitor.playing(); onPlaying(); armHealth();
     },

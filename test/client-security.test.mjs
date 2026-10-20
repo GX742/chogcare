@@ -180,10 +180,14 @@ test("only completed public mobile segment paths opt in to origin-controlled rew
   const config = JSON.parse(readFileSync(new URL("../vercel.json", import.meta.url), "utf8"));
   const mediaRules = config.headers.filter(rule => rule.headers.some(header => header.key === "x-vercel-enable-rewrite-caching"));
   assert.equal(mediaRules.length, 2);
-  // These Vercel sources use only literal /hls/ and anonymous custom-regex
-  // groups. Anchoring the same expressions exercises their path boundary;
-  // neither source contains named parameters or wildcard shorthand to expand.
-  const policies = path => mediaRules.filter(rule => new RegExp(`^${rule.source}$`).test(path)).map(rule => new Map(rule.headers.map(header => [header.key, header.value])));
+  // Keep the two approved route expressions explicit. Configuration data must
+  // never be compiled as executable regex inside the security test itself.
+  const matchers = new Map([
+    [String.raw`/hls/((?!mobile/stream-[0-9]+\.ts$).*)`, /^\/hls\/((?!mobile\/stream-[0-9]+\.ts$).*)$/],
+    [String.raw`/hls/(mobile/stream-[0-9]+\.ts)`, /^\/hls\/(mobile\/stream-[0-9]+\.ts)$/],
+  ]);
+  assert.deepEqual(new Set(mediaRules.map(rule => rule.source)), new Set(matchers.keys()));
+  const policies = path => mediaRules.filter(rule => matchers.get(rule.source).test(path)).map(rule => new Map(rule.headers.map(header => [header.key, header.value])));
   for (const path of ["/hls/mobile/stream-1792416672.ts", "/hls/mobile/stream-1792416672000000.ts"]) {
     const matched = policies(path);
     assert.equal(matched.length, 1, path);

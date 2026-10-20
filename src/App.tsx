@@ -237,7 +237,7 @@ function NativeLivePlayer({ src, onReady, onWaiting, onAspect }: { src: string; 
         if (nativeActive) driftSync.start();
         liveStatus.playing();
       },
-      onWaiting: () => { if (!cancelled) liveStatus.waiting(); },
+      onWaiting: () => { if (!cancelled) liveStatus.waiting(active()); },
     });
     const startPlayback = () => playback.play();
     playAction.current = () => playback.play(true);

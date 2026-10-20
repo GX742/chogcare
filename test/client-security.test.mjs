@@ -170,10 +170,44 @@ test("deployed CSP and referrer policy preserve private capability boundaries", 
     { source: "/dashboard", destination: "/index.html" },
     { source: "/dashboard/", destination: "/index.html" },
   ]);
-  const liveHeaders = new Map(config.headers.find(rule => rule.source === "/hls/:path*").headers.map(header => [header.key, header.value]));
+  const liveHeaders = new Map(config.headers.find(rule => rule.source === String.raw`/hls/((?!mobile/stream-[0-9]+\.ts$).*)`).headers.map(header => [header.key, header.value]));
   assert.equal(liveHeaders.get("Cache-Control"), "no-store");
   assert.equal(liveHeaders.get("CDN-Cache-Control"), "no-store");
   assert.equal(liveHeaders.get("x-vercel-enable-rewrite-caching"), "0");
+});
+
+test("only completed public mobile segment paths opt in to origin-controlled rewrite caching", () => {
+  const config = JSON.parse(readFileSync(new URL("../vercel.json", import.meta.url), "utf8"));
+  const mediaRules = config.headers.filter(rule => rule.headers.some(header => header.key === "x-vercel-enable-rewrite-caching"));
+  assert.equal(mediaRules.length, 2);
+  // These Vercel sources use only literal /hls/ and anonymous custom-regex
+  // groups. Anchoring the same expressions exercises their path boundary;
+  // neither source contains named parameters or wildcard shorthand to expand.
+  const policies = path => mediaRules.filter(rule => new RegExp(`^${rule.source}$`).test(path)).map(rule => new Map(rule.headers.map(header => [header.key, header.value])));
+  for (const path of ["/hls/mobile/stream-1792416672.ts", "/hls/mobile/stream-1792416672000000.ts"]) {
+    const matched = policies(path);
+    assert.equal(matched.length, 1, path);
+    assert.equal(matched[0].get("x-vercel-enable-rewrite-caching"), "1", path);
+    // The origin can grant a TTL to successful immutable media only. Vercel
+    // must not turn a nonexistent/future segment's 404 into a cached failure.
+    for (const header of ["Cache-Control", "CDN-Cache-Control", "Vercel-CDN-Cache-Control"]) assert.equal(matched[0].has(header), false, `${path}: ${header}`);
+  }
+  for (const path of [
+    "/hls/stream.m3u8", "/hls/0/stream.m3u8", "/hls/0/segment.ts",
+    "/hls/mobile/stream.m3u8", "/hls/mobile/preview.jpg", "/hls/mobile/",
+    "/hls/mobile/stream-.ts", "/hls/mobile/stream-123x.ts", "/hls/mobile/stream-123.TS",
+    "/hls/mobile/stream-123.ts.tmp", "/hls/mobile/stream-123.ts/", "/hls/mobile/stream-123.ts/private",
+    "/hls/mobile/../stream-123.ts", "/hls/mobile/%2e%2e/stream-123.ts",
+    "/hls/mobile/stream-%31.ts", "/hls/mobile/stream-123.ts%2fprivate", "/hls/other/mobile/stream-123.ts",
+  ]) {
+    const matched = policies(path);
+    assert.equal(matched.length, 1, path);
+    assert.equal(matched[0].get("x-vercel-enable-rewrite-caching"), "0", path);
+    assert.equal(matched[0].get("Cache-Control"), "no-store", path);
+    assert.equal(matched[0].get("CDN-Cache-Control"), "no-store", path);
+  }
+  for (const path of ["/api/payments/config", `/api/payments/invoices/${invoiceId}`, "/api/payments/dashboard", "/hls-private/stream-123.ts", "/assets/app.js", "/"]) assert.equal(policies(path).length, 0, path);
+  assert.equal(config.headers.some(rule => rule.source.startsWith("/api/payments")), false);
 });
 test("public privacy copy distinguishes omission of wallet addresses from NFT anonymity", () => {
   const board = readFileSync(new URL("../src/Leaderboard.tsx", import.meta.url), "utf8"), donor = readFileSync(new URL("../src/DonorProfile.tsx", import.meta.url), "utf8");

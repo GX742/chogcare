@@ -1,8 +1,19 @@
 import type { HlsConfig } from "hls.js";
 
 export const DEFAULT_LIVE_SEGMENT_SECONDS = 3;
+export const MOBILE_LIVE_SEGMENT_SECONDS = 3;
 export const LIVE_SYNC_SEGMENT_COUNT = 3;
 export const LIVE_MAX_LATENCY_SEGMENT_COUNT = 6;
+
+// Three-second media amortizes the public relay's request overhead. Keep the
+// client target at six seconds rather than accumulating an unbounded backlog.
+export function livePlaybackTiming(segmentSeconds = DEFAULT_LIVE_SEGMENT_SECONDS) {
+  const balancedSegments = segmentSeconds === MOBILE_LIVE_SEGMENT_SECONDS;
+  return {
+    liveSyncDurationCount: balancedSegments ? 2 : LIVE_SYNC_SEGMENT_COUNT,
+    liveMaxLatencyDurationCount: balancedSegments ? 4 : LIVE_MAX_LATENCY_SEGMENT_COUNT,
+  };
+}
 
 // Let portrait camera footage fill its frame without cropping the terminal.
 // Landscape/offline footage retains the existing contained fallback layout.
@@ -21,16 +32,15 @@ export function livePlaybackStrategy(mseSupported: boolean, nativeSupported: boo
 
 // Segment counts adapt when Owncast changes from 3-second to shorter segments.
 // A smaller back buffer limits memory; it is not an end-to-end latency target.
-export function liveHlsConfig(): Partial<HlsConfig> {
+export function liveHlsConfig(segmentSeconds = DEFAULT_LIVE_SEGMENT_SECONDS): Partial<HlsConfig> {
   return {
     enableWorker: true,
     lowLatencyMode: true,
-    liveSyncDurationCount: LIVE_SYNC_SEGMENT_COUNT,
-    liveMaxLatencyDurationCount: LIVE_MAX_LATENCY_SEGMENT_COUNT,
+    ...livePlaybackTiming(segmentSeconds),
     maxLiveSyncPlaybackRate: 1.03,
     liveSyncOnStallIncrease: 0,
-    maxBufferLength: 6,
-    maxMaxBufferLength: 10,
+    maxBufferLength: segmentSeconds === MOBILE_LIVE_SEGMENT_SECONDS ? 9 : 6,
+    maxMaxBufferLength: segmentSeconds === MOBILE_LIVE_SEGMENT_SECONDS ? 12 : 10,
     backBufferLength: 4,
   };
 }
@@ -114,11 +124,11 @@ export function safeLiveResumeTarget(
   const segment = liveSegmentSeconds(segmentSeconds);
   const span = range.end - range.start;
   // Never jump to the very last frame. Use the library's safe position when it
-  // is available; Safari's native player falls back to three complete segments.
+  // is available; Safari's native player uses the rendition's segment window.
   const maximum = range.end - Math.min(segment, span);
   const suggested = typeof liveSyncPosition === "number" && Number.isFinite(liveSyncPosition) &&
     liveSyncPosition >= range.start && liveSyncPosition < range.end
-    ? liveSyncPosition : range.end - LIVE_SYNC_SEGMENT_COUNT * segment;
+    ? liveSyncPosition : range.end - livePlaybackTiming(segment).liveSyncDurationCount * segment;
   const target = Math.max(range.start, Math.min(suggested, maximum));
   // Resume only moves forward, and small fluctuations must not cause hopping.
   if (target <= currentTime || (currentTime >= range.start && target - currentTime < Math.max(0.5, segment))) return null;
@@ -205,7 +215,8 @@ export function createLiveDriftSync({
     try {
       if (active() && !media.paused && !media.ended && !media.seeking && media.readyState >= 2 && now() - lastSeek >= 10_000) {
         const range = latestLiveRange(media.seekable), segment = liveSegmentSeconds(segmentSeconds());
-        if (range && range.end - media.currentTime > LIVE_MAX_LATENCY_SEGMENT_COUNT * segment) {
+        const maximumSegments = livePlaybackTiming(segment).liveMaxLatencyDurationCount;
+        if (range && range.end - media.currentTime > maximumSegments * segment) {
           const target = safeLiveResumeTarget(media.currentTime, media.seekable, segment);
           if (target !== null) { media.currentTime = target; lastSeek = now(); }
         }

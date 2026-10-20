@@ -17,7 +17,7 @@ import Leaderboard from "./Leaderboard";
 import SupportDialog from "./SupportDialog";
 import BroadcastPreview from "./BroadcastPreview";
 import type { SupportContext } from "./support-model";
-import { createLiveDriftSync, createLiveLoadState, createLiveResumeSync, liveHlsConfig, livePlaybackStrategy, liveSegmentSeconds, portraitFrameAspect, recoverLiveNetwork, DEFAULT_LIVE_SEGMENT_SECONDS, type LiveLoadState } from "./live-player";
+import { createLiveDriftSync, createLiveLoadState, createLiveResumeSync, liveHlsConfig, livePlaybackTiming, livePlaybackStrategy, liveSegmentSeconds, portraitFrameAspect, recoverLiveNetwork, DEFAULT_LIVE_SEGMENT_SECONDS, MOBILE_LIVE_SEGMENT_SECONDS, type LiveLoadState } from "./live-player";
 import { createLivePlaybackRecovery } from "./live-recovery";
 import { createLivePlaybackStatus } from "./live-status";
 import { broadcastPreviewUrl, broadcastStreamUrl } from "./broadcast-source";
@@ -195,7 +195,7 @@ function NativeLivePlayer({ src, onReady, onWaiting, onAspect }: { src: string; 
     if (!element) return;
     const video: HTMLVideoElement = element;
     let cancelled = false, inViewport = true, generation = 0;
-    let segmentSeconds = src.endsWith("/hls/mobile/stream.m3u8") ? 1 : DEFAULT_LIVE_SEGMENT_SECONDS;
+    let segmentSeconds = src.endsWith("/hls/mobile/stream.m3u8") ? MOBILE_LIVE_SEGMENT_SECONDS : DEFAULT_LIVE_SEGMENT_SECONDS;
     let hls: HlsType | null = null, nativeActive = false;
     const nativeHlsCapable = Boolean(video.canPlayType("application/vnd.apple.mpegurl"));
     const managedMediaSource = "ManagedMediaSource" in window;
@@ -276,12 +276,15 @@ function NativeLivePlayer({ src, onReady, onWaiting, onAspect }: { src: string; 
         if (cancelled || current !== generation) return;
         const strategy = livePlaybackStrategy(Hls.isSupported(), nativeHlsCapable, managedMediaSource);
         if (strategy !== "hls") { if (strategy === "native") startNative(); else playback.unavailable(); return; }
-        const engine = new Hls(liveHlsConfig());
+        const engine = new Hls(liveHlsConfig(segmentSeconds));
         hls = engine;
         engine.on(Hls.Events.MANIFEST_PARSED, () => { if (hls === engine && !cancelled) startPlayback(); });
         engine.on(Hls.Events.LEVEL_UPDATED, (_event, data) => {
           if (hls !== engine || cancelled) return;
           segmentSeconds = liveSegmentSeconds(data.details.targetduration);
+          const timing = livePlaybackTiming(segmentSeconds);
+          engine.config.liveSyncDurationCount = timing.liveSyncDurationCount;
+          engine.config.liveMaxLatencyDurationCount = timing.liveMaxLatencyDurationCount;
           if (active()) resumeSync.update();
         });
         engine.on(Hls.Events.ERROR, (_event, data) => {

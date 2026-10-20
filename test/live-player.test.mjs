@@ -138,8 +138,8 @@ test("a stalled established broadcast times out; hidden/unmounted pages cancel t
   assert.deepEqual(states, before); assert.equal(timer.size, 0);
 });
 
-test("resume synchronizes once after metadata becomes seekable, not on every playlist update", () => {
-  const timer = fakeTimers(), media = { currentTime: 20, seekable: ranges() };
+test("resume synchronizes decoded media once, not on every playlist update", () => {
+  const timer = fakeTimers(), media = { currentTime: 20, seekable: ranges(), readyState: 2, seeking: false };
   const sync = createLiveResumeSync({ media, schedule: timer.schedule, cancel: timer.cancel });
   sync.request();
   assert.equal(sync.pending, true);
@@ -157,8 +157,65 @@ test("resume synchronizes once after metadata becomes seekable, not on every pla
   sync.dispose();
 });
 
+test("moving startup playlists and repeated recovery nudges cannot seek before a decoded frame", () => {
+  const timer = fakeTimers(), seeks = [];
+  let currentTime = 0;
+  const media = {
+    readyState: 0, seeking: false, seekable: ranges(), buffered: ranges(),
+    get currentTime() { return currentTime; },
+    set currentTime(value) { currentTime = value; seeks.push(value); },
+  };
+  const sync = createLiveResumeSync({ media, schedule: timer.schedule, cancel: timer.cancel });
+  for (const [index, edge] of [24, 27, 30, 33].entries()) {
+    media.readyState = index % 2;
+    media.seekable = ranges([0, edge]);
+    sync.request();
+    sync.update();
+    assert.equal(timer.size, 1, "Nudges and playlist updates share one bounded retry timer");
+    assert.equal(timer.fire(), true);
+    assert.equal(sync.pending, false, "The third attempt expires even while the window is seekable");
+    assert.equal(timer.fire(), false);
+  }
+  assert.deepEqual(seeks, [], "Metadata and an empty buffer cannot cancel the initial fragment by seeking");
+  sync.request();
+  media.readyState = 2;
+  media.buffered = ranges([24, 27]);
+  sync.update();
+  assert.deepEqual(seeks, [27], "A decoded frame permits one bounded catch-up seek");
+  assert.equal(sync.pending, false);
+  assert.equal(timer.size, 0);
+  media.seekable = ranges([0, 36]);
+  sync.update();
+  assert.deepEqual(seeks, [27], "Normal playlist updates do not restart synchronization");
+  sync.request();
+  assert.deepEqual(seeks, [27, 30], "An explicit later scroll resume still catches up");
+  sync.dispose();
+});
+
+test("source replacement and in-flight seeks defer resume synchronization until decoded media is ready", () => {
+  const timer = fakeTimers(), media = { currentTime: 20, seekable: ranges([0, 100]), readyState: 2, seeking: false };
+  const sync = createLiveResumeSync({ media, schedule: timer.schedule, cancel: timer.cancel });
+  sync.request();
+  assert.equal(media.currentTime, 94);
+  media.currentTime = 0;
+  media.readyState = 0;
+  media.seekable = ranges([0, 30]);
+  sync.request();
+  sync.update();
+  assert.equal(media.currentTime, 0, "A replacement source does not inherit the previous source's decoded readiness");
+  media.readyState = 2;
+  media.seeking = true;
+  timer.fire();
+  assert.equal(media.currentTime, 0, "An existing seek is not interrupted by another synchronization");
+  assert.equal(sync.pending, false);
+  media.seeking = false;
+  sync.request();
+  assert.equal(media.currentTime, 24);
+  sync.dispose();
+});
+
 test("unavailable media gets only three resume attempts and disposal cancels pending work", () => {
-  const timer = fakeTimers(), media = { currentTime: 20, seekable: ranges() };
+  const timer = fakeTimers(), media = { currentTime: 20, seekable: ranges(), readyState: 2, seeking: false };
   const sync = createLiveResumeSync({ media, schedule: timer.schedule, cancel: timer.cancel });
   sync.request();
   assert.equal(timer.fire(), true);
@@ -178,7 +235,7 @@ test("unavailable media gets only three resume attempts and disposal cancels pen
 test("media seek exceptions are retried only within the bounded resume budget", () => {
   const timer = fakeTimers();
   let attempted = 0;
-  const media = { seekable: ranges([0, 100]), get currentTime() { return 20; }, set currentTime(_value) { attempted++; throw new Error("Not seekable yet"); } };
+  const media = { seekable: ranges([0, 100]), readyState: 2, seeking: false, get currentTime() { return 20; }, set currentTime(_value) { attempted++; throw new Error("Not seekable yet"); } };
   const sync = createLiveResumeSync({ media, schedule: timer.schedule, cancel: timer.cancel });
   sync.request();
   while (timer.fire()) { /* Drain at most the two bounded retry timers. */ }

@@ -142,7 +142,7 @@ export function createLiveResumeSync({
   schedule = setTimeout,
   cancel = clearTimeout,
 }: {
-  media: LiveMedia;
+  media: LiveMedia & { readonly readyState: number; readonly seeking: boolean };
   segmentSeconds?: () => number;
   liveSyncPosition?: () => number | null;
   schedule?: (callback: () => void, delay: number) => Timer;
@@ -156,7 +156,9 @@ export function createLiveResumeSync({
     remaining--;
     try {
       const ranges = media.seekable;
-      if (latestLiveRange(ranges) && Number.isFinite(media.currentTime) && media.currentTime >= 0) {
+      // Seekable metadata can arrive before the first decoded frame. Seeking
+      // then cancels the loader's pending fragment and can prevent startup.
+      if (media.readyState >= 2 && !media.seeking && latestLiveRange(ranges) && Number.isFinite(media.currentTime) && media.currentTime >= 0) {
         const target = safeLiveResumeTarget(media.currentTime, ranges, segmentSeconds(), liveSyncPosition());
         if (target !== null) media.currentTime = target;
         pending = false;

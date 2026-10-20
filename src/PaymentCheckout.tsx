@@ -10,6 +10,7 @@ import type { DonationDestinationChainId } from "./delivery-network";
 import { NFT_POOL_GRANT_USDC, NFT_POOL_DAILY_CLAIMS } from "./nft-pool-policy";
 import SupportDialog from "./SupportDialog";
 import type { SupportContext } from "./support-model";
+import { startPaymentConfigPolling } from "./payment-config-poll";
 
 type Props = { mode: CheckoutMode; initiativeId: string; initiativeName: string; onViewLeaderboard?:()=>void };
 
@@ -30,38 +31,30 @@ export default function PaymentCheckout(props: Props) {
   const holderReady = currentConfig && nftReady;
   const availabilityNotice = currentConfig && (props.mode === "chog" ? acceptsNewChog(props.initiativeId) : supportsNft(props.initiativeId)) ? availabilityNotices[props.mode] : "";
   useEffect(() => {
-    let disposed = false;
-    const controller = new AbortController();
     // A newly selected cause must not inherit the previous cause's readiness.
     setReady(false); setNftReady(false); setPoolHealthy(false);
     setAvailableClaims(null); setNftQueueFull(false); setServiceAllowed(false); setSecurityNotice("");
     setConfigInitiative("");
     setAvailabilityNotices({ chog: "", nft: "" });
-    const poll = async () => {
-      try {
-        const response = await fetch("/api/payments/config", { signal: AbortSignal.any([controller.signal, AbortSignal.timeout(8000)]) });
-        if (!response.ok) throw new Error();
-        const config = await response.json();
-        if (!disposed) {
-          setConfigInitiative(props.initiativeId);
-          const policy = paymentServicePolicy(config);
-          setServiceAllowed(policy.allowed);
-          setSecurityNotice(policy.notice);
-          setAvailabilityNotices({ chog: paymentAvailabilityNotice(config, "chog"), nft: paymentAvailabilityNotice(config, "nft") });
-          setDestinationChainId(initiativeChain(props.initiativeId,config.destinationChainId === 10 ? 10 : 1));
-          setReady(policy.allowed && config.paymentMode === "local-pilot" && config.paymentsEnabled === true && config.supportedModes?.includes("chog") && config.supportedInitiatives?.includes(props.initiativeId));
-          setNftReady(policy.allowed && config.subsidyUsdc === NFT_POOL_GRANT_USDC && config.maxDailyClaims === NFT_POOL_DAILY_CLAIMS && config.nftPaymentsEnabled === true && config.supportedModes?.includes("nft") && config.poolChainId === 10 && supportsNft(props.initiativeId) && (config.nftSupportedInitiatives?.includes(props.initiativeId) || props.initiativeId === "burundi"));
-          setPoolHealthy(policy.allowed && config.poolHealthy === true && config.poolGasReady === true && config.poolChainId === 10);
-          setAvailableClaims(holderAvailability(config));
-          setNftQueueFull(config.nftQueueFull === true);
-        }
-      } catch {
-        if (!disposed) { setReady(false); setNftReady(false); setPoolHealthy(false); setAvailableClaims(null); setNftQueueFull(false); setServiceAllowed(false); setSecurityNotice("Payment service unavailable. Keep your invoice; do not send funds or pay again."); }
-      }
-    };
-    void poll();
-    const timer = setInterval(() => void poll(), 10000);
-    return () => { disposed = true; controller.abort(); clearInterval(timer); };
+    return startPaymentConfigPolling(async signal => {
+      const response = await fetch("/api/payments/config", { signal, credentials: "same-origin", cache: "no-store" });
+      if (!response.ok) throw new Error();
+      return response.json();
+    }, config => {
+      setConfigInitiative(props.initiativeId);
+      const policy = paymentServicePolicy(config);
+      setServiceAllowed(policy.allowed);
+      setSecurityNotice(policy.notice);
+      setAvailabilityNotices({ chog: paymentAvailabilityNotice(config, "chog"), nft: paymentAvailabilityNotice(config, "nft") });
+      setDestinationChainId(initiativeChain(props.initiativeId,config.destinationChainId === 10 ? 10 : 1));
+      setReady(policy.allowed && config.paymentMode === "local-pilot" && config.paymentsEnabled === true && config.supportedModes?.includes("chog") && config.supportedInitiatives?.includes(props.initiativeId));
+      setNftReady(policy.allowed && config.subsidyUsdc === NFT_POOL_GRANT_USDC && config.maxDailyClaims === NFT_POOL_DAILY_CLAIMS && config.nftPaymentsEnabled === true && config.supportedModes?.includes("nft") && config.poolChainId === 10 && supportsNft(props.initiativeId) && (config.nftSupportedInitiatives?.includes(props.initiativeId) || props.initiativeId === "burundi"));
+      setPoolHealthy(policy.allowed && config.poolHealthy === true && config.poolGasReady === true && config.poolChainId === 10);
+      setAvailableClaims(holderAvailability(config));
+      setNftQueueFull(config.nftQueueFull === true);
+    }, () => {
+      setReady(false); setNftReady(false); setPoolHealthy(false); setAvailableClaims(null); setNftQueueFull(false); setServiceAllowed(false); setSecurityNotice("Payment service unavailable. Keep your invoice; do not send funds or pay again.");
+    });
   }, [props.initiativeId]);
 
   return <>

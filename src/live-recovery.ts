@@ -9,6 +9,8 @@ type Media = {
   readonly readyState: number;
   play: () => Promise<void>;
 };
+const STARTUP_LOAD_DEADLINE_MS = 60_000;
+const PLAYBACK_STALL_MS = 12_000;
 
 // A paused/offscreen video is not evidence of a browser autoplay rejection.
 // Recover the media itself, with a bounded fast budget and a slow cooldown,
@@ -32,11 +34,13 @@ export function createLivePlaybackRecovery({
   let disposed = false, blocked = false, playPending = false, playEpoch = 0;
   let healthTimer: Timer | null = null, recoveryTimer: Timer | null = null;
   let lastTime = media.currentTime, lastProgress = now(), lastNudge = -Infinity;
+  let sourceStartedAt = lastProgress, hasPlayedFrame = false, suspended = false;
   let recoveryOperation = reconnect, repairRequired = false;
   const invalidatePlay = () => { playEpoch++; playPending = false; };
   const clearHealth = () => { if (healthTimer !== null) cancel(healthTimer); healthTimer = null; };
   const clearRecovery = () => { if (recoveryTimer !== null) cancel(recoveryTimer); recoveryTimer = null; };
   const suspend = () => {
+    suspended = true;
     invalidatePlay(); clearHealth(); clearRecovery(); monitor.suspend(); onWaiting();
   };
   const waiting = () => {
@@ -57,6 +61,7 @@ export function createLivePlaybackRecovery({
       return false;
     }
     if (Number.isFinite(time) && time > lastTime + .02) {
+      hasPlayedFrame = true;
       lastTime = time; lastProgress = now(); if (!repairRequired) clearRecovery();
       monitor.playing(); onPlaying(); return true;
     }
@@ -118,7 +123,11 @@ export function createLivePlaybackRecovery({
     if (!active()) { suspend(); return; }
     if (!markProgress() && recoveryTimer === null) {
       const idle = now() - lastProgress;
-      if (media.ended || idle >= 12_000) recover();
+      // Initial manifest, playlist and fragment requests can each take longer
+      // than a playback stall. Give this source a finite first-frame deadline;
+      // waiting events and seeks must not keep extending it or abort its loader.
+      const timedOut = hasPlayedFrame ? idle >= PLAYBACK_STALL_MS : now() - sourceStartedAt >= STARTUP_LOAD_DEADLINE_MS;
+      if (media.ended || timedOut) recover();
       else if ((media.paused || idle >= 4_000) && now() - lastNudge >= 3_000) {
         lastNudge = now();
         waiting();
@@ -136,6 +145,7 @@ export function createLivePlaybackRecovery({
     recover,
     playing() {
       if (disposed || !active() || media.paused || media.ended || media.seeking || media.readyState < 2) return;
+      hasPlayedFrame = true;
       blocked = false; lastTime = media.currentTime; lastProgress = now();
       if (!repairRequired) clearRecovery(); monitor.playing(); onPlaying(); armHealth();
     },
@@ -149,6 +159,8 @@ export function createLivePlaybackRecovery({
     suspend() { if (!disposed) suspend(); },
     resume() {
       if (disposed || !active() || blocked) return;
+      if (suspended && !hasPlayedFrame) sourceStartedAt = now();
+      suspended = false;
       invalidatePlay(); lastTime = media.currentTime; lastProgress = now();
       if (media.paused || media.readyState < 3) waiting();
       if (repairRequired) recover(recoveryOperation, true);
@@ -159,6 +171,7 @@ export function createLivePlaybackRecovery({
       if (!disposed) {
         invalidatePlay(); clearRecovery(); repairRequired = false;
         lastTime = media.currentTime; lastProgress = now();
+        sourceStartedAt = lastProgress; hasPlayedFrame = false;
       }
     },
     unavailable() { if (!disposed) { clearHealth(); clearRecovery(); monitor.unavailable(); onWaiting(); } },

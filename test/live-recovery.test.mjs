@@ -215,6 +215,123 @@ test("a stream frozen without a fatal error is nudged and then reconnected autom
   fixture.dispose();
 });
 
+test("a slow initial load completes before any rebuild, then uses the normal playback stall budget", async () => {
+  const fixture = playerFixture();
+  fixture.media.readyState = 0;
+  let firstFrames = 0;
+  const completion = fixture.clock.schedule(() => {
+    firstFrames++;
+    fixture.media.readyState = 2;
+    fixture.media.currentTime += .25;
+    fixture.recovery.progress();
+  }, 24_000);
+  // Rebuilding the actual HLS engine aborts its pending first-fragment request.
+  fixture.setReconnectBehavior(() => fixture.clock.cancel(completion));
+  await fixture.start();
+  await fixture.clock.advance(23_999);
+  assert.equal(fixture.calls.reconnect.length, 0, "The initial loader must survive the twelve-second stall watchdog");
+  assert.equal(fixture.calls.playing.length, 0, "A resolved play promise without a decoded frame is not startup proof");
+  await fixture.clock.advance(1);
+  assert.equal(firstFrames, 1, "The original slow load delivers its first decoded frame");
+  assert.equal(fixture.monitor.state, "playing");
+  await fixture.clock.advance(12_999);
+  assert.equal(fixture.calls.reconnect.length, 0);
+  await fixture.clock.advance(1);
+  assert.equal(fixture.calls.reconnect.length, 1, "Playback freezes still recover with the original stall deadline and backoff");
+  fixture.dispose();
+});
+
+test("an initial load has a finite deadline that waiting, seeks and repeated active resumes cannot extend", async () => {
+  const fixture = playerFixture();
+  fixture.media.readyState = 0;
+  await fixture.start();
+  for (let index = 0; index < 11; index++) {
+    await fixture.clock.advance(5000);
+    fixture.media.currentTime += 100;
+    fixture.media.seeking = true;
+    fixture.media.readyState = 1;
+    fixture.recovery.progress();
+    fixture.recovery.playing();
+    fixture.media.seeking = false;
+    fixture.media.readyState = 0;
+    fixture.recovery.waiting();
+    fixture.recovery.resume();
+  }
+  await fixture.clock.advance(4999);
+  assert.equal(fixture.calls.reconnect.length, 0);
+  assert.equal(fixture.calls.playing.length, 0, "Seek-generated time updates and metadata are not decoded frames");
+  assert.equal(fixture.monitor.state, "unavailable", "The UI watchdog stays finite while the original load continues");
+  await fixture.clock.advance(1001);
+  assert.deepEqual(fixture.calls.reconnect, [61_000], "A never-completing initial load rebuilds after sixty seconds plus bounded backoff");
+  fixture.dispose();
+});
+
+test("a resolved play promise alone cannot shorten startup before a decoded playing event", async () => {
+  const fixture = playerFixture();
+  fixture.media.readyState = 3;
+  fixture.recovery.play();
+  await flushPromises();
+  await fixture.clock.advance(24_000);
+  assert.equal(fixture.calls.reconnect.length, 0, "Resolving play without advancing or a playing event is not first-frame proof");
+  fixture.media.readyState = 1;
+  fixture.recovery.playing();
+  await fixture.clock.advance(1000);
+  assert.equal(fixture.calls.reconnect.length, 0);
+  fixture.media.readyState = 2;
+  fixture.recovery.playing();
+  await fixture.clock.advance(13_000);
+  assert.equal(fixture.calls.reconnect.length, 1, "A decoded playing event activates the normal stall budget");
+  fixture.dispose();
+});
+
+test("a genuinely suspended initial load gets a fresh startup deadline once it resumes", async () => {
+  const fixture = playerFixture();
+  fixture.media.readyState = 0;
+  await fixture.start();
+  await fixture.clock.advance(20_000);
+  fixture.setActive(false);
+  fixture.media.paused = true;
+  fixture.recovery.suspend();
+  await fixture.clock.advance(90_000);
+  assert.equal(fixture.calls.reconnect.length, 0);
+  assert.equal(fixture.clock.size, 0);
+  fixture.setActive(true);
+  fixture.recovery.resume();
+  await fixture.clock.advance(59_999);
+  assert.equal(fixture.calls.reconnect.length, 0, "Time hidden or offline must not consume the resumed initial-load budget");
+  await fixture.clock.advance(1001);
+  assert.deepEqual(fixture.calls.reconnect, [171_000]);
+  fixture.dispose();
+});
+
+test("replacing a previously playing source restores the full bounded first-frame budget", async () => {
+  const fixture = playerFixture();
+  await fixture.start();
+  await fixture.clock.advance(1000);
+  fixture.media.readyState = 0;
+  fixture.media.currentTime = 0;
+  fixture.recovery.resetSource();
+  fixture.recovery.waiting();
+  await fixture.clock.advance(59_999);
+  assert.equal(fixture.calls.reconnect.length, 0, "A replacement source cannot inherit the old source's twelve-second stall deadline");
+  await fixture.clock.advance(1001);
+  assert.deepEqual(fixture.calls.reconnect, [62_000]);
+  fixture.dispose();
+});
+
+test("a fatal loader failure during startup repairs immediately without waiting for the first-frame deadline", async () => {
+  const fixture = playerFixture(), repairs = [];
+  fixture.media.readyState = 0;
+  await fixture.start();
+  fixture.recovery.recover(() => repairs.push(fixture.clock.now()), true);
+  await fixture.clock.advance(999);
+  assert.deepEqual(repairs, []);
+  await fixture.clock.advance(1);
+  assert.deepEqual(repairs, [1000], "Fatal loader repair keeps its existing bounded backoff");
+  assert.equal(fixture.calls.reconnect.length, 0);
+  fixture.dispose();
+});
+
 test("calling play on an already unpaused stalled element does not invent healthy playback", async () => {
   const fixture = playerFixture();
   await fixture.start();

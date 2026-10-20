@@ -45,6 +45,13 @@ export function createLivePlaybackRecovery({
   };
   const markProgress = () => {
     const time = media.currentTime;
+    if (!media.paused && !media.ended && Number.isFinite(time) && time < lastTime - .5) {
+      // A restarted producer can establish a new timestamp origin without a
+      // new playing event. Rebase once; only subsequent advancement is proof
+      // that frames are moving again, not the backwards discontinuity itself.
+      lastTime = time; lastProgress = now();
+      return false;
+    }
     if (!media.paused && !media.ended && Number.isFinite(time) && time > lastTime + .02) {
       lastTime = time; lastProgress = now(); if (!repairRequired) clearRecovery();
       monitor.playing(); onPlaying(); return true;
@@ -54,7 +61,7 @@ export function createLivePlaybackRecovery({
   function play(userGesture = false) {
     if (disposed || !active() || playPending || (blocked && !userGesture)) return;
     if (userGesture) blocked = false;
-    const epoch = ++playEpoch;
+    const epoch = ++playEpoch, wasPaused = media.paused;
     playPending = true;
     let result: Promise<void>;
     try { result = media.play(); } catch (problem) { result = Promise.reject(problem); }
@@ -62,7 +69,12 @@ export function createLivePlaybackRecovery({
       if (disposed || epoch !== playEpoch) return;
       playPending = false;
       if (!active()) return;
-      if (!media.paused && media.readyState >= 3) { monitor.playing(); onPlaying(); markProgress(); }
+      if (!media.paused && media.readyState >= 3) {
+        // play() on an already unpaused, stalled element can resolve without
+        // any new frame. It must not erase a real buffering/connection state.
+        const progressed = markProgress();
+        if (wasPaused && !progressed) { monitor.playing(); onPlaying(); }
+      }
       armHealth();
     }).catch((problem: unknown) => {
       if (disposed || epoch !== playEpoch) return;
@@ -105,6 +117,7 @@ export function createLivePlaybackRecovery({
       if (media.ended || idle >= 12_000) recover();
       else if ((media.paused || idle >= 4_000) && now() - lastNudge >= 3_000) {
         lastNudge = now();
+        waiting();
         try { resumeLoading(); play(); } catch { recover(); }
       }
     }

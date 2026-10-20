@@ -215,6 +215,58 @@ test("a stream frozen without a fatal error is nudged and then reconnected autom
   fixture.dispose();
 });
 
+test("calling play on an already unpaused stalled element does not invent healthy playback", async () => {
+  const fixture = playerFixture();
+  await fixture.start();
+  fixture.recovery.waiting();
+  const healthyEvents = fixture.calls.playing.length;
+  fixture.recovery.play();
+  await flushPromises();
+  assert.equal(fixture.monitor.state, "loading");
+  assert.equal(fixture.calls.playing.length, healthyEvents, "A resolved promise without a new frame is not playback progress");
+  fixture.media.currentTime += .25;
+  fixture.recovery.progress();
+  assert.equal(fixture.monitor.state, "playing");
+  fixture.dispose();
+});
+
+test("a silent freeze reports buffering before nudging and does not turn itself healthy on each play call", async () => {
+  const fixture = playerFixture();
+  await fixture.start();
+  const healthyEvents = fixture.calls.playing.length;
+  await fixture.clock.advance(4000);
+  assert.equal(fixture.calls.load.length, 1);
+  assert.equal(fixture.monitor.state, "loading", "A stuck playhead is reported even without a waiting event");
+  assert.equal(fixture.calls.playing.length, healthyEvents);
+  await fixture.clock.advance(3000);
+  assert.equal(fixture.monitor.state, "loading");
+  assert.equal(fixture.calls.playing.length, healthyEvents);
+  fixture.dispose();
+});
+
+test("a producer timestamp restart requires fresh forward progress and avoids a false reconnect loop", async () => {
+  const fixture = playerFixture();
+  await fixture.start();
+  fixture.media.currentTime = 1000;
+  fixture.recovery.progress();
+  fixture.recovery.waiting();
+  fixture.media.currentTime = 0;
+  fixture.recovery.progress();
+  assert.equal(fixture.monitor.state, "loading", "The backwards jump itself is not evidence of healthy frames");
+  await fixture.clock.advance(500);
+  fixture.media.currentTime = .5;
+  fixture.recovery.progress();
+  assert.equal(fixture.monitor.state, "playing", "New frames need not catch up to the previous session's timestamp");
+  for (let index = 0; index < 40; index++) {
+    await fixture.clock.advance(500);
+    fixture.media.currentTime += .5;
+    fixture.recovery.progress();
+  }
+  assert.equal(fixture.calls.reconnect.length, 0);
+  assert.equal(fixture.calls.load.length, 0);
+  fixture.dispose();
+});
+
 test("an unexpected end of a live stream reconnects instead of waiting for Retry", async () => {
   const fixture = playerFixture();
   await fixture.start();

@@ -4,6 +4,7 @@ import unittest
 import http.client
 import io
 import threading
+import urllib.error
 from unittest.mock import patch, Mock
 
 spec = importlib.util.spec_from_file_location("mobile_input", pathlib.Path(__file__).parents[1] / "ops/owncast/mobile-input.py")
@@ -78,10 +79,67 @@ class LiveWindowTests(unittest.TestCase):
                 self.assertEqual(response.getheader("Cache-Control"), "no-store")
                 self.assertEqual(response.read().decode().count("#EXTINF:"), 3)
                 connection.close()
-                opener.open.assert_called_once_with(module.SOURCE + "stream.m3u8", timeout=3)
+                opener.open.assert_called_once_with(module.SOURCE + "stream.m3u8", timeout=1)
         finally:
             module.PORT = old_port
             server.shutdown(); server.server_close(); thread.join(timeout=3)
+
+
+class LivePlaylistSourceTests(unittest.TestCase):
+    def problem(self, code):
+        return urllib.error.HTTPError(module.SOURCE + "stream.m3u8", code, "test", {}, io.BytesIO())
+
+    def source(self, results, clock=None):
+        opener, pause = Mock(), Mock()
+        opener.open.side_effect = results
+        source = module.LivePlaylistSource(opener=opener, now=clock or (lambda: 100), pause=pause)
+        return source, opener, pause
+
+    def test_initial_transient_503_is_retried_without_ending_stream(self):
+        source, opener, pause = self.source([self.problem(503), io.BytesIO(playlist().encode())])
+        self.assertEqual(source.load().count(b"#EXTINF:"), 3)
+        self.assertEqual(opener.open.call_count, 2)
+        pause.assert_called_once_with(0.1)
+
+    def test_cached_valid_window_survives_one_transient_refresh_error(self):
+        clock = [100]
+        source, opener, pause = self.source([io.BytesIO(playlist().encode()), self.problem(503), io.BytesIO(playlist(session="New-Session").encode())], lambda: clock[0])
+        original = source.load()
+        clock[0] = 102
+        self.assertEqual(source.load(), original)
+        clock[0] = 102.5
+        self.assertIn(b"stream-New-Session-24.ts", source.load())
+        self.assertEqual(opener.open.call_count, 3)
+        pause.assert_not_called()
+
+    def test_stale_cache_cannot_hide_an_outage_after_three_seconds(self):
+        clock = [100]
+        source, opener, pause = self.source([io.BytesIO(playlist().encode()), self.problem(503), self.problem(503), self.problem(503)], lambda: clock[0])
+        source.load()
+        clock[0] = 103.01
+        with self.assertRaises(urllib.error.HTTPError):
+            source.load()
+        self.assertEqual(opener.open.call_count, 4)
+        self.assertEqual(pause.call_count, 2)
+
+    def test_network_failures_have_a_bounded_attempt_budget(self):
+        source, opener, pause = self.source([TimeoutError(), urllib.error.URLError("temporarily unavailable"), OSError()])
+        with self.assertRaises(OSError):
+            source.load()
+        self.assertEqual(opener.open.call_count, 3)
+        self.assertEqual(pause.call_count, 2)
+        self.assertTrue(all(call.kwargs == {"timeout": 1} for call in opener.open.call_args_list))
+
+    def test_invalid_or_redirected_responses_never_fall_back_to_cache(self):
+        invalid = playlist().replace("stream-TestABC-24.ts", "../../private")
+        for problem, expected in [(io.BytesIO(invalid.encode()), ValueError), (self.problem(302), urllib.error.HTTPError), (self.problem(404), urllib.error.HTTPError), (io.BytesIO(b"x" * 65537), ValueError)]:
+            with self.subTest(expected=expected):
+                source, opener, pause = self.source([io.BytesIO(playlist().encode()), problem])
+                source.load()
+                with self.assertRaises(expected):
+                    source.load()
+                self.assertEqual(opener.open.call_count, 2)
+                pause.assert_not_called()
 
 
 if __name__ == "__main__":

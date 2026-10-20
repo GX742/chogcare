@@ -19,6 +19,7 @@ import BroadcastPreview from "./BroadcastPreview";
 import type { SupportContext } from "./support-model";
 import { createLiveDriftSync, createLiveLoadState, createLiveResumeSync, liveHlsConfig, livePlaybackStrategy, liveSegmentSeconds, portraitFrameAspect, recoverLiveNetwork, DEFAULT_LIVE_SEGMENT_SECONDS, type LiveLoadState } from "./live-player";
 import { createLivePlaybackRecovery } from "./live-recovery";
+import { createLivePlaybackStatus } from "./live-status";
 import { broadcastPreviewUrl, broadcastStreamUrl } from "./broadcast-source";
 
 import "./station-redesign.css";
@@ -202,12 +203,20 @@ function NativeLivePlayer({ src, onReady, onWaiting, onAspect }: { src: string; 
     video.muted = true;
     video.playsInline = true;
     setLoadState("loading"); setHasFrame(false); setPreviewReady(false); setInView(true);
+    callbacks.current.onWaiting();
     const active = () => {
       if (cancelled || document.hidden || !inViewport || navigator.onLine === false) return false;
       const box = video.getBoundingClientRect();
       return box.width > 0 && box.height > 0 && box.bottom > 0 && box.right > 0 && box.top < window.innerHeight && box.left < window.innerWidth;
     };
-    const loadMonitor = createLiveLoadState({ onChange: state => { if (!cancelled) setLoadState(state); } });
+    const liveStatus = createLivePlaybackStatus({ onChange: live => {
+      if (!cancelled) { if (live) callbacks.current.onReady(); else callbacks.current.onWaiting(); }
+    } });
+    const loadMonitor = createLiveLoadState({ onChange: state => {
+      if (cancelled) return;
+      setLoadState(state);
+      if (state === "blocked" || state === "unavailable") liveStatus.unavailable();
+    } });
     const resumeSync = createLiveResumeSync({ media: video, segmentSeconds: () => segmentSeconds, liveSyncPosition: () => hls?.liveSyncPosition ?? null });
     const driftSync = createLiveDriftSync({ media: video, active: () => nativeActive && active(), segmentSeconds: () => segmentSeconds });
     const updateAspect = () => {
@@ -216,7 +225,9 @@ function NativeLivePlayer({ src, onReady, onWaiting, onAspect }: { src: string; 
     const playback = createLivePlaybackRecovery({
       media: video, active, monitor: loadMonitor,
       resumeLoading: () => {
-        if (hls?.levels.length) hls.startLoad(-1, true);
+        // Restarting an active loader aborts its in-flight fragment request.
+        // A scroll return or watchdog nudge must leave a healthy load alone.
+        if (hls?.levels.length && !hls.loadingEnabled) hls.startLoad(-1, true);
         resumeSync.request();
       },
       reconnect: () => { if (nativeActive) startNative(); else installHls(); },
@@ -224,9 +235,9 @@ function NativeLivePlayer({ src, onReady, onWaiting, onAspect }: { src: string; 
         if (cancelled) return;
         updateAspect(); setHasFrame(true);
         if (nativeActive) driftSync.start();
-        callbacks.current.onReady();
+        liveStatus.playing();
       },
-      onWaiting: () => { if (!cancelled) callbacks.current.onWaiting(); },
+      onWaiting: () => { if (!cancelled) liveStatus.waiting(); },
     });
     const startPlayback = () => playback.play();
     playAction.current = () => playback.play(true);
@@ -238,12 +249,13 @@ function NativeLivePlayer({ src, onReady, onWaiting, onAspect }: { src: string; 
     const metadata = () => { updateAspect(); resumeSync.update(); startPlayback(); };
     const canPlay = () => {
       resumeSync.update();
-      if (video.paused || loadMonitor.state !== "playing") startPlayback();
+      if (video.paused) startPlayback();
     };
-    const visibility = () => { if (document.hidden) playback.suspend(); else playback.resume(); };
+    const suspendPlayback = () => { playback.suspend(); liveStatus.suspend(); };
+    const visibility = () => { if (document.hidden) suspendPlayback(); else playback.resume(); };
     const pageShow = (event: PageTransitionEvent) => { if (event.persisted) playback.resume(); };
     const online = () => playback.resume();
-    const offline = () => playback.suspend();
+    const offline = () => { suspendPlayback(); liveStatus.unavailable(); };
     const nativeError = () => playback.recover(undefined, true);
 
     function startNative() {
@@ -307,9 +319,11 @@ function NativeLivePlayer({ src, onReady, onWaiting, onAspect }: { src: string; 
     const observer = typeof IntersectionObserver === "function" ? new IntersectionObserver(entries => {
       const entry = entries.find(item => item.target === video);
       if (!entry || cancelled) return;
-      inViewport = entry.isIntersecting && entry.intersectionRatio > 0;
+      const visible = entry.isIntersecting && entry.intersectionRatio > 0;
+      if (visible === inViewport) return;
+      inViewport = visible;
       setInView(inViewport);
-      if (inViewport) playback.resume(); else playback.suspend();
+      if (inViewport) playback.resume(); else suspendPlayback();
     }, { threshold: [0, 0.01] }) : null;
     observer?.observe(video);
 
@@ -319,7 +333,7 @@ function NativeLivePlayer({ src, onReady, onWaiting, onAspect }: { src: string; 
 
     return () => {
       cancelled = true; generation++; playAction.current = null;
-      observer?.disconnect(); playback.dispose(); loadMonitor.dispose();
+      observer?.disconnect(); playback.dispose(); loadMonitor.dispose(); liveStatus.dispose();
       resumeSync.dispose(); driftSync.dispose();
       video.removeEventListener("loadedmetadata", metadata);
       video.removeEventListener("loadeddata", updateAspect);

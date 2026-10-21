@@ -1,0 +1,182 @@
+import { isIP } from "node:net";
+
+const DEFAULT_CERTIFICATE_NAME = "chogcare-relay";
+
+function publicIpv4(value) {
+  if (typeof value !== "string" || isIP(value) !== 4) throw new Error("A canonical public IPv4 address is required.");
+  const [a, b, c] = value.split(".").map(Number);
+  // Fail closed on private, shared, loopback, link-local, documentation,
+  // benchmarking, multicast and reserved ranges. No hostnames or URLs enter
+  // nginx configuration or certificate paths through this renderer.
+  if (a === 0 || a === 10 || a === 127 || a >= 224 ||
+      (a === 100 && b >= 64 && b <= 127) ||
+      (a === 169 && b === 254) ||
+      (a === 172 && b >= 16 && b <= 31) ||
+      (a === 192 && ((b === 168) || (b === 0 && [0, 2].includes(c)) || (b === 88 && c === 99))) ||
+      (a === 198 && ([18, 19].includes(b) || (b === 51 && c === 100))) ||
+      (a === 203 && b === 0 && c === 113)) throw new Error("A public unicast IPv4 address is required.");
+  return value;
+}
+
+function certificateSegment(value) {
+  if (typeof value !== "string" || !/^[a-z0-9](?:[a-z0-9-]{0,62}[a-z0-9])?$/.test(value)) {
+    throw new Error("The certificate name must be a safe lowercase name.");
+  }
+  return value;
+}
+
+const securityHeaders = `    add_header X-Content-Type-Options nosniff always;
+    add_header Referrer-Policy no-referrer always;
+    add_header X-Frame-Options DENY always;
+    add_header Content-Security-Policy "default-src 'none'; frame-ancestors 'none'; base-uri 'none'" always;
+    add_header Permissions-Policy "camera=(), microphone=(), geolocation=()" always;`;
+
+function guards(ip, https = false) {
+  return `# Included inside nginx's http context. Inputs are validated by the renderer.
+map $http_host $chogcare_relay_http_host_ok {
+    default 0;
+    "${ip}" 1;
+    "${ip}:80" 1;
+}
+${https ? `map $http_host $chogcare_relay_https_host_ok {
+    default 0;
+    "${ip}" 1;
+    "${ip}:443" 1;
+}
+` : ""}
+# Inspect the original path before nginx normalizes it. Public HLS filenames,
+# ACME tokens and payment API paths need no percent encoding, backslashes or
+# dot segments. Reject those spellings before a second proxy can decode them.
+# Query values are unaffected.
+map $request_uri $chogcare_relay_unsafe_path {
+    default 0;
+    ~^[^?]*% 1;
+    "~^[^?]*\\\\\\\\" 1;
+    ~^[^?]*// 1;
+    "~^[^?]*/\\\\.\\\\.?(/|\\\\?|$)" 1;
+}
+map $request $chogcare_relay_origin_form {
+    default 0;
+    "~^[A-Z]+ /" 1;
+}
+`;
+}
+
+function httpServer(ip) {
+  return `server {
+    listen 80 default_server;
+    server_name ${ip};
+    server_tokens off;
+    access_log off;
+    error_log /dev/null emerg;
+    client_max_body_size 4k;
+    client_body_timeout 8s;
+    if ($chogcare_relay_http_host_ok = 0) { return 404; }
+    if ($chogcare_relay_unsafe_path = 1) { return 404; }
+    if ($chogcare_relay_origin_form = 0) { return 404; }
+${securityHeaders}
+    add_header Cache-Control no-store always;
+
+    # Certbot webroot keeps renewal available without stopping HTTPS.
+    # A single token file is the only public plaintext resource.
+    location ~ "^/\\\\.well-known/acme-challenge/[A-Za-z0-9_-]{1,256}$" {
+        limit_except GET { deny all; }
+        root /var/lib/chogcare-relay/acme;
+        types { }
+        default_type text/plain;
+        autoindex off;
+        disable_symlinks on;
+        try_files $uri =404;
+    }
+
+    location / { return 404; }
+}
+`;
+}
+
+/** HTTP-only bootstrap; the same ACME server remains after TLS is installed. */
+export function renderBootstrapNginx({ publicIp } = {}) {
+  const ip = publicIpv4(publicIp);
+  return `${guards(ip)}\n${httpServer(ip)}`;
+}
+
+/** Narrow TLS relay; the SSH listener must stay bound to VPS loopback. */
+export function renderRelayNginx({ publicIp, certificateName = DEFAULT_CERTIFICATE_NAME } = {}) {
+  const ip = publicIpv4(publicIp);
+  const certificate = certificateSegment(certificateName);
+  return `${guards(ip, true)}
+${httpServer(ip)}
+server {
+    # Literal-IP HTTPS clients do not send DNS SNI. The default listener must
+    # present this IP certificate, then enforce the exact HTTP Host below.
+    listen 443 ssl default_server;
+    server_name ${ip};
+    ssl_certificate /etc/letsencrypt/live/${certificate}/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/${certificate}/privkey.pem;
+    ssl_protocols TLSv1.2 TLSv1.3;
+    ssl_ciphers HIGH:!aNULL:!MD5:!3DES;
+    ssl_session_tickets off;
+    server_tokens off;
+    access_log off;
+    error_log /dev/null emerg;
+    if ($chogcare_relay_https_host_ok = 0) { return 404; }
+    if ($chogcare_relay_unsafe_path = 1) { return 404; }
+    if ($chogcare_relay_origin_form = 0) { return 404; }
+${securityHeaders}
+
+    client_max_body_size 4k;
+    client_body_buffer_size 4k;
+    client_body_timeout 8s;
+    client_body_in_file_only off;
+    proxy_http_version 1.1;
+    proxy_set_header Host chogcare.xyz;
+    proxy_set_header Connection "";
+    proxy_set_header Upgrade "";
+    proxy_set_header X-Forwarded-Proto https;
+    # The worker uses its signed session, never client-supplied proxy identity.
+    proxy_set_header X-Forwarded-For "";
+    proxy_set_header X-Real-IP "";
+    proxy_set_header Forwarded "";
+    proxy_set_header X-Forwarded-Host "";
+    proxy_set_header X-Forwarded-Port "";
+    proxy_set_header Origin $http_origin;
+    proxy_set_header Cookie $http_cookie;
+    proxy_set_header Idempotency-Key $http_idempotency_key;
+    proxy_connect_timeout 3s;
+    proxy_read_timeout 60s;
+    proxy_send_timeout 10s;
+    proxy_buffering off;
+    proxy_request_buffering off;
+    proxy_max_temp_file_size 0;
+    proxy_cache off;
+    proxy_redirect off;
+    proxy_ignore_headers X-Accel-Redirect;
+    proxy_hide_header X-Accel-Redirect;
+    proxy_hide_header Server;
+    proxy_hide_header X-Powered-By;
+    # Emit one copy of the data-only security headers, including on rejections.
+    # MIME, CORS and freshness headers still come from the existing gateway.
+    proxy_hide_header X-Content-Type-Options;
+    proxy_hide_header Referrer-Policy;
+    proxy_hide_header X-Frame-Options;
+    proxy_hide_header Content-Security-Policy;
+    proxy_hide_header Permissions-Policy;
+
+    # Prefix proxy locations otherwise make nginx redirect their bare prefix.
+    location = /hls { return 404; }
+    location = /api/payments { return 404; }
+
+    location ^~ /hls/ {
+        limit_except GET { deny all; }
+        proxy_pass http://127.0.0.1:18090;
+    }
+
+    location ^~ /api/payments/ {
+        limit_except GET POST { deny all; }
+        proxy_pass http://127.0.0.1:18090;
+    }
+
+    location / { return 404; }
+}
+`;
+}

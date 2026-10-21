@@ -50,7 +50,7 @@ test("public broadcast stays on the application origin and never contacts relay 
   }
   assert.equal(broadcastStreamUrl(publicBroadcastOrigin, "http://localhost:4173"), `${publicBroadcastOrigin}/hls/stream.m3u8`);
   for (const application of ["file:///local/site.html", "http://chogcare.xyz", "https://user:password@chogcare.xyz"]) assert.equal(broadcastStreamUrl(undefined, application), null);
-  for (const value of ["https://evil.example", "https://127.0.0.1:8082", "https://192.168.1.1", "http://127.0.0.1:8082", "http://localhost:8082", `${publicBroadcastOrigin}:444`, publicBroadcastOrigin.replace(".net", ".net.evil.example"), publicBroadcastOrigin.replace("https://", "https://user:password@"), `${publicBroadcastOrigin}\n`, "javascript:alert(1)", "//evil.example", {}, null]) {
+  for (const value of ["https://evil.example", "https://127.0.0.1:8082", "https://192.168.1.1", "http://127.0.0.1:8082", "http://localhost:8082", `${publicBroadcastOrigin}:444`, `${publicBroadcastOrigin}.evil.example`, publicBroadcastOrigin.replace("https://", "https://user:password@"), `${publicBroadcastOrigin}\n`, "javascript:alert(1)", "//evil.example", {}, null]) {
     assert.equal(broadcastStreamUrl(value, "https://chogcare.vercel.app"), null, String(value));
   }
 });
@@ -148,6 +148,15 @@ test("migration does not delete a valid persistent choice before the session sav
   const failed = { getItem: () => null, setItem: () => { throw new Error("Storage unavailable"); }, removeItem: () => {} };
   assert.throws(() => readDonorDraft(invoiceId, [], failed, legacy));
   assert.equal(legacy.getItem(key), raw);
+});
+
+test("previous relay settings migrate to the pinned replacement without widening allowed origins", () => {
+  const previous = "https://chogcare-stream.tail1f833b.ts.net";
+  assert.equal(broadcastStreamUrl(previous, "https://chogcare.xyz", true), "https://chogcare.xyz/hls/mobile/stream.m3u8");
+  assert.equal(broadcastStreamUrl(previous, "http://localhost:4173", true), `${publicBroadcastOrigin}/hls/mobile/stream.m3u8`);
+  for (const value of [`${previous}.evil.example`, `${previous}:444`, "https://user:password@chogcare-stream.tail1f833b.ts.net"]) {
+    assert.equal(broadcastStreamUrl(value, "https://chogcare.xyz"), null);
+  }
 });
 
 test("local boundary blocks database sidecars, certificate files and nonce line breaks", () => {

@@ -10,8 +10,8 @@ export function contentSecurityPolicy(developmentNonce?: string): string {
     // This local-only boundary supports the existing relay and local Owncast.
     // MSE and the hls.js worker use blob URLs. Never allow arbitrary hosts;
     // the deployed Vercel policy does not include these loopback exceptions.
-    "font-src 'self'", `connect-src 'self' https://chogcare-stream.tail1f833b.ts.net http://127.0.0.1:8082 http://localhost:8082${developmentNonce ? " ws://127.0.0.1:* ws://localhost:*" : ""}`,
-    "form-action 'none'", "worker-src 'self' blob:", "media-src 'self' blob: https://chogcare-stream.tail1f833b.ts.net http://127.0.0.1:8082 http://localhost:8082", "manifest-src 'self'",
+    "font-src 'self'", `connect-src 'self' https://45.38.60.159 http://127.0.0.1:8082 http://localhost:8082${developmentNonce ? " ws://127.0.0.1:* ws://localhost:*" : ""}`,
+    "form-action 'none'", "worker-src 'self' blob:", "media-src 'self' blob: https://45.38.60.159 http://127.0.0.1:8082 http://localhost:8082", "manifest-src 'self'",
   ].join("; ");
 }
 

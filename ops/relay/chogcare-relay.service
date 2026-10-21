@@ -1,0 +1,54 @@
+[Unit]
+Description=ChogCare fixed public gateway reverse tunnel
+After=network-online.target nginx.service
+Wants=network-online.target nginx.service
+StartLimitIntervalSec=0
+
+[Service]
+Type=simple
+User=chogcare-relay
+Group=chogcare-relay
+WorkingDirectory=/
+# Root owns relay.env and validates RELAY_HOST as one public IPv4 before installation.
+# The dedicated identity and pinned known_hosts are installed privately, outside Git.
+EnvironmentFile=/etc/chogcare-relay/relay.env
+ExecStart=/usr/bin/ssh -4 -N -T -n -a -x -F /dev/null \
+    -i /etc/chogcare-relay/id_ed25519 \
+    -o IdentitiesOnly=yes -o IdentityAgent=none -o AddKeysToAgent=no \
+    -o BatchMode=yes -o PreferredAuthentications=publickey \
+    -o PasswordAuthentication=no -o KbdInteractiveAuthentication=no \
+    -o StrictHostKeyChecking=yes -o UpdateHostKeys=no -o VerifyHostKeyDNS=no \
+    -o UserKnownHostsFile=/etc/chogcare-relay/known_hosts -o GlobalKnownHostsFile=/dev/null \
+    -o ExitOnForwardFailure=yes -o ServerAliveInterval=15 -o ServerAliveCountMax=3 \
+    -o ConnectTimeout=10 -o PermitLocalCommand=no -o ProxyCommand=none -o ProxyJump=none \
+    -o ControlMaster=no -o ControlPath=none \
+    -p 22 -l chogcare-relay -R 127.0.0.1:18090:127.0.0.1:8090 ${RELAY_HOST}
+Restart=always
+RestartSec=5
+KillSignal=SIGTERM
+TimeoutStopSec=20
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectSystem=strict
+ProtectHome=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectKernelLogs=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+RestrictNamespaces=true
+RestrictRealtime=true
+LockPersonality=true
+SystemCallArchitectures=native
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+CapabilityBoundingSet=
+AmbientCapabilities=
+ReadOnlyPaths=/etc/chogcare-relay
+StandardInput=null
+StandardOutput=null
+StandardError=null
+
+[Install]
+WantedBy=multi-user.target

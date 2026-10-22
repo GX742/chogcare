@@ -1,6 +1,8 @@
 import { validInvoiceId, currentStore } from "./checkout-session.ts";
 import { initiativeNames } from "./donation-share.ts";
 import { isPositiveChogAmount, safeLeaderboardAvatarImage } from "./leaderboard-model.ts";
+import { normalizeDonorNickname, validateNewDonorNickname } from "./donor-nickname.ts";
+export { normalizeDonorNickname } from "./donor-nickname.ts";
 
 export type NftOption = { tokenId: string; name: string; image: string | null };
 export type PublicProfile = {
@@ -10,19 +12,12 @@ export type PublicProfile = {
 export type DonorDraft = { nickname: string; avatarTokenId: string | null };
 type DraftStore = Pick<Storage, "getItem" | "setItem" | "removeItem">;
 const tokenIdPattern = /^[0-9]{1,78}$/;
-const nicknamePattern = /^[-_.\p{L}\p{N} ]+$/u;
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === "object" && !Array.isArray(value);
 }
 export function validAvatarTokenId(value: unknown): value is string {
   return typeof value === "string" && value.match(tokenIdPattern)?.[0] === value && BigInt(value) < 2n ** 256n;
-}
-export function normalizeDonorNickname(value: unknown): string | null {
-  if (typeof value !== "string" || value.length > 96) return null;
-  const clean = value.normalize("NFKC").trim().replace(/\s+/g, " ");
-  const length = [...clean].length;
-  return length >= 2 && length <= 24 && clean.match(nicknamePattern)?.[0] === clean ? clean : null;
 }
 function avatarName(value: unknown): string | null {
   return typeof value === "string" && value.length <= 80 && !/[\x00-\x1f\x7f]/.test(value) ? value : null;
@@ -58,9 +53,9 @@ function parseDraft(raw: string | null, options: NftOption[]): DonorDraft | null
   let value: unknown;
   try { value = JSON.parse(raw); } catch { return null; }
   if (!isRecord(value)) return null;
-  const nickname = normalizeDonorNickname(value.nickname);
-  if (!nickname || (value.avatarTokenId !== null && !options.some(item => item.tokenId === value.avatarTokenId))) return null;
-  return { nickname, avatarTokenId: value.avatarTokenId as string | null };
+  const validation = validateNewDonorNickname(value.nickname);
+  if (!validation.ok || (value.avatarTokenId !== null && !options.some(item => item.tokenId === value.avatarTokenId))) return null;
+  return { nickname: validation.nickname, avatarTokenId: value.avatarTokenId as string | null };
 }
 export function donorDraftKey(invoiceId: string): string {
   if (!validInvoiceId(invoiceId)) throw new Error("Invalid private profile recovery ID.");
@@ -84,6 +79,8 @@ export function readDonorDraft(invoiceId: string, options: NftOption[], storage:
   return draft;
 }
 export function saveDonorDraft(invoiceId: string, draft: DonorDraft, options: NftOption[], storage: DraftStore = currentStore()): void {
+  const validation = validateNewDonorNickname(draft.nickname);
+  if (!validation.ok) throw new Error(validation.error);
   const parsed = parseDraft(JSON.stringify(draft), options);
   if (!parsed) throw new Error("Invalid profile choice.");
   storage.setItem(donorDraftKey(invoiceId), JSON.stringify(parsed));

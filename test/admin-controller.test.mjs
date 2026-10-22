@@ -498,6 +498,27 @@ function startupDependencies(overrides = {}) {
   } };
 }
 
+test("NFT pool public impact is read-only and unavailable during integrity hold or after stop", async () => {
+  let combined, locked = false, reads = 0;
+  const expected = { donatedUsdc: "1500000", donations: 2 };
+  const f = startupDependencies({
+    openPaymentIntegrity: () => ({ get locked() { return locked; }, checkpoint() {} }),
+    createNftProcessor: () => ({ treasuryAddress: "public-treasury", publicStatus: () => ({ nftPaymentsEnabled: true, poolHealthy: true }), tick: async () => {}, close: async () => {}, nftPoolImpact() { reads++; return expected; } }),
+    createPaymentService: (_store, _origin, _custody, processor) => {
+      combined = processor;
+      const api = new EventEmitter(); api.listen = (_port, _host, ok) => queueMicrotask(ok); api.close = ok => ok(); return api;
+    },
+  });
+  const worker = await startPaymentWorker({ passwordProvider: async () => SECRET, serviceOptions: {} }, f.dependencies);
+  try {
+    assert.deepEqual(combined.nftPoolImpact(), expected); assert.equal(reads, 1);
+    locked = true;
+    assert.equal(combined.nftPoolImpact(), null); assert.equal(reads, 1);
+  } finally { await worker.close(); }
+  locked = false;
+  assert.equal(combined.nftPoolImpact(), null); assert.equal(reads, 1);
+});
+
 test("startup diagnostics identify initialization failures without forwarding caught secrets", async () => {
   const fail = () => { throw Error(SECRET); };
   const cases = [

@@ -31,6 +31,17 @@
 .sunset-page .leaderboard-board li > p small { font-size: 11px; }
 .sunset-page .leaderboard-empty { min-height: 150px; }
 .sunset-page .leaderboard-loading span { height: 58px; }
+.leaderboard-pool { display: grid; grid-template-columns: 50px minmax(0, 1fr) minmax(0, auto); align-items: center; gap: 14px; margin-top: 12px; padding: 14px 0 8px 40px; border-top: 1px solid #c693ef47; }
+.leaderboard-pool > img { width: 50px; height: 50px; border: 1px solid #bca0d54d; border-radius: 13px; object-fit: cover; }
+.leaderboard-pool-identity { min-width: 0; }
+.leaderboard-pool-identity > strong { display: flex; align-items: center; flex-wrap: wrap; gap: 8px 12px; color: #efe4fa; font-size: 21px; font-weight: 700; line-height: 1.3; letter-spacing: -.5px; }
+.leaderboard-pool-identity > strong > span { padding: 3px 7px; border: 1px solid #bca0d536; border-radius: 5px; color: #c4a9d9; font-size: 10px; font-weight: 550; line-height: 1.4; letter-spacing: .02em; }
+.leaderboard-pool-identity > p { margin: 5px 0 0; color: #b7a3c9; font-size: 12px; line-height: 1.5; }
+.leaderboard-pool-total { min-width: 0; max-width: 32ch; text-align: right; }
+.leaderboard-pool-total > p { display: flex; flex-wrap: wrap; justify-content: flex-end; align-items: baseline; gap: 7px; margin: 0; color: #eadfff; }
+.leaderboard-pool-total strong { font-size: 27px; font-weight: 650; line-height: 1.2; letter-spacing: -.8px; font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
+.leaderboard-pool-total > p > span { color: #bba4cf; font-size: 11px; }
+.leaderboard-pool-total > small { display: block; margin-top: 5px; color: #b7a3c9; font-size: 11px; line-height: 1.5; }
 @media (max-width: 767px) {
   .sunset-page .care-leaderboard { width: calc(100% - 20px); }
 }
@@ -51,4 +62,11 @@
   .sunset-page .leaderboard-board li strong { font-size: 18px; }
   .sunset-page .leaderboard-board li > p { font-size: 22px; max-width: 120px; gap: 4px; }
   .sunset-page .leaderboard-board li > p small { font-size: 10px; }
+  .leaderboard-pool { grid-template-columns: 42px minmax(0, 1fr); gap: 9px 8px; margin-top: 10px; padding: 10px 0 6px 28px; }
+  .leaderboard-pool > img { width: 42px; height: 42px; border-radius: 11px; }
+  .leaderboard-pool-identity > strong { font-size: 18px; gap: 5px 8px; }
+  .leaderboard-pool-identity > p { font-size: 11px; }
+  .leaderboard-pool-total { grid-column: 2; max-width: 100%; text-align: left; }
+  .leaderboard-pool-total > p { justify-content: flex-start; }
+  .leaderboard-pool-total strong { font-size: 23px; }
 }

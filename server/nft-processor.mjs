@@ -20,6 +20,7 @@ import { NFT_POOL_FUNDER, NFT_POOL_FUNDERS, NFT_POOL_CHAIN, NFT_TREASURY_PATH, N
 import { createPaymentPerformance } from "./payment-performance.mjs";
 import { paymentRpcClient } from "./payment-rpc.mjs";
 import { canRepeatNftGrant } from "./nft-repeat-policy.mjs";
+import { readNftPoolImpact } from "./nft-pool-impact.mjs";
 
 const network = deliveryNetwork(NFT_POOL_CHAIN);
 const nftAbi = parseAbi(["function ownerOf(uint256) view returns (address)", "function tokensOfOwner(address) view returns (uint256[])"]);
@@ -53,6 +54,7 @@ export function createNftProcessor({ filename, vault, root, checkpoint = () => {
   if (!same(meta.treasury,wallet.address) || !same(meta.funder,NFT_POOL_FUNDER) || meta.chain_id !== 10) throw new Error("NFT treasury configuration mismatch.");
   let running=false, closed=false, healthyAt=0, gas=0n, usdc=0n, issuing=false;
   let readinessRequest=null, fundingVerified=false;
+  let impactKey=null, impactValue=null;
   // Read-only heartbeat, independent of the serialized proof/payout queue.
   // Balances alone NEVER credit funding: the verified funding ledger and its
   // first successful sync remain mandatory before this can advertise health.
@@ -303,6 +305,20 @@ export function createNftProcessor({ filename, vault, root, checkpoint = () => {
 
   return {
     diagnostics(){return metrics.snapshot();},
+    nftPoolImpact(){
+      if(closed)return null;
+      try{
+        const changes=db.prepare("SELECT total_changes() AS n").get().n;
+        const version=db.prepare("PRAGMA data_version").get().data_version;
+        if(!Number.isSafeInteger(changes)||changes<0||!Number.isSafeInteger(version)||version<0)throw new Error("Impact metadata unavailable.");
+        const key=`${changes}:${version}`;
+        if(key!==impactKey){
+          const value=readNftPoolImpact(db,wallet.address,10);
+          impactValue=value?Object.freeze({...value}):null;impactKey=key;
+        }
+        return impactValue?{...impactValue}:null;
+      }catch{impactKey=null;impactValue=null;return null;}
+    },
     treasuryAddress:wallet.address,
     canRetryUnissuedNft(id) {
       // Only a request that never reached address allocation may be retried.

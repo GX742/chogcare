@@ -1,8 +1,9 @@
 import { useEffect, useState } from "react";
 import { ArrowRight, Heart } from "@phosphor-icons/react";
 import { presentChogAmount, type LeaderboardEntry } from "./leaderboard-model";
-import { loadPublicLeaderboard } from "./leaderboard-client";
+import { loadPublicCareBoard } from "./leaderboard-client";
 import { loadPublicImpact, type PublicImpact } from "./leaderboard-impact";
+import { presentPoolUsdc, type NftPoolImpact } from "./leaderboard-pool";
 
 export default function Leaderboard() {
   const [entries, setEntries] = useState<LeaderboardEntry[]>([]);
@@ -11,15 +12,23 @@ export default function Leaderboard() {
   const [revision, setRevision] = useState(0);
   const [impact, setImpact] = useState<PublicImpact | null>(null);
   const [impactUnavailable, setImpactUnavailable] = useState(false);
+  const [pool, setPool] = useState<NftPoolImpact | null>(null);
+  const [poolUnavailable, setPoolUnavailable] = useState(false);
   const impactAmount = impact ? /[1-9]/.test(impact.chogDonated) ? presentChogAmount(impact.chogDonated) : { display: "0", rounded: false } : null;
   useEffect(() => {
     const controller = new AbortController();
     let disposed = false;
     const timer = setTimeout(() => controller.abort(), 12000);
-    setLoading(true); setUnavailable(false); setImpactUnavailable(false);
-    const board = loadPublicLeaderboard(controller.signal)
-      .then(next => { if (!disposed) setEntries(next); })
-      .catch(() => { if (!disposed) setUnavailable(true); });
+    setLoading(true); setUnavailable(false); setImpactUnavailable(false); setPoolUnavailable(false);
+    const board = loadPublicCareBoard(controller.signal)
+      .then(next => {
+        if (!disposed) {
+          setEntries(next.entries);
+          setPoolUnavailable(next.pool === null);
+          if (next.pool) setPool(next.pool);
+        }
+      })
+      .catch(() => { if (!disposed) { setUnavailable(true); setPoolUnavailable(true); } });
     const total = loadPublicImpact(controller.signal)
       .then(next => { if (!disposed) setImpact(next); })
       .catch(() => { if (!disposed) setImpactUnavailable(true); });
@@ -70,6 +79,14 @@ export default function Leaderboard() {
           <p title={`${entry.amount} $CHOG`}>{amount.display}<small>$CHOG{amount.rounded ? " · rounded" : ""}</small></p>
         </li>; })}</ol> :
         !unavailable && <div className="leaderboard-empty"><Heart size={36} weight="light"/><strong>The first place is open.</strong><p>Complete a $CHOG donation and choose your public name.</p></div>}
+      <div className="leaderboard-pool" role="group" aria-label="NFT Pool donations, outside the ranking">
+        <img src="/chog-holder-nft.png" alt="" loading="lazy"/>
+        <div className="leaderboard-pool-identity"><strong>NFT Pool <span>Not ranked</span></strong><p>Donated from the community pool</p></div>
+        <div className="leaderboard-pool-total">
+          <p title={pool ? `${presentPoolUsdc(pool.donatedUsdc)} USDC donated` : undefined}><strong>{pool ? presentPoolUsdc(pool.donatedUsdc) : "—"}</strong><span>USDC</span></p>
+          <small>{poolUnavailable ? pool ? "Last loaded total · refresh unavailable" : "Total temporarily unavailable" : pool ? `${pool.donations.toLocaleString("en-US")} ${pool.donations === 1 ? "donation" : "donations"} delivered` : loading ? "Loading pool total…" : "Total temporarily unavailable"}</small>
+        </div>
+      </div>
     </div>
     </div>
   </section>;

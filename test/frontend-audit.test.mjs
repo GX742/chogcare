@@ -38,7 +38,7 @@ test("aborted leaderboard results cannot publish even when transport ignores can
 
 test("leaderboard effects keep stale responses out and distinguish failure from empty", () => {
   const source = read("../src/Leaderboard.tsx");
-  assert.match(source, /if \(!disposed\) setEntries/);
+  assert.match(source, /if \(!disposed\) \{\s*setEntries\(next\.entries\);\s*setPoolUnavailable/);
   assert.match(source, /disposed = true; clearTimeout\(timer\); controller.abort/);
   assert.match(source, /12(?:000|_000)/);
   assert.match(source, /!unavailable && <div className="leaderboard-empty"/);

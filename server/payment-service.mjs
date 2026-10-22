@@ -14,6 +14,8 @@ import { buildDonorLeaderboard } from "./donor-leaderboard.mjs";
 import { createReadOnlyDashboard } from "./ops-dashboard.mjs";
 import { validateSupportInput } from "./support-store.mjs";
 import { validateEstimateInput } from "./ops-quotes.mjs";
+import { validateNewDonorNickname } from "../src/donor-nickname.ts";
+import { parseNftPoolImpact } from "../src/leaderboard-pool.ts";
 
 export function createPaymentService(store, allowedOrigin = "http://127.0.0.1:4173", custodyConfigured = false, processor = null, options = {}) {
   const admission = createHttpAdmission(allowedOrigin);
@@ -146,7 +148,9 @@ export function createPaymentService(store, allowedOrigin = "http://127.0.0.1:41
       if (req.method === "GET" && url.pathname === "/api/payments/leaderboard") {
         if (profileIntegrityHeld()) return profileIntegrityHold();
         const entries=buildDonorLeaderboard(store.leaderboardRecords(),processor?.leaderboardDonation? id=>processor.leaderboardDonation(id):null);
-        return respond(200,{entries});
+        let pool=null;
+        try { pool=parseNftPoolImpact(processor?.nftPoolImpact?.()); } catch { /* Pool statistics cannot hide the donor board. */ }
+        return respond(200,{entries,pool});
       }
       const cancelMatch=url.pathname.match(/^\/api\/payments\/invoices\/([a-f0-9]{64})\/cancel$/);
       if(req.method==="POST"&&cancelMatch){
@@ -176,10 +180,11 @@ export function createPaymentService(store, allowedOrigin = "http://127.0.0.1:41
         if(!processor?.profileNfts)return respond(503,{error:"Donor profiles are temporarily unavailable."});
         let input;try{input=await readJson(1024);}catch(error){return respond(error.status??400,{error:error.message});}
         if(!input||typeof input!=="object"||Array.isArray(input)||Object.keys(input).some(key=>!["invoiceId","nickname","avatarTokenId"].includes(key))||typeof input.invoiceId!=="string"||!/^[a-f0-9]{64}$/.test(input.invoiceId)||typeof input.nickname!=="string"||(input.avatarTokenId!==null&&typeof input.avatarTokenId!=="string"))return respond(400,{error:"Invalid leaderboard profile."});
-        const nickname=input.nickname.normalize("NFKC").trim().replace(/\s+/g," ");
-        if([...nickname].length<2||[...nickname].length>24||!/^[-_.\p{L}\p{N} ]+$/u.test(nickname))return respond(400,{error:"Use 2 to 24 letters, numbers, spaces, dots, dashes or underscores."});
         if (profileIntegrityHeld()) return profileIntegrityHold();
         const current=store.findDonorProfile(input.invoiceId);if(current)return await replyWithProfile(200,current);
+        const moderated=validateNewDonorNickname(input.nickname);
+        if(!moderated.ok)return respond(400,{code:moderated.code,error:moderated.error});
+        const nickname=moderated.nickname;
         try{
           const context=await processor.profileNfts(input.invoiceId);
           if (profileIntegrityHeld()) return profileIntegrityHold();

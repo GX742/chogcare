@@ -335,6 +335,7 @@ test("additional approved funder is scanned; reconciliation and restart cannot d
 });
 test("NFT flow: reserve -> exact MON proof -> signed 1.00 Optimism USDC -> receipt -> finalized",async t=>{
   const f=await fixture(t);await f.fund();
+  assert.deepEqual(f.worker.nftPoolImpact(),{donatedUsdc:"0",donations:0});
   const x=await f.worker.issue(f.input());assert.equal(validateNftInvoice(x).state,"awaiting-payment");
   assert.equal(f.worker.publicStatus().reservedTodayUsdc,"1.00");assert.equal(f.worker.publicStatus().availableClaims,2);
   await assert.rejects(f.worker.issue(f.input()));await assert.rejects(f.worker.issue({...f.input("2"),initiativeId:"gainforest"}));
@@ -342,8 +343,11 @@ test("NFT flow: reserve -> exact MON proof -> signed 1.00 Optimism USDC -> recei
   const tx=await f.settle(false);assert.equal(tx.chainId,10n);assert.equal(tx.to.toLowerCase(),usdc.toLowerCase());
   assert.equal(tx.data,iface.encodeFunctionData("transfer",[GIVETH_PROJECT_RECIPIENT,1000000n]));
   assert.equal(f.worker.get(x.id).state,"confirming");
+  assert.deepEqual(f.worker.nftPoolImpact(),{donatedUsdc:"0",donations:0});
   await f.finalize();assert.equal(f.worker.get(x.id).state,"delivered");assert.equal(f.broadcasts.length,1);
+  assert.deepEqual(f.worker.nftPoolImpact(),{donatedUsdc:"1000000",donations:1});
   await f.restart();assert.equal(f.worker.get(x.id).state,"delivered");assert.equal(f.broadcasts.length,1);
+  assert.deepEqual(f.worker.nftPoolImpact(),{donatedUsdc:"1000000",donations:1});
   await assert.rejects(f.worker.issue(f.input()));
 });
 
@@ -362,7 +366,36 @@ test("a legacy $0.50 reservation keeps its exact payout and public invoice throu
   assert.equal(f.worker.get(invoice.id).state,"delivered");
   await f.restart();assert.equal(f.broadcasts.length,1);
   assert.equal(f.worker.get(invoice.id).subsidyUsdc,"0.50");
+  assert.deepEqual(f.worker.nftPoolImpact(),{donatedUsdc:"500000",donations:1});
 });
+test("NFT pool impact caches unchanged proofs, copies results, invalidates external commits and refuses stale metadata",async t=>{
+  const f=await fixture(t);await f.fund();const invoice=await f.worker.issue(f.input());
+  f.deposit(invoice);await f.worker.tick();await f.settle(true);
+  const originalFrom=Transaction.from,originalPrepare=DatabaseSync.prototype.prepare;
+  let decoded=0;
+  Transaction.from=function(...args){decoded++;return originalFrom.apply(this,args);};
+  try{
+    const before=financialSnapshot(f.filename),first=f.worker.nftPoolImpact();
+    assert.deepEqual(first,{donatedUsdc:"1000000",donations:1});assert.ok(decoded>0);
+    const initialDecodes=decoded;
+    first.donatedUsdc="999999999";
+    assert.deepEqual(f.worker.nftPoolImpact(),{donatedUsdc:"1000000",donations:1});assert.equal(decoded,initialDecodes);
+    assert.deepEqual(financialSnapshot(f.filename),before);
+    const external=new DatabaseSync(f.filename);
+    try{
+      const row=JSON.parse(external.prepare("SELECT document FROM nft_invoices WHERE id=?").get(invoice.id).document);
+      row.message="Fixture metadata update";
+      external.prepare("UPDATE nft_invoices SET document=? WHERE id=?").run(JSON.stringify(row),invoice.id);
+    }finally{external.close();}
+    assert.deepEqual(f.worker.nftPoolImpact(),{donatedUsdc:"1000000",donations:1});assert.ok(decoded>initialDecodes);
+    const refreshedDecodes=decoded;
+    DatabaseSync.prototype.prepare=function(sql,...args){if(sql==="PRAGMA data_version")throw new Error("Fixture metadata unavailable");return originalPrepare.call(this,sql,...args);};
+    assert.equal(f.worker.nftPoolImpact(),null);assert.equal(decoded,refreshedDecodes);
+    DatabaseSync.prototype.prepare=originalPrepare;
+    assert.deepEqual(f.worker.nftPoolImpact(),{donatedUsdc:"1000000",donations:1});assert.ok(decoded>refreshedDecodes);
+  }finally{Transaction.from=originalFrom;DatabaseSync.prototype.prepare=originalPrepare;}
+});
+
 test("wrong MON amount or lost NFT ownership never authorizes a payout",async t=>{
   const f=await fixture(t);await f.fund();const x=await f.worker.issue(f.input());
   f.deposit(x,{value:9n*10n**17n});await f.worker.tick();assert.equal(f.worker.get(x.id).state,"manual-review");assert.equal(f.broadcasts.length,0);

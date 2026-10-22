@@ -1,11 +1,17 @@
 import { validInvoiceId } from "./checkout-session.ts";
-import { validatePayableInvoice, type PayableInvoice } from "./payable-invoice.ts";
+import { validatePayableInvoice, type ChogRefund, type PayableInvoice } from "./payable-invoice.ts";
 import { formatUnits, parseUnits } from "viem";
 
 const completedRefundMessage = "The underpaid 300 CHOG transfer was refunded to its verified original sender. Do not pay this invoice again.";
 const cannotClose = "The completed refund could not be verified. Keep this invoice open; do not pay again.";
 const cannotArchive = "This held payment could not be verified. Keep its recovery reference; do not pay this invoice again.";
-export type HeldCheckoutKind = "refunded" | "underpaid";
+export type HeldCheckoutKind = "refunded" | "underpaid" | "automatic-refund";
+
+export function sameRefundCase(expected: ChogRefund | null | undefined, current: ChogRefund | null | undefined): boolean {
+  if (!expected) return !current;
+  return !!current && expected.kind === current.kind && expected.amount === current.amount &&
+    (!expected.txHash || expected.txHash.toLowerCase() === current.txHash?.toLowerCase());
+}
 
 function canonicalUnderpayment(invoice: PayableInvoice): boolean {
   const match = /^Received (\d{1,7}(?:\.\d{1,18})?) CHOG\. This invoice requires (\d{1,7}(?:\.\d{1,18})?) CHOG\. Processing is on hold; do not pay again\.$/.exec(invoice.message ?? "");
@@ -22,6 +28,7 @@ function canonicalUnderpayment(invoice: PayableInvoice): boolean {
 export function heldCheckoutKind(id: string, raw: unknown): HeldCheckoutKind | null {
   try {
     const invoice = validatePayableInvoice(raw);
+    if (validInvoiceId(id) && invoice.id === id && invoice.refund) return "automatic-refund";
     const completedRefund = invoice.message === completedRefundMessage && invoice.amount === "330" &&
       invoice.donationAmount === "300" && invoice.poolContributionAmount === "30" &&
       invoice.contributionPercent === 10 && invoice.poolContributionState === "pending";
@@ -44,9 +51,9 @@ export function closeVerifiedRefund(id: string, raw: unknown, onClose: () => voi
   return true;
 }
 
-export async function closeHeldCheckout(id: string, expectedKind: HeldCheckoutKind, onClose: () => void, { request = fetch, signal, isCurrent }: { request?: typeof fetch; signal?: AbortSignal; isCurrent?: () => boolean } = {}) {
+export async function closeHeldCheckout(id: string, expectedKind: HeldCheckoutKind, onClose: () => void, { request = fetch, signal, isCurrent, expectedRefund }: { request?: typeof fetch; signal?: AbortSignal; isCurrent?: () => boolean; expectedRefund?: ChogRefund | null } = {}) {
   const message = expectedKind === "refunded" ? cannotClose : cannotArchive;
-  if (!validInvoiceId(id) || !["refunded", "underpaid"].includes(expectedKind)) throw new Error(message);
+  if (!validInvoiceId(id) || !["refunded", "underpaid", "automatic-refund"].includes(expectedKind)) throw new Error(message);
   const deadline = AbortSignal.timeout(12_000);
   const activeSignal = signal ? AbortSignal.any([signal, deadline]) : deadline;
   let data: unknown;
@@ -58,6 +65,7 @@ export async function closeHeldCheckout(id: string, expectedKind: HeldCheckoutKi
     activeSignal.throwIfAborted();
   } catch { throw new Error(message); }
   if (heldCheckoutKind(id, data) !== expectedKind || isCurrent && !isCurrent()) throw new Error(message);
+  if (expectedKind === "automatic-refund" && (!expectedRefund || !sameRefundCase(expectedRefund, validatePayableInvoice(data).refund))) throw new Error(message);
   onClose();
 }
 

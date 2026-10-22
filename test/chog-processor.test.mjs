@@ -24,9 +24,9 @@ const donor="0x1111111111111111111111111111111111111111";
 const fee=100_000n*1_000_000_000n;
 const donationUnits=300n*10n**18n,totalUnits=330n*10n**18n;
 const solanaSignature="2".repeat(64);
-function event(token,to,value,hash,number) {
+function event(token,to,value,hash,number,from=donor) {
   return {address:token,transactionHash:hash,blockHash:h(number),blockNumber:number,logIndex:0,removed:false,
-    topics:encodeEventTopics({abi:erc20Abi,eventName:"Transfer",args:{from:donor,to}}),data:encodeAbiParameters([{type:"uint256"}],[value])};
+    topics:encodeEventTopics({abi:erc20Abi,eventName:"Transfer",args:{from,to}}),data:encodeAbiParameters([{type:"uint256"}],[value])};
 }
 async function harness(t, destinationChainId=1, expensiveBridge=false, initiativeId="burundi", newChain=destinationChainId, extraDependencies={}) {
   const dir=await mkdtemp(join(tmpdir(),"chog-processor-test-"));
@@ -41,16 +41,29 @@ async function harness(t, destinationChainId=1, expensiveBridge=false, initiativ
     getChainId:async()=>chainId,
     getBlock:async args=>args.blockTag==="finalized"&&holdSource?block({blockNumber:number-1n}):block(args),
     getBalance:async args=>args.blockNumber?(broadcasts.find(x=>x.tx.to.toLowerCase()===args.address.toLowerCase()&&x.tx.data==="0x")?.tx.value??5n*10n**18n)+20n*10n**18n-broadcasts.filter(x=>x.tx.from.toLowerCase()===args.address.toLowerCase()).reduce((sum,x)=>sum+x.tx.gasLimit*1_000_000_000n,0n):1000n*10n**18n,
-    getContractEvents:async args=>[paidLog,...extraLogs].filter(log=>log&&log.blockNumber>=args.fromBlock&&log.blockNumber<=args.toBlock&&log.topics[2].toLowerCase().endsWith(args.args.to.slice(2).toLowerCase())),
+    getContractEvents:async args=>[paidLog,...extraLogs].filter(log=>log&&log.blockNumber>=args.fromBlock&&log.blockNumber<=args.toBlock&&log.topics[args.args.to?2:1].toLowerCase().endsWith((args.args.to??args.args.from).slice(2).toLowerCase())),
     getTransactionCount:async args=>nonces.get(args.address.toLowerCase())??0,
     getGasPrice:async()=>1_000_000_000n,estimateGas:async()=>100_000n,
-    readContract:async()=>1_000_000n,
+    getCode:async()=>"0x",
+    readContract:async args=>args.address?.toLowerCase()===CHOG.toLowerCase()&&args.functionName==="balanceOf"?[paidLog,...extraLogs].filter(log=>log&&log.topics[2].toLowerCase().endsWith(args.args[0].slice(2).toLowerCase())).reduce((sum,log)=>sum+BigInt(log.data),0n)-broadcasts.filter(row=>row.tx.to?.toLowerCase()===CHOG.toLowerCase()&&row.tx.from.toLowerCase()===args.args[0].toLowerCase()).reduce((sum,row)=>{try{const call=decodeFunctionData({abi:erc20Abi,data:row.tx.data});return call.functionName==="transfer"?sum+call.args[1]:sum;}catch{return sum;}},0n):1_000_000n,
+    getTransaction:async({hash})=>{
+      const row=broadcasts.find(x=>x.hash===hash),receipt=receipts.get(hash);
+      if(row)return {hash,from:row.tx.from,to:row.tx.to,input:row.tx.data,value:row.tx.value,nonce:row.tx.nonce,type:"eip1559",chainId:143,gas:row.tx.gasLimit,maxFeePerGas:row.tx.maxFeePerGas,maxPriorityFeePerGas:row.tx.maxPriorityFeePerGas,accessList:row.tx.accessList,blockNumber:receipt.blockNumber,blockHash:receipt.blockHash};
+      const log=[paidLog,...extraLogs].find(x=>x?.transactionHash===hash);
+      if(!log)throw Error("Unknown fixture transaction");
+      return {hash,from:donor,to:CHOG,input:encodeFunctionData({abi:erc20Abi,functionName:"transfer",args:[`0x${log.topics[2].slice(-40)}`,BigInt(log.data)]}),value:0n,chainId:143,blockNumber:log.blockNumber,blockHash:log.blockHash};
+    },
     getTransactionReceipt:async({hash})=>{receiptReads++;if(receipts.has(hash))return receipts.get(hash);const e=new Error("not found");e.name="TransactionReceiptNotFoundError";throw e;},
     sendRawTransaction:async({serializedTransaction})=>{
       const tx=Transaction.from(serializedTransaction), hash=keccak256(serializedTransaction);
       assert.equal(tx.chainId,143n);assert.ok(tx.isSigned());
       broadcasts.push({tx,hash,raw:serializedTransaction});nonces.set(tx.from.toLowerCase(),tx.nonce+1);number++;
-      receipts.set(hash,{status:"success",transactionHash:hash,blockNumber:number,blockHash:h(number),gasUsed:100_000n,effectiveGasPrice:1_000_000_000n,logs:[]});
+      let refundLog=null;
+      if(tx.to?.toLowerCase()===CHOG.toLowerCase()){
+        const call=decodeFunctionData({abi:erc20Abi,data:tx.data});
+        if(call.functionName==="transfer")refundLog=event(CHOG,call.args[0],call.args[1],hash,number,tx.from);
+      }
+      receipts.set(hash,{status:"success",from:tx.from,to:tx.to,transactionHash:hash,blockNumber:number,blockHash:h(number),gasUsed:100_000n,effectiveGasPrice:1_000_000_000n,logs:refundLog?[refundLog]:[]});
       if(sourceTimeout){sourceTimeout=false;throw new Error("transport timed out AFTER submission");}
       return hash;
     },
@@ -75,11 +88,11 @@ async function harness(t, destinationChainId=1, expensiveBridge=false, initiativ
       const x={...JSON.parse(row.document),initiativeId:"animal-ethics",destinationChainId:1};
       db.prepare("UPDATE chog_invoices SET document=? WHERE id=?").run(JSON.stringify(x),issued.id);db.close();return processor.get(issued.id);
     },
-    deposit(invoice,value=parseUnits(invoice.amount,18)){number++;paidLog=event(CHOG,invoice.depositAddress,value,h(7000),number);receipts.set(h(7000),{status:"success",transactionHash:h(7000),blockNumber:number,blockHash:h(number),logs:[paidLog]});},
+    deposit(invoice,value=parseUnits(invoice.amount,18)){number++;paidLog=event(CHOG,invoice.depositAddress,value,h(7000),number);receipts.set(h(7000),{status:"success",from:donor,to:CHOG,transactionHash:h(7000),blockNumber:number,blockHash:h(number),logs:[paidLog]});},
     additionalDeposit(invoice,value=1n){number++;const hash=h(7100+extraLogs.length),log=event(CHOG,invoice.depositAddress,value,hash,number);extraLogs.push(log);receipts.set(hash,{status:"success",transactionHash:hash,blockNumber:number,blockHash:h(number),logs:[log]});},
     advanceBlocks(count){number+=BigInt(count);},
     fixtureInvoice(id){const db=new DatabaseSync(settings.filename);try{return JSON.parse(db.prepare("SELECT document FROM chog_invoices WHERE id=?").get(id).document);}finally{db.close();}},
-    async seedAmountReview(id,message,patch={}){await processor.close();const db=new DatabaseSync(settings.filename);try{const x={...JSON.parse(db.prepare("SELECT document FROM chog_invoices WHERE id=?").get(id).document),...patch,state:"manual-review",message};db.prepare("UPDATE chog_invoices SET state=?,document=? WHERE id=?").run(x.state,JSON.stringify(x),id);}finally{db.close();}processor=createChogProcessor(settings,dependencies);},
+    async seedAmountReview(id,message,patch={},state="manual-review"){await processor.close();const db=new DatabaseSync(settings.filename);try{const x={...JSON.parse(db.prepare("SELECT document FROM chog_invoices WHERE id=?").get(id).document),...patch,state,message};db.prepare("UPDATE chog_invoices SET state=?,document=? WHERE id=?").run(x.state,JSON.stringify(x),id);}finally{db.close();}processor=createChogProcessor(settings,dependencies);},
     async recordFixtureJournal(id){const db=new DatabaseSync(settings.filename);try{const x=JSON.parse(db.prepare("SELECT document FROM chog_invoices WHERE id=?").get(id).document),raw=await root.signTransaction({type:2,chainId:143,nonce:0,to:x.depositAddress,value:1_500_000_000_000_000_000n,data:"0x",gasLimit:21_000n,maxFeePerGas:1_000_000_000n,maxPriorityFeePerGas:0n});sourceJournal(db).persist(id,"gas",root.address,0,raw);}finally{db.close();}},
     delivery(value=true){readyDelivery=value;},wrongDestination(){destLog=event(ETHEREUM_USDC,donor,880_000n,h(9000),900n);},
     wrongToken(){destLog=event(ETHEREUM_USDC,GIVETH_PROJECT_RECIPIENT,880_000n,h(9000),900n);},
@@ -496,18 +509,23 @@ for(const observation of ["receipt-rpc-failure","receipt-not-found","lagging-fin
   await f.restart();await f.advance(2);assert.deepEqual(f.broadcasts.map(row=>row.hash),hashes,"restarting a settled invoice must not spend again");
 });
 
-for(const value of [totalUnits-1n])test(`a canonical CHOG deposit of ${value} units remains held without automatic spending`,async t=>{
+for(const value of [1n,1n*10n**18n,300n*10n**18n,totalUnits-1n,totalUnits+1n,333n*10n**18n,1_100_000n*10n**18n+1n])test(`a canonical wrong CHOG amount of ${value} units is fully refunded once without donation credit`,async t=>{
   const f=await harness(t),invoice=await f.issue();f.deposit(invoice,value);await f.advance();
-  assert.equal(f.processor.get(invoice.id).state,"manual-review");assert.equal(f.broadcasts.length,0);
-  assert.equal(f.processor.get(invoice.id).message,`Received ${formatUnits(value,18)} CHOG. This invoice requires 330 CHOG. Processing is on hold; do not pay again.`);
-  assert.ok(f.processor.get(invoice.id).message.length<=300);
-  await f.restart();await f.advance();assert.equal(f.processor.get(invoice.id).state,"manual-review");assert.equal(f.broadcasts.length,0);
+  const refunded=f.processor.get(invoice.id);
+  assert.equal(refunded.state,"manual-review");assert.equal(refunded.refund.status,"completed");assert.equal(refunded.refund.amount,formatUnits(value,18));
+  assert.equal(f.broadcasts.length,1);const transfer=decodeFunctionData({abi:erc20Abi,data:f.broadcasts[0].tx.data});
+  assert.equal(transfer.functionName,"transfer");assert.equal(transfer.args[0].toLowerCase(),donor);assert.equal(transfer.args[1],value);
+  for(const field of ["amount","donationAmount","poolContributionAmount","contributionPercent","expiresAt","depositAddress","paymentUri","initiativeId","recipient"])assert.deepEqual(refunded[field],invoice[field]);
+  assert.equal(refunded.depositHash,null);assert.equal(refunded.deliveredUsdc,null);assert.equal(refunded.receivedAmount,undefined);assert.equal(f.processor.leaderboardDonation(invoice.id),null);
+  const hashes=f.broadcasts.map(row=>row.hash);await f.restart();await f.advance();assert.deepEqual(f.broadcasts.map(row=>row.hash),hashes);
 });
 
-for(const received of [totalUnits+1n,333n*10n**18n])test(`a canonical ${received}-unit overpayment settles the entire received amount once without changing the quote`,async t=>{
+for(const received of [totalUnits+1n,333n*10n**18n])test(`an already processing ${received}-unit legacy overpayment continues its donation without being reinterpreted as a refund`,async t=>{
   const quoted=[];
   const f=await harness(t,10,false,"school-supplies",10,{saleQuote:async(_source,units)=>{quoted.push(units);return {router:NAD_DEX_ROUTER,minMon:String(19n*10n**18n)};}}),invoice=await f.issue();
-  f.deposit(invoice,received);f.delivery();await f.advance(3);
+  f.deposit(invoice,received);
+  await f.seedAmountReview(invoice.id,null,{depositHash:h(7000),receivedUnits:String(received),processingStartedAt:Date.now(),depositProof:{kind:"confirmed-chog-transfer",invoiceId:invoice.id,chainId:143,txHash:h(7000),logIndex:0,sender:donor,amountUnits:String(received),blockNumber:"101",blockHash:h(101)}},"processing");
+  f.delivery();await f.advance(3);
   const delivered=f.processor.get(invoice.id),originalFields=["amount","donationAmount","poolContributionAmount","contributionPercent","expiresAt","depositAddress","paymentUri","initiativeId","recipient","minUsdc","minimumUsd","destinationChainId"];
   assert.equal(delivered.state,"delivered");for(const field of originalFields)assert.deepEqual(delivered[field],invoice[field],`${field} must remain the originally issued quote`);
   assert.equal(delivered.receivedAmount,formatUnits(received,18));assert.equal(delivered.receivedDonationAmount,formatUnits(received*10n/11n,18));assert.equal(delivered.receivedPoolContributionAmount,formatUnits(received-received*10n/11n,18));
@@ -520,24 +538,24 @@ for(const received of [totalUnits+1n,333n*10n**18n])test(`a canonical ${received
   assert.equal((await f.processor.profileNfts(invoice.id)).amount,delivered.receivedDonationAmount);
 });
 
-test("a canonical overpayment beyond the configured pilot cap remains held without spending",async t=>{
-  const f=await harness(t),invoice=await f.issue();f.deposit(invoice,1_100_000n*10n**18n+1n);await f.advance();
-  assert.equal(f.processor.get(invoice.id).state,"manual-review");assert.match(f.processor.get(invoice.id).message,/processing limit is 1100000 CHOG/);assert.equal(f.broadcasts.length,0);
-  await f.restart();await f.advance();assert.equal(f.processor.get(invoice.id).state,"manual-review");assert.equal(f.broadcasts.length,0);
+test("a wrong-amount refund remains idempotent when submission times out after acceptance",async t=>{
+  const f=await harness(t),invoice=await f.issue();f.deposit(invoice,1_100_000n*10n**18n+1n);f.timeout();await f.advance();
+  assert.equal(f.processor.get(invoice.id).refund.status,"completed");assert.equal(f.broadcasts.length,1);
+  await f.restart();await f.advance();assert.equal(f.processor.get(invoice.id).refund.status,"completed");assert.equal(f.broadcasts.length,1);
 });
 
 const oldAmountReview="Deposit amount or time differs from the invoice. Do not pay again.";
 const receivedAmountReview="Received 333 CHOG. This invoice requires 330 CHOG. Processing is on hold; do not pay again.";
-for(const message of [oldAmountReview,receivedAmountReview])test(`an untouched legacy amount hold (${message.startsWith("Received")?"specific":"generic"}) rescans every bounded page and recovers exactly once`,async t=>{
+for(const message of [oldAmountReview,receivedAmountReview])test(`an untouched legacy amount hold (${message.startsWith("Received")?"specific":"generic"}) rescans every bounded page and refunds exactly once`,async t=>{
   const f=await harness(t,10,false,"school-supplies"),invoice=await f.issue();f.deposit(invoice,333n*10n**18n);f.advanceBlocks(4100);
   await f.seedAmountReview(invoice.id,message);
   const original=f.fixtureInvoice(invoice.id),ranges=[],events=f.source.getContractEvents;
-  f.source.getContractEvents=async args=>{ranges.push([args.fromBlock,args.toBlock]);return events(args);};
+  f.source.getContractEvents=async args=>{if(args.args.to)ranges.push([args.fromBlock,args.toBlock]);return events(args);};
   f.delivery();await f.advance(3);
-  assert.equal(f.processor.get(invoice.id).state,"delivered");assert.equal(f.processor.get(invoice.id).receivedAmount,"333");
+  assert.equal(f.processor.get(invoice.id).state,"manual-review");assert.equal(f.processor.get(invoice.id).refund.status,"completed");assert.equal(f.processor.get(invoice.id).refund.amount,"333");
   assert.deepEqual(ranges.slice(0,3),[[101n,2100n],[2101n,4100n],[4101n,4201n]],"all inbound events through the frozen finalized head must be scanned");
   const stored=f.fixtureInvoice(invoice.id);for(const field of ["id","index","depositAddress","units","amount","donationAmount","poolContributionAmount","createdBlock","cursor","expiresAt","initiativeId","destinationChainId"])assert.deepEqual(stored[field],original[field],`${field} must not be rewritten during recovery`);
-  assert.equal(stored.depositProof.amountUnits,String(333n*10n**18n));const hashes=f.broadcasts.map(row=>row.hash);assert.equal(hashes.length,7);
+  assert.equal(stored.depositProof,undefined);const hashes=f.broadcasts.map(row=>row.hash);assert.equal(hashes.length,1);
   await f.restart();await f.advance(3);assert.deepEqual(f.broadcasts.map(row=>row.hash),hashes);
 });
 
@@ -546,13 +564,13 @@ test("legacy amount recovery retains its trusted hold across an RPC outage and r
   const receipt=f.source.getTransactionReceipt;let failed=false;
   f.source.getTransactionReceipt=async args=>{if(args.hash===h(7000)&&!failed){failed=true;throw new Error("private RPC detail must not be shown");}return receipt(args);};
   await f.advance(1);assert.equal(f.processor.get(invoice.id).state,"manual-review");assert.equal(f.processor.get(invoice.id).message,oldAmountReview);assert.equal(f.broadcasts.length,0);
-  f.delivery();await f.advance(4);assert.equal(f.processor.get(invoice.id).state,"delivered");assert.equal(f.broadcasts.length,7);
+  f.delivery();await f.advance(4);assert.equal(f.processor.get(invoice.id).refund.status,"completed");assert.equal(f.broadcasts.length,1);
 });
 
 test("legacy hold recovery detects a second inbound transfer on another page and never processes an ambiguous deposit",async t=>{
   const f=await harness(t),invoice=await f.issue();f.deposit(invoice,333n*10n**18n);f.advanceBlocks(2100);f.additionalDeposit(invoice);
   await f.seedAmountReview(invoice.id,oldAmountReview);await f.advance(3);
-  assert.equal(f.processor.get(invoice.id).state,"manual-review");assert.match(f.processor.get(invoice.id).message,/Multiple deposits/);assert.equal(f.broadcasts.length,0);
+  assert.equal(f.processor.get(invoice.id).state,"manual-review");assert.equal(f.processor.get(invoice.id).refund,undefined);assert.equal(f.broadcasts.length,0);
 });
 
 test("legacy hold recovery never accepts a partial scan beyond its bounded history",async t=>{
@@ -562,12 +580,11 @@ test("legacy hold recovery never accepts a partial scan beyond its bounded histo
   await f.advance(3);assert.equal(scans,0);assert.deepEqual(f.fixtureInvoice(invoice.id),original);assert.equal(f.broadcasts.length,0);
 });
 
-test("legacy hold recovery respects the active invoice cap and resumes only after a checkout slot is released",async t=>{
+test("a legacy wrong-amount refund does not wait for a new-donation checkout slot",async t=>{
   const f=await harness(t,10,false,"school-supplies"),invoice=await f.issue();await f.seedAmountReview(invoice.id,oldAmountReview);
   const active=[];for(let i=0;i<3;i++)active.push(await f.issue());f.deposit(invoice,333n*10n**18n);await f.advance(3);
-  assert.equal(f.processor.get(invoice.id).state,"manual-review");assert.equal(f.broadcasts.length,0);
-  f.processor.cancelUnpaidChog(active[0].id);f.delivery();await f.advance(4);
-  assert.equal(f.processor.get(invoice.id).state,"delivered");assert.equal(f.broadcasts.length,7);
+  assert.equal(f.processor.get(invoice.id).state,"manual-review");assert.equal(f.processor.get(invoice.id).refund.status,"completed");assert.equal(f.broadcasts.length,1);
+  for(const order of active)assert.equal(f.processor.get(order.id).state,"awaiting-payment");
 });
 
 test("legacy hold recovery rechecks the source journal after asynchronous chain reads before activation",async t=>{

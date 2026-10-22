@@ -244,7 +244,7 @@ test("archiving failure preserves the original active reference and the refund r
 test("the explicit button uses revalidation and the send caption repeats the immutable invoice total", () => {
   const source = readFileSync(new URL("../src/LiveChogCheckout.tsx", import.meta.url), "utf8");
   assert.match(source, /archiveKind&&<>/);
-  assert.match(source, /await closeHeldCheckout\(id,archiveKind,reset,\{isCurrent:\(\)=>savedInvoice\("chog"\)===id&&currentInvoice\.current\?\.id===id&&heldCheckoutKind\(id,currentInvoice\.current\)===archiveKind\}\)/);
+  assert.match(source, /await closeHeldCheckout\(id,archiveKind,reset,\{expectedRefund:invoice\?\.refund,isCurrent:\(\)=>savedInvoice\("chog"\)===id&&currentInvoice\.current\?\.id===id&&heldCheckoutKind\(id,currentInvoice\.current\)===archiveKind&&sameRefundCase\(invoice\?\.refund,currentInvoice\.current\?\.refund\)\}\)/);
   assert.match(source, /Refund completed · start a new donation/);
   assert.match(source, /Start a new donation · keep this payment/);
   assert.match(source, /Your previous CHOG payment is still on hold\. It has not been refunded or donated\./);

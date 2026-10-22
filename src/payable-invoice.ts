@@ -1,10 +1,11 @@
-import { getAddress, isAddress, parseUnits, zeroAddress } from "viem";
+import { formatUnits, getAddress, isAddress, parseUnits, zeroAddress } from "viem";
 import { CHOG, GIVETH_PROJECT_RECIPIENT } from "./route.ts";
 import { deliveryNetwork } from "./delivery-network.ts";
 import { chogBeneficiary } from "./chog-beneficiary.ts";
 import { contributionForDonationUnits, splitSettlementUnits } from "./pool-contribution.ts";
 import { validInvoiceId } from "./checkout-session.ts";
 import { matchesInvoiceField as matches, pickInvoiceFields } from "./invoice-validation.ts";
+export type ChogRefund = { kind: "chog-amount-mismatch"; status: "processing" | "confirming" | "completed" | "blocked"; amount: string; txHash: string | null };
 export type PayableInvoice = {
   kind: "payment"; id: string; mode: "chog"; asset: "CHOG"; chainId: 143;
   amount: string; initiativeId: string; recipient: string; depositAddress: string;
@@ -16,6 +17,7 @@ export type PayableInvoice = {
   destinationChainId?: 1 | 10 | 792703809; destinationAsset?: "USDC" | "SOL"; destinationDecimals?: 6 | 9; minimumUsd?: string; bridgeEstimatedSeconds?: number | null;
   donationAmount?: string; poolContributionAmount?: string | null; contributionPercent?: 0 | 10; poolContributionState?: "pending" | "collected" | null;
   receivedAmount?: string; receivedDonationAmount?: string; receivedPoolContributionAmount?: string;
+  refund?: ChogRefund | null;
 };
 const evmHash=/^0x[0-9a-f]{64}$/i,solanaSignature=/^[1-9A-HJ-NP-Za-km-z]{64,88}$/;
 export function validatePayableInvoice(raw: unknown): PayableInvoice {
@@ -56,5 +58,19 @@ export function validatePayableInvoice(raw: unknown): PayableInvoice {
   for(const value of [x.processingStartedAt,x.bridgeStartedAt,x.destinationIncludedAt])if(value!=null && (!Number.isSafeInteger(value)||value<=0))throw new Error("Invalid payment timing.");
   if(x.bridgeEstimatedSeconds!=null && (!Number.isSafeInteger(x.bridgeEstimatedSeconds)||x.bridgeEstimatedSeconds<1||x.bridgeEstimatedSeconds>3600))throw new Error("Invalid bridge estimate.");
   if(x.state==="confirming" && (!x.observedDestinationHash || !x.depositHash || !x.bridgeHash || x.destinationHash || x.deliveredUsdc || !matches(x.observedUsdc,/^\d{1,20}$/) || BigInt(x.observedUsdc)<BigInt(x.minUsdc)))throw new Error("Unverified destination observation.");
-  return {...pickInvoiceFields(x,["kind","id","mode","asset","chainId","amount","initiativeId","recipient","depositAddress","paymentUri","minUsdc","state","expiresAt","depositHash","bridgeHash","destinationHash","message","deliveredUsdc","observedDestinationHash","observedUsdc","processingStartedAt","bridgeStartedAt","destinationIncludedAt","destinationChainId","destinationAsset","destinationDecimals","minimumUsd","bridgeEstimatedSeconds","donationAmount","poolContributionAmount","contributionPercent","poolContributionState","receivedAmount","receivedDonationAmount","receivedPoolContributionAmount"]),destinationChainId:network!.id};
+  let refund: ChogRefund | null | undefined;
+  if(x.refund != null){
+    const value=x.refund;
+    if(typeof value!=="object"||Array.isArray(value)||Object.keys(value).length!==4||!["kind","status","amount","txHash"].every(key=>Object.hasOwn(value,key))||
+      value.kind!=="chog-amount-mismatch"||!["processing","confirming","completed","blocked"].includes(value.status)||
+      !matches(value.amount,/^\d{1,78}(?:\.\d{1,18})?$/)||
+      value.txHash!==null&&!matches(value.txHash,evmHash)||["confirming","completed"].includes(value.status)&&value.txHash===null||
+      x.state!=="manual-review"||[x.depositHash,x.bridgeHash,x.destinationHash,x.observedDestinationHash,x.processingStartedAt,x.bridgeStartedAt,x.destinationIncludedAt,x.deliveredUsdc,x.observedUsdc].some(field=>field!=null)||
+      receivedFields.some(field=>field!==undefined)||
+      (contributionInvoice?x.poolContributionState!=="pending":x.poolContributionState!=null||x.poolContributionAmount!=null&&x.poolContributionAmount!=="0"||x.donationAmount!==undefined&&x.donationAmount!==x.amount))throw new Error("Refund details failed verification.");
+    const refundUnits=parseUnits(value.amount,18);
+    if(refundUnits<=0n||refundUnits>2n**256n-1n||refundUnits===units||formatUnits(refundUnits,18)!==value.amount)throw new Error("Refund amount failed verification.");
+    refund={kind:value.kind,status:value.status,amount:value.amount,txHash:value.txHash};
+  }else refund=x.refund;
+  return {...pickInvoiceFields(x,["kind","id","mode","asset","chainId","amount","initiativeId","recipient","depositAddress","paymentUri","minUsdc","state","expiresAt","depositHash","bridgeHash","destinationHash","message","deliveredUsdc","observedDestinationHash","observedUsdc","processingStartedAt","bridgeStartedAt","destinationIncludedAt","destinationChainId","destinationAsset","destinationDecimals","minimumUsd","bridgeEstimatedSeconds","donationAmount","poolContributionAmount","contributionPercent","poolContributionState","receivedAmount","receivedDonationAmount","receivedPoolContributionAmount"]),destinationChainId:network!.id,...(Object.hasOwn(x,"refund")?{refund}:{})};
 }

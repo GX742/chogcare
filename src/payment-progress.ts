@@ -38,8 +38,9 @@ export function paymentProgress(invoice: PayableInvoice, now: number, online: bo
   return { title, estimate, note, elapsed, paused: !online };
 }
 
-export function paymentPollDelay(state?: PayableInvoice["state"], failed = false) {
+export function paymentPollDelay(state?: PayableInvoice["state"], failed = false, refundStatus?: NonNullable<PayableInvoice["refund"]>["status"]) {
   if (failed) return 10_000;
+  if (state === "manual-review" && (refundStatus === "processing" || refundStatus === "confirming")) return 1_500;
   if (state === "processing" || state === "bridging" || state === "awaiting-payment") return 1_500;
   if (state === "confirming") return 10_000;
   if (state === "delivered" || state === "manual-review") return 30_000;

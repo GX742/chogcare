@@ -1,0 +1,12 @@
+.checkout-refund { margin: 8px 0 26px; padding: 24px 20px; border: 1px solid #f4a4be45; border-left: 3px solid #f48aad; border-radius: 10px; background: #351529; color: #ffe3ed; }
+.checkout-refund h3 { margin: 0; color: #ffe3ed; font: 750 clamp(23px, 3vw, 32px)/1.2 "Manrope Variable", sans-serif; letter-spacing: -.6px; overflow-wrap: anywhere; text-wrap: balance; }
+.checkout-refund p { margin: 16px 0 0; color: #e4c3d1; font-size: 14px; line-height: 1.65; }
+.checkout-refund dl { display: grid; gap: 18px; margin: 24px 0 0; }
+.checkout-refund dt { color: #d4adbf; font-size: 12px; }
+.checkout-refund dd { margin: 5px 0 0; font-size: 22px; font-weight: 650; line-height: 1.4; overflow-wrap: anywhere; font-variant-numeric: tabular-nums; }
+.checkout-refund dd span { font-size: 14px; }
+.checkout-refund a { display: inline-block; margin-top: 20px; color: #f2c7dd; font-size: 14px; text-underline-offset: 4px; }
+.checkout-refund.is-completed { background: #142b28; border-color: #8bcebd55; border-left-color: #8bcebd; }
+.checkout-refund.is-completed h3 { color: #cfefe6; }
+.checkout-refund.is-blocked { background: #30251b; border-color: #e1ba7855; border-left-color: #e1ba78; }
+@media (max-width: 420px) { .checkout-refund { padding: 20px 15px; } .checkout-refund h3 { font-size: 23px; } }

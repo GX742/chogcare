@@ -2,6 +2,8 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { CHOG } from "../src/route.ts";
+import { formatUnits, parseUnits } from "viem";
+import { contributionForDonationUnits } from "../src/pool-contribution.ts";
 import { chogBeneficiary } from "../src/chog-beneficiary.ts";
 import { assertUnpaidCheckout, closeSavedInvoice, recoveryBundle, rememberInvoice, savedInvoice } from "../src/checkout-session.ts";
 import { closeHeldCheckout, closeRefundedCheckout, closeVerifiedRefund, heldCheckoutKind, isRefundedCheckout } from "../src/refunded-checkout.ts";
@@ -19,6 +21,14 @@ function invoice(changes = {}) {
     donationAmount: "300", poolContributionAmount: "30", contributionPercent: 10, poolContributionState: "pending", ...changes };
 }
 function memory() { const map = new Map(); return { getItem: key => map.get(key) ?? null, setItem: (key, value) => map.set(key, value), removeItem: key => map.delete(key) }; }
+function underpayment(received, { donation = "300", legacy = false, ...changes } = {}) {
+  const allocation = contributionForDonationUnits(parseUnits(donation, 18));
+  const amount = legacy ? donation : formatUnits(allocation.totalUnits, 18);
+  return invoice({ amount, donationAmount: donation, poolContributionAmount: legacy ? null : formatUnits(allocation.contributionUnits, 18),
+    contributionPercent: legacy ? 0 : 10, poolContributionState: legacy ? null : "pending",
+    paymentUri: `ethereum:${CHOG}@143/transfer?address=${address}&uint256=${parseUnits(amount, 18)}`,
+    message: `Received ${received} CHOG. This invoice requires ${amount} CHOG. Processing is on hold; do not pay again.`, ...changes });
+}
 
 test("only the exact completed underpayment marker and validated fixed quote permits a refund close", () => {
   assert.equal(isRefundedCheckout(id, invoice()), true);
@@ -52,7 +62,7 @@ test("processing, held funds, any receipts, timing or received accounting still 
   assert.throws(() => assertUnpaidCheckout(id, invoice()), /may be processing/);
 });
 
-test("only the known untouched 300-of-330 underpayment can be explicitly archived while remaining on hold", () => {
+test("a known untouched underpayment can be explicitly archived while remaining on hold", () => {
   const held = invoice({ message: underpaid });
   assert.equal(heldCheckoutKind(id, held), "underpaid");
   assert.equal(isRefundedCheckout(id, held), false);
@@ -69,6 +79,56 @@ test("only the known untouched 300-of-330 underpayment can be explicitly archive
     { deliveredUsdc: "200000" }, { observedUsdc: "200000" }]) {
     assert.equal(heldCheckoutKind(id, { ...held, ...changed }), null);
   }
+});
+
+test("canonical positive underpayments work for different amounts, precise contribution quotes and legacy invoices", () => {
+  for (const received of ["1", "0.000000000000000001", "12.5", "300", "329.999999999999999999"]) {
+    assert.equal(heldCheckoutKind(id, underpayment(received)), "underpaid", received);
+    assert.equal(isRefundedCheckout(id, underpayment(received)), false);
+  }
+  for (const raw of [underpayment("12.5", { donation: "500" }), underpayment("3000", { donation: "3000" }),
+    underpayment("300.000000000000000001", { donation: "300.000000000000000001" }),
+    underpayment("1", { legacy: true }), underpayment("299.999999999999999999", { legacy: true }),
+    underpayment("1", { legacy: true, contributionPercent: undefined, donationAmount: undefined, poolContributionAmount: undefined, poolContributionState: undefined }),
+    underpayment("1", { legacy: true, poolContributionAmount: "0" })]) {
+    assert.equal(heldCheckoutKind(id, raw), "underpaid");
+  }
+  for (const changed of [{ poolContributionState: "pending" }, { poolContributionAmount: "1" }, { donationAmount: "301" }]) {
+    assert.equal(heldCheckoutKind(id, underpayment("1", { legacy: true, ...changed })), null);
+  }
+  // The completed-refund exception must stay limited to its original fixed quote.
+  assert.equal(heldCheckoutKind(id, underpayment("1", { donation: "500", message: marker })), null);
+});
+
+test("malformed, zero, noncanonical, equal or excessive amounts and other holds never authorize archiving", () => {
+  for (const received of ["0", "0.0", "-1", "+1", "1e0", "01", "1.0", "1.", ".1", "1,0", "NaN", "Infinity",
+    "0.0000000000000000001", "330", "331", "10000000", "1\n"]) {
+    assert.equal(heldCheckoutKind(id, underpayment(received)), null, received);
+  }
+  for (const expected of ["300", "331", "0330", "330.0", "3.3e2", "-330"]) {
+    assert.equal(heldCheckoutKind(id, invoice({ message: `Received 1 CHOG. This invoice requires ${expected} CHOG. Processing is on hold; do not pay again.` })), null, expected);
+  }
+  const valid = underpayment("1");
+  for (const message of [valid.message + "\n", valid.message + "\r\n", valid.message + " Extra", " " + valid.message,
+    "Received 1 CHOG. Processing is on hold; do not pay again.", "Canonical CHOG transfer does not match the expected deposit event: manual review required.",
+    "CHOG transfer parties do not match this invoice. Processing is on hold; do not pay again."]) {
+    assert.equal(heldCheckoutKind(id, { ...valid, message }), null);
+  }
+});
+
+test("one-CHOG, fractional and legacy holds archive only after a fresh exact-identity GET and retain recovery", async () => {
+  for (const held of [underpayment("1"), underpayment("0.000000000000000001"), underpayment("12.5", { donation: "500" }), underpayment("1", { legacy: true })]) {
+    const store = memory(); rememberInvoice("chog", id, store, "school-supplies"); let requests = 0;
+    await closeHeldCheckout(id, "underpaid", () => closeSavedInvoice("chog", store), { request: async (url, options) => {
+      requests++; assert.equal(url, `/api/payments/invoices/${id}`); assert.equal(options.method, "GET"); assert.equal(options.cache, "no-store");
+      return Response.json(held);
+    } });
+    assert.equal(requests, 1); assert.equal(savedInvoice("chog", store), "");
+    assert.deepEqual(JSON.parse(recoveryBundle(store)).history, [{ mode: "chog", id }]);
+  }
+  let closed = 0;
+  await assert.rejects(closeHeldCheckout(id, "underpaid", () => closed++, { request: async () => Response.json(underpayment("1", { id: otherId })) }));
+  assert.equal(closed, 0);
 });
 
 test("explicit held-payment archive rechecks the same case, keeps history and never posts a cancellation", async () => {
@@ -187,7 +247,7 @@ test("the explicit button uses revalidation and the send caption repeats the imm
   assert.match(source, /await closeHeldCheckout\(id,archiveKind,reset,\{isCurrent:\(\)=>savedInvoice\("chog"\)===id&&currentInvoice\.current\?\.id===id&&heldCheckoutKind\(id,currentInvoice\.current\)===archiveKind\}\)/);
   assert.match(source, /Refund completed · start a new donation/);
   assert.match(source, /Start a new donation · keep this payment/);
-  assert.match(source, /Your 300 CHOG payment is still on hold\. It has not been refunded or donated\./);
+  assert.match(source, /Your previous CHOG payment is still on hold\. It has not been refunded or donated\./);
   assert.match(source, /A new donation uses a new address\./);
   assert.match(source, /Amount for the cause/);
   assert.match(source, /Send exactly \{invoice\.amount\} \$CHOG/);

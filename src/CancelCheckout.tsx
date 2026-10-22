@@ -17,7 +17,7 @@ export default function CancelCheckout({ id, mode, onClose }: { id: string; mode
       const invoice = mode === "nft" ? validateNftInvoice(data) : validatePayableInvoice(data);
       const closeCurrentRefund = () => { if (savedInvoice("chog") !== id) throw new Error("The saved payment changed. Keep its recovery reference and reload this page."); onClose(); };
       if (mode === "chog" && closeVerifiedRefund(id, invoice, closeCurrentRefund)) return;
-      if (mode === "chog" && heldCheckoutKind(id, invoice) === "underpaid") throw new Error("Your 300 CHOG payment is on hold. Reload this page and use “Start a new donation · keep this payment”. Keep its recovery reference; do not pay this invoice again.");
+      if (mode === "chog" && heldCheckoutKind(id, invoice) === "underpaid") throw new Error("Your previous CHOG payment is on hold. Reload this page and use “Start a new donation · keep this payment”. Keep its recovery reference; do not pay this invoice again.");
       assertUnpaidCheckout(id, invoice, { allowExpired: true });
       if (mode === "chog") await cancelUnpaidChog(id);
       onClose();

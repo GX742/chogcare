@@ -1,22 +1,33 @@
 import { validInvoiceId } from "./checkout-session.ts";
-import { validatePayableInvoice } from "./payable-invoice.ts";
+import { validatePayableInvoice, type PayableInvoice } from "./payable-invoice.ts";
+import { formatUnits, parseUnits } from "viem";
 
 const completedRefundMessage = "The underpaid 300 CHOG transfer was refunded to its verified original sender. Do not pay this invoice again.";
-const underpaidMessage = "Received 300 CHOG. This invoice requires 330 CHOG. Processing is on hold; do not pay again.";
 const cannotClose = "The completed refund could not be verified. Keep this invoice open; do not pay again.";
 const cannotArchive = "This held payment could not be verified. Keep its recovery reference; do not pay this invoice again.";
 export type HeldCheckoutKind = "refunded" | "underpaid";
+
+function canonicalUnderpayment(invoice: PayableInvoice): boolean {
+  const match = /^Received (\d{1,7}(?:\.\d{1,18})?) CHOG\. This invoice requires (\d{1,7}(?:\.\d{1,18})?) CHOG\. Processing is on hold; do not pay again\.$/.exec(invoice.message ?? "");
+  if (!match || match[0] !== invoice.message) return false;
+  const received = parseUnits(match[1], 18), expected = parseUnits(invoice.amount, 18);
+  if (received <= 0n || received >= expected || formatUnits(received, 18) !== match[1] || formatUnits(expected, 18) !== match[2]) return false;
+  if (invoice.contributionPercent === 10) return invoice.poolContributionState === "pending";
+  return invoice.poolContributionState == null && (invoice.donationAmount === undefined || invoice.donationAmount === invoice.amount) &&
+    (invoice.poolContributionAmount == null || invoice.poolContributionAmount === "0");
+}
 
 // These exact cases permit archiving this tab's recovery reference only.
 // A held underpayment remains on hold; archiving never cancels or refunds it.
 export function heldCheckoutKind(id: string, raw: unknown): HeldCheckoutKind | null {
   try {
     const invoice = validatePayableInvoice(raw);
-    const kind = invoice.message === completedRefundMessage ? "refunded" : invoice.message === underpaidMessage ? "underpaid" : null;
-    const canArchive = validInvoiceId(id) && invoice.id === id && invoice.state === "manual-review" &&
-      kind !== null && invoice.amount === "330" &&
+    const completedRefund = invoice.message === completedRefundMessage && invoice.amount === "330" &&
       invoice.donationAmount === "300" && invoice.poolContributionAmount === "30" &&
-      invoice.contributionPercent === 10 && invoice.poolContributionState === "pending" &&
+      invoice.contributionPercent === 10 && invoice.poolContributionState === "pending";
+    const kind = completedRefund ? "refunded" : canonicalUnderpayment(invoice) ? "underpaid" : null;
+    const canArchive = validInvoiceId(id) && invoice.id === id && invoice.state === "manual-review" &&
+      kind !== null &&
       [invoice.depositHash, invoice.bridgeHash, invoice.destinationHash, invoice.observedDestinationHash,
         invoice.processingStartedAt, invoice.bridgeStartedAt, invoice.destinationIncludedAt,
         invoice.deliveredUsdc, invoice.observedUsdc].every(value => value == null) &&

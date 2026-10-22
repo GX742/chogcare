@@ -1,6 +1,8 @@
 // Minimal read-only Solana mainnet verifier. It accepts no arbitrary RPC method
 // or URL from HTTP and never signs or broadcasts a Solana transaction.
-export const SOLANA_MAINNET_GENESIS = "5eykt4UsFv8P8NJdTREpY1vzqKqZKvdp";
+// RPC returns the full genesis hash, not the shortened CAIP-2 network identifier.
+// https://solana.com/docs/payments/agentic-payments/x402#solana-networks-and-assets
+export const SOLANA_MAINNET_GENESIS = "5eykt4UsFv8P8NJdTREpY1vzqKqZKvdpKuc147dw2N9d";
 const signaturePattern=/^[1-9A-HJ-NP-Za-km-z]{64,88}$/;
 const publicKeyPattern=/^[1-9A-HJ-NP-Za-km-z]{32,44}$/;
 

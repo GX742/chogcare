@@ -12,6 +12,18 @@ function fetcher({genesis=SOLANA_MAINNET_GENESIS,received=4_900_000n,error=null,
   };
 }
 
+test("Solana readiness requires the real full mainnet genesis hash, not its CAIP-2 prefix",async()=>{
+  // Keep this official RPC fixture independent from the implementation constant.
+  const mainnetGenesis="5eykt4UsFv8P8NJdTREpY1vzqKqZKvdpKuc147dw2N9d";
+  assert.equal(await createSolanaReceiptVerifier("https://rpc.example",fetcher({genesis:mainnetGenesis})).ready(),true);
+  for(const genesis of [
+    "5eykt4UsFv8P8NJdTREpY1vzqKqZKvdp",
+    "4uhcVJyU9pJkvQyS88uRDiswHXSCkY3zQawwpjk2NsNY",
+    "EtWTRABZaYq6iMfeYKouRu166VU2xqa1wcaWoxPkrZBG",
+    mainnetGenesis+"1",
+  ]) assert.equal(await createSolanaReceiptVerifier("https://rpc.example",fetcher({genesis})).ready(),false);
+});
+
 test("finalized Solana receipt proves the exact published Animal Ethics account gained the signed minimum",async()=>{
   const verifier=createSolanaReceiptVerifier("https://rpc.example",fetcher());
   assert.equal(await verifier.ready(),true);

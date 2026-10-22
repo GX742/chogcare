@@ -1,5 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import { getEventListeners } from "node:events";
 import { assertUnpaidCheckout } from "../src/checkout-session.ts";
 import { activeInvoiceKeys, beginCreation, checkoutSelection, closeSavedInvoice, createPaymentRequest, pendingCreation, recoveryBundle, rememberInvoice, rememberMode, savedInvoice, savedCheckoutModes, validInvoiceId } from "../src/checkout-session.ts";
 
@@ -94,8 +95,8 @@ test("storage write failure prevents new creation; failed completion does not lo
 test("only an explicit safe pre-creation rejection unlocks request editing", async () => {
   const store=memory(), pending=beginCreation(chog,store);
   const fail=(body,status)=>async()=>new Response(JSON.stringify(body),{status});
-  for(const [body,status] of [[{code:"REQUEST_PENDING"},409],[{code:"SESSION_REQUIRED"},403],[{error:"offline"},503]]) {
-    await assert.rejects(()=>createPaymentRequest(pending,new AbortController().signal,fail(body,status),store),/not resolved/);
+  for(const [body,status,message] of [[{code:"REQUEST_PENDING"},409,/still being checked/],[{code:"SESSION_REQUIRED"},403,/session could not be restored/],[{error:"offline"},503,/not resolved/]]) {
+    await assert.rejects(()=>createPaymentRequest(pending,new AbortController().signal,fail(body,status),store),message);
     assert.deepEqual(pendingCreation("chog",store),pending);
   }
   await assert.rejects(()=>createPaymentRequest(pending,new AbortController().signal,fail({creationNotStarted:true},400),store),/No payment was created/);
@@ -133,6 +134,216 @@ test("failed session renewal or a second session rejection retains recovery and 
     }, store), /saved|not resolved/);
     assert.equal(calls, failure === "session-still-invalid" ? 3 : 2);
     assert.deepEqual(pendingCreation("chog", store), pending);
+  }
+});
+
+const settleCreation = () => new Promise(resolve => setImmediate(resolve));
+
+test("an explicitly pending request waits five seconds and recovers with byte-identical POSTs", async t => {
+  t.mock.timers.enable({ apis: ["setTimeout"] });
+  const store = memory(), pending = beginCreation(chog, store), original = structuredClone(pending), calls = [];
+  const controller = new AbortController();
+  const result = createPaymentRequest(pending, controller.signal, async (url, init) => {
+    calls.push({ url, ...init });
+    return calls.length === 1
+      ? Response.json({ code: "REQUEST_PENDING", retryAfterSeconds: 5 }, { status: 409, headers: { "Retry-After": "5" } })
+      : Response.json({ id: chogId }, { status: 201 });
+  }, store);
+  await settleCreation();
+  assert.equal(calls.length, 1);
+  // Mutating a caller's object while waiting cannot alter a durable retry.
+  pending.key = "changed-after-send"; pending.input.amount = "999";
+  t.mock.timers.tick(4999); await settleCreation();
+  assert.equal(calls.length, 1);
+  t.mock.timers.tick(1);
+  assert.equal((await result).id, chogId);
+  assert.equal(calls.length, 2);
+  assert.deepEqual(calls[1], calls[0]);
+  assert.equal(calls[1].headers["Idempotency-Key"], original.key);
+  assert.equal(calls[1].body, JSON.stringify(original.input));
+  assert.equal(calls[1].credentials, "same-origin");
+  assert.equal(calls[1].signal, controller.signal);
+  assert.deepEqual(pendingCreation("chog", store), original);
+  assert.equal(getEventListeners(controller.signal, "abort").length, 0);
+});
+
+test("short pending and rate limits share a maximum of two additional POSTs", async t => {
+  t.mock.timers.enable({ apis: ["setTimeout"] });
+  const store = memory(), pending = beginCreation(chog, store), calls = [], controller = new AbortController();
+  const result = assert.rejects(createPaymentRequest(pending, controller.signal, async (url, init) => {
+    calls.push({ url, ...init });
+    return calls.length === 2
+      ? Response.json({ code: "RATE_LIMITED" }, { status: 429, headers: { "Retry-After": "1" } })
+      : Response.json({ code: "REQUEST_PENDING", retryAfterSeconds: 5 }, { status: 409 });
+  }, store), /still being checked/);
+  await settleCreation();
+  t.mock.timers.tick(5000); await settleCreation();
+  assert.equal(calls.length, 2);
+  t.mock.timers.tick(999); await settleCreation();
+  assert.equal(calls.length, 2);
+  t.mock.timers.tick(1); await result;
+  t.mock.timers.tick(60_000); await settleCreation();
+  assert.equal(calls.length, 3);
+  assert.ok(calls.every(call => call.body === calls[0].body && call.headers["Idempotency-Key"] === pending.key));
+  assert.deepEqual(pendingCreation("chog", store), pending);
+  assert.equal(getEventListeners(controller.signal, "abort").length, 0);
+});
+
+test("invalid, missing, conflicting or long retry instructions never trigger an automatic POST", async t => {
+  t.mock.timers.enable({ apis: ["setTimeout"] });
+  const variants = [
+    {}, { header: "0" }, { header: "-1" }, { header: "6" }, { header: "1.5" },
+    { header: "Infinity" }, { header: "Wed, 21 Oct 2026 07:28:00 GMT" },
+    { body: "5" }, { body: 0 }, { body: -1 }, { body: 6 }, { body: 1.5 },
+    { header: "5", body: 1 }, { header: "1", body: 60 }, { header: "bad", body: 1 },
+  ];
+  for (const status of [409, 429]) for (const variant of variants) {
+    const store = memory(), pending = beginCreation(chog, store); let calls = 0;
+    const code = status === 409 ? "REQUEST_PENDING" : "RATE_LIMITED";
+    await assert.rejects(createPaymentRequest(pending, new AbortController().signal, async () => {
+      calls++;
+      return Response.json({ code, ...(variant.body === undefined ? {} : { retryAfterSeconds: variant.body }) }, {
+        status, ...(variant.header === undefined ? {} : { headers: { "Retry-After": variant.header } }),
+      });
+    }, store), /saved request/);
+    t.mock.timers.tick(60_000);
+    assert.equal(calls, 1);
+    assert.deepEqual(pendingCreation("chog", store), pending);
+  }
+});
+
+test("session recovery happens once and shares the three-POST budget with transient retries", async t => {
+  t.mock.timers.enable({ apis: ["setTimeout"] });
+  for (const sequence of [
+    ["SESSION_REQUIRED", "REQUEST_PENDING", "SESSION_REQUIRED"],
+    ["REQUEST_PENDING", "SESSION_REQUIRED", "SESSION_REQUIRED"],
+    ["REQUEST_PENDING", "SESSION_REQUIRED", "RATE_LIMITED"],
+  ]) {
+    const store = memory(), pending = beginCreation(chog, store), calls = []; let posts = 0;
+    const result = assert.rejects(createPaymentRequest(pending, new AbortController().signal, async (url, init) => {
+      calls.push({ url, ...init });
+      if (url === "/api/payments/config") return Response.json({});
+      posts++;
+      const code = sequence[posts - 1];
+      return Response.json({ code, retryAfterSeconds: 1 }, { status: code === "REQUEST_PENDING" ? 409 : code === "RATE_LIMITED" ? 429 : 403 });
+    }, store), sequence[2] === "RATE_LIMITED" ? /Too many payment requests/ : /session could not be restored/);
+    await settleCreation();
+    t.mock.timers.tick(1000); await result;
+    t.mock.timers.tick(60_000); await settleCreation();
+    assert.equal(posts, 3);
+    assert.equal(calls.filter(call => call.url === "/api/payments/config").length, 1);
+    const attempts = calls.filter(call => call.method === "POST");
+    assert.ok(attempts.every(call => call.body === attempts[0].body && call.headers["Idempotency-Key"] === pending.key));
+    assert.deepEqual(pendingCreation("chog", store), pending);
+  }
+});
+
+test("an aborted session renewal cannot replay even when its transport ignores cancellation", async () => {
+  const store = memory(), pending = beginCreation(chog, store), controller = new AbortController();
+  let releaseConfig, posts = 0, configReads = 0;
+  const configResponse = new Promise(resolve => { releaseConfig = resolve; });
+  const result = assert.rejects(createPaymentRequest(pending, controller.signal, async url => {
+    if (url === "/api/payments/config") { configReads++; return configResponse; }
+    posts++;
+    return Response.json({ code: "SESSION_REQUIRED" }, { status: 403 });
+  }, store), /request is saved/);
+  await settleCreation();
+  controller.abort();
+  releaseConfig(Response.json({}));
+  await result;
+  assert.equal(configReads, 1);
+  assert.equal(posts, 1);
+  assert.deepEqual(pendingCreation("chog", store), pending);
+});
+
+test("aborting during a retry wait clears the timer and preserves the original request", async t => {
+  t.mock.timers.enable({ apis: ["setTimeout"] });
+  const store = memory(), pending = beginCreation(chog, store), controller = new AbortController(); let posts = 0;
+  const result = assert.rejects(createPaymentRequest(pending, controller.signal, async () => {
+    posts++;
+    return Response.json({ code: "RATE_LIMITED", retryAfterSeconds: 5 }, { status: 429 });
+  }, store), error => {
+    assert.match(error.message, /request is saved/);
+    assert.doesNotMatch(error.message, /PRIVATE_ABORT_DETAIL/);
+    return true;
+  });
+  await settleCreation();
+  assert.equal(getEventListeners(controller.signal, "abort").length, 1);
+  controller.abort(new Error("PRIVATE_ABORT_DETAIL"));
+  await result;
+  t.mock.timers.tick(60_000); await settleCreation();
+  assert.equal(posts, 1);
+  assert.equal(getEventListeners(controller.signal, "abort").length, 0);
+  assert.deepEqual(pendingCreation("chog", store), pending);
+});
+
+test("an aborted overall signal cannot send before startup or after a wait finishes", async t => {
+  t.mock.timers.enable({ apis: ["setTimeout"] });
+  for (const beforeStart of [true, false]) {
+    const store = memory(), pending = beginCreation(chog, store), controller = new AbortController(); let posts = 0;
+    if (beforeStart) controller.abort();
+    const result = assert.rejects(createPaymentRequest(pending, controller.signal, async () => {
+      posts++;
+      return Response.json({ code: "REQUEST_PENDING", retryAfterSeconds: 1 }, { status: 409 });
+    }, store), /request is saved/);
+    if (!beforeStart) {
+      await settleCreation();
+      t.mock.timers.tick(1000);
+      controller.abort();
+    }
+    await result;
+    assert.equal(posts, beforeStart ? 0 : 1);
+    assert.deepEqual(pendingCreation("chog", store), pending);
+  }
+});
+
+test("terminal errors, malformed responses and gateway failures retain recovery without auto-retry or raw errors", async t => {
+  t.mock.timers.enable({ apis: ["setTimeout"] });
+  const variants = [
+    [409, "IDEMPOTENCY_CONFLICT", /conflicts with an existing payment/],
+    [503, "INTEGRITY_HOLD", /recovery check/],
+    [403, "ORIGIN_REJECTED", /Payment access was rejected/],
+    [409, "UNKNOWN_PRIVATE_CODE", /not resolved/],
+    [429, "UNKNOWN_PRIVATE_CODE", /not resolved/],
+    [500, "REQUEST_PENDING", /still being checked/],
+    [502, null, /gateway is temporarily unavailable/],
+    [504, null, /gateway is temporarily unavailable/],
+    [503, null, /not resolved/],
+  ];
+  for (const [status, code, message] of variants) {
+    const store = memory(), pending = beginCreation(chog, store); let posts = 0;
+    await assert.rejects(createPaymentRequest(pending, new AbortController().signal, async () => {
+      posts++;
+      return code === null ? new Response("PRIVATE_PROXY_DETAIL", { status, headers: { "Retry-After": "1" } })
+        : Response.json({ code, error: "PRIVATE_WORKER_DETAIL", retryAfterSeconds: 1 }, { status });
+    }, store), error => {
+      assert.match(error.message, message);
+      assert.doesNotMatch(error.message, /PRIVATE_/);
+      return true;
+    });
+    t.mock.timers.tick(60_000);
+    assert.equal(posts, 1);
+    assert.deepEqual(pendingCreation("chog", store), pending);
+  }
+});
+
+test("only existing explicit pre-creation proof unlocks edits, including bridge and NFT rejections", async t => {
+  t.mock.timers.enable({ apis: ["setTimeout"] });
+  for (const [code, input, message] of [
+    ["BRIDGE_COST_LIMIT", chog, /Bridge fees are too high/],
+    ["NFT_NOT_OWNED", nft, /not held by your wallet/],
+    ["NFT_DAILY_LIMIT", nft, /already has today's donation/],
+    ["REQUEST_PENDING", chog, /No payment was created/],
+    ["RATE_LIMITED", chog, /No payment was created/],
+  ]) {
+    const store = memory(), pending = beginCreation(input, store); let posts = 0;
+    await assert.rejects(createPaymentRequest(pending, new AbortController().signal, async () => {
+      posts++;
+      return Response.json({ code, creationNotStarted: true, retryAfterSeconds: 1 }, { status: code === "RATE_LIMITED" ? 429 : code === "REQUEST_PENDING" ? 409 : 422 });
+    }, store), message);
+    t.mock.timers.tick(60_000);
+    assert.equal(posts, 1);
+    assert.equal(pendingCreation(input.mode, store), null);
   }
 });
 test("invalid saved references are not silently erased or substituted", () => {

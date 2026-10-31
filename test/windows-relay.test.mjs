@@ -3,14 +3,12 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { spawn, spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
-import { join } from "node:path";
 
 const relayPath = fileURLToPath(new URL("../ops/relay/windows-relay.ps1", import.meta.url));
 const source = readFileSync(relayPath, "utf8");
 const windowsOnly = process.platform === "win32" ? false : "Requires Windows PowerShell and Windows Job Objects.";
-const powerShell = process.platform === "win32"
-  ? join(process.env.SystemRoot ?? "C:\\Windows", "System32", "WindowsPowerShell", "v1.0", "powershell.exe")
-  : "powershell.exe";
+// Never select executable code through inherited environment variables or PATH.
+const powerShell = String.raw`C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe`;
 const quotePowerShell = value => `'${String(value).replaceAll("'", "''")}'`;
 const commandArguments = command => [
   "-NoLogo", "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass",
@@ -282,7 +280,7 @@ foreach ($name in @('Get-Item', 'Get-Acl', 'Test-Path', 'Add-Type', 'Start-Proce
 test("hard-stopping an isolated Windows relay supervisor kills its own dummy child only", { skip: windowsOnly, timeout: 40_000 }, async () => {
   // Both ping processes are bounded, even if the Job Object code regresses.
   // No task, SSH process, key, listener or production host is used.
-  const ping = join(process.env.SystemRoot ?? "C:\\Windows", "System32", "PING.EXE");
+  const ping = String.raw`C:\Windows\System32\PING.EXE`;
   const sentinel = spawn(ping, ["-n", "31", "127.0.0.1"], { windowsHide: true, stdio: "ignore" });
   let supervisor;
   let dummyPid;

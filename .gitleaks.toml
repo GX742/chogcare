@@ -7,3 +7,10 @@ useDefault = true
 description = "The public CHOG ERC-20 contract address is not a credential"
 regexTarget = "secret"
 regexes = ['''(?i)^0x350035555e10d9afaf1566aaebfced5ba6c27777$''']
+
+[[allowlists]]
+description = "Public OBS challenge known-answer vector from synthetic password, salt and challenge in this exact test"
+condition = "AND"
+paths = ['''^test/obs-client\.test\.mjs$''']
+regexTarget = "secret"
+regexes = ['''^EEyz2LaWJ53lRcZHJZdJYj8Ww/P/4mMPe4mmWAJK7UA=$''']

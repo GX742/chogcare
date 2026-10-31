@@ -6,7 +6,7 @@ import { connectLocalObs } from "../ops/stream/obs-client.mjs";
 const password="synthetic-local-test-password", salt="synthetic-salt-long-enough", challenge="synthetic-challenge-long-enough";
 // Fixed synthetic protocol vector calculated independently of the client.
 // A duplicated implementation here could reproduce the same hashing bug.
-const authentication="EEyz2LaWJ53lRcZHJZdJYj8Ww/P/4mMPe4mmWAJK7UA="; // gitleaks:allow -- public test vector from the three synthetic literals above, never a live credential.
+const authentication="EEyz2LaWJ53lRcZHJZdJYj8Ww/P/4mMPe4mmWAJK7UA=";
 
 async function fixture(t, handle, { authenticated=true }={}) {
   const server=new WebSocketServer({host:"127.0.0.1",port:0});

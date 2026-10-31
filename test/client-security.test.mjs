@@ -2,7 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { getAddress } from "viem";
-import { broadcastPreviewUrl, broadcastStreamUrl, publicBroadcastOrigin } from "../src/broadcast-source.ts";
+import { broadcastPreviewUrl, broadcastStreamUrl, publicBroadcastOrigin, serverBroadcastPath, serverBroadcastSource, serverBroadcastStreamUrl } from "../src/broadcast-source.ts";
 import { validInvoiceId, pendingCreation } from "../src/checkout-session.ts";
 import { chogBeneficiary } from "../src/chog-beneficiary.ts";
 import { donationShare } from "../src/donation-share.ts";
@@ -13,6 +13,22 @@ import { clearDonorDraft, donorDraftKey, normalizeDonorNickname, parseNftOptions
 import { contentSecurityPolicy, privateWebPath } from "../server/web-boundary.ts";
 
 const invoiceId = "a".repeat(64), hash = `0x${"b".repeat(64)}`;
+
+test("server broadcast uses one fixed same-origin reader path and preserves origin validation", () => {
+  for (const app of ["https://chogcare.xyz", "https://chogcare.vercel.app"]) {
+    for (const source of [undefined, publicBroadcastOrigin, "https://chogcare-stream.tail1f833b.ts.net"]) {
+      const stream = serverBroadcastStreamUrl(source, app);
+      assert.equal(stream, app + serverBroadcastPath);
+      assert.equal(serverBroadcastSource(stream), true);
+      assert.equal(broadcastPreviewUrl(stream, app), null, "A stale desktop JPEG is never presented as server video");
+    }
+    for (const source of [null, {}, "https://evil.example", "http://127.0.0.1:8082", publicBroadcastOrigin+":444"]) {
+      assert.equal(serverBroadcastStreamUrl(source, app), null);
+    }
+  }
+  assert.equal(serverBroadcastStreamUrl("http://127.0.0.1:8082", "http://localhost:4173"), "http://127.0.0.1:8082/hls/stream.m3u8");
+  for (const app of ["file:///tmp/index.html", "http://chogcare.xyz", "https://user:password@chogcare.xyz"]) assert.equal(serverBroadcastStreamUrl(undefined, app), null);
+});
 const depositAddress = "0x3333333333333333333333333333333333333333", holderAddress = "0x1111111111111111111111111111111111111111";
 const cid = "bafybeihau2egcccbdxymeckmmbrqytbfor5gkt3en6d5fsbueymdbq7g6e";
 const image = `https://gateway.pinata.cloud/ipfs/${cid}/1130.webp`;
@@ -220,6 +236,7 @@ test("deployed CSP and referrer policy preserve private capability boundaries", 
   assert.match(contentSecurityPolicy(), /img-src[^;]*https:\/\/gateway\.pinata\.cloud/);
   assert.doesNotMatch(headers.get("Content-Security-Policy"), /unsafe-inline|unsafe-eval|localhost|127\.0\.0\.1|https:\*/);
   assert.deepEqual(config.rewrites, [
+    { source: "/live/:path*", destination: `${publicBroadcastOrigin}/live/:path*` },
     { source: "/hls/:path*", destination: `${publicBroadcastOrigin}/hls/:path*` },
     { source: "/api/payments/:path*", destination: `${publicBroadcastOrigin}/api/payments/:path*` },
     { source: "/dashboard", destination: "/index.html" },
@@ -234,10 +251,11 @@ test("deployed CSP and referrer policy preserve private capability boundaries", 
 test("only completed public mobile segment paths opt in to origin-controlled rewrite caching", () => {
   const config = JSON.parse(readFileSync(new URL("../vercel.json", import.meta.url), "utf8"));
   const mediaRules = config.headers.filter(rule => rule.headers.some(header => header.key === "x-vercel-enable-rewrite-caching"));
-  assert.equal(mediaRules.length, 2);
-  // Keep the two approved route expressions explicit. Configuration data must
+  assert.equal(mediaRules.length, 3);
+  // Keep the approved route expressions explicit. Configuration data must
   // never be compiled as executable regex inside the security test itself.
   const matchers = new Map([
+    ["/live/:path*", /^\/live\/.*$/],
     [String.raw`/hls/((?!mobile/stream-[0-9]+\.ts$).*)`, /^\/hls\/((?!mobile\/stream-[0-9]+\.ts$).*)$/],
     [String.raw`/hls/(mobile/stream-[0-9]+\.ts)`, /^\/hls\/(mobile\/stream-[0-9]+\.ts)$/],
   ]);
@@ -252,6 +270,7 @@ test("only completed public mobile segment paths opt in to origin-controlled rew
     for (const header of ["Cache-Control", "CDN-Cache-Control", "Vercel-CDN-Cache-Control"]) assert.equal(matched[0].has(header), false, `${path}: ${header}`);
   }
   for (const path of [
+    "/live/station/index.m3u8", "/live/station/main_stream.m3u8", "/live/station/init.mp4", "/live/station/part1.m4s",
     "/hls/stream.m3u8", "/hls/0/stream.m3u8", "/hls/0/segment.ts",
     "/hls/mobile/stream.m3u8", "/hls/mobile/preview.jpg", "/hls/mobile/",
     "/hls/mobile/stream-.ts", "/hls/mobile/stream-123x.ts", "/hls/mobile/stream-123.TS",

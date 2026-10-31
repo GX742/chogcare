@@ -173,6 +173,16 @@ export function openStationEvents({ processorFilename, profileFilename, stationF
         if (!row?.payload) throw new Error("Station completion has no queued payload.");
         sidecar.prepare("UPDATE station_events SET state='done',completed_at=? WHERE id=? AND state='pending'").run(timestamp, id);
       },
+      acknowledge(id, timestamp = Date.now()) {
+        if (closed || !healthy || !stationIdPattern.test(id ?? "")) return false;
+        // An authenticated remote ACK only affects presentation. Retried ACKs
+        // are idempotent, but cannot acknowledge an unknown or invalid receipt.
+        const done = sidecar.prepare("SELECT 1 FROM station_events WHERE id=? AND state='done' UNION ALL SELECT 1 FROM station_arrivals WHERE id=? AND state='done' LIMIT 1").get(id, id);
+        if (done) return true;
+        const pending = this.next(timestamp, id);
+        if (!pending || pending.id !== id) return false;
+        this.complete(id, timestamp); return true;
+      },
       summary() { return { pending: sidecar.prepare("SELECT COUNT(*) AS n FROM station_events WHERE state='pending'").get().n + arrivals.count("pending"), completed: sidecar.prepare("SELECT COUNT(*) AS n FROM station_events WHERE state='done'").get().n + arrivals.count("done"), cursor: Number(getMeta("cursor")) }; },
       close() { if (closed) return; closed = true; healthy = false; sidecar.close(); profiles.close(); source.close(); },
     };

@@ -1,4 +1,5 @@
 import { isIP } from "node:net";
+import { streamListenerPort, streamPathSegment, streamReadToken } from "../stream/mediamtx-config.mjs";
 
 const DEFAULT_CERTIFICATE_NAME = "chogcare-relay";
 
@@ -245,4 +246,63 @@ export function renderResilientHlsRelayNginx(options = {}) {
         proxy_intercept_errors off;
         proxy_pass http://127.0.0.1:18090;
     }`);
+}
+
+/** Server-local LL-HLS, with the two legacy transports left intact. */
+export function renderServerMediaLocation({ streamPath = "station", hlsPort = 8888, hlsReadToken } = {}) {
+  const path = streamPathSegment(streamPath);
+  const port = streamListenerPort(hlsPort);
+  const token = streamReadToken(hlsReadToken);
+  return `    location = /live { return 404; }
+    location = /live/${path} { return 404; }
+    location ^~ /live/${path}/ {
+        limit_except GET { deny all; }
+        # MediaMTX emits direct-child playlists, initialization files and parts.
+        # Queries, including LL-HLS blocking reload parameters, pass unchanged.
+        if ($uri !~ "^/live/${path}/[A-Za-z0-9_-]{1,160}\\\\.(m3u8|mp4|m4s|ts)$") { return 404; }
+        proxy_connect_timeout 1s;
+        proxy_read_timeout 8s;
+        proxy_send_timeout 5s;
+        proxy_next_upstream off;
+        proxy_intercept_errors off;
+        # MediaMTX's HLS handler implements GET. nginx removes the response body
+        # for a client HEAD while keeping readiness checks equivalent to GET.
+        proxy_method GET;
+        proxy_cache off;
+        proxy_buffering off;
+        proxy_request_buffering off;
+        proxy_pass_request_body off;
+        # Defining one proxy header replaces nginx's entire inherited list.
+        # Repeat every privacy reset; viewer checkout identity is unnecessary.
+        proxy_set_header Host 127.0.0.1;
+        proxy_set_header Connection "";
+        proxy_set_header Upgrade "";
+        proxy_set_header X-Forwarded-Proto https;
+        proxy_set_header X-Forwarded-For "";
+        proxy_set_header X-Real-IP "";
+        proxy_set_header Forwarded "";
+        proxy_set_header X-Forwarded-Host "";
+        proxy_set_header X-Forwarded-Port "";
+        proxy_set_header Origin "";
+        proxy_set_header Cookie "";
+        proxy_set_header Idempotency-Key "";
+        proxy_set_header Content-Length "";
+        proxy_set_header Authorization "Bearer ${token}";
+        proxy_hide_header Cache-Control;
+        proxy_hide_header CDN-Cache-Control;
+        proxy_hide_header Vercel-CDN-Cache-Control;
+${securityHeaders.replaceAll("    ", "        ")}
+        add_header Cache-Control no-store always;
+        add_header CDN-Cache-Control no-store always;
+        add_header Vercel-CDN-Cache-Control no-store always;
+        proxy_pass http://127.0.0.1:${port}/${path}/;
+    }`;
+}
+
+export function renderServerMediaRelayNginx(options = {}) {
+  const canonical = renderResilientHlsRelayNginx(options);
+  const marker = "    location / { return 404; }\n}";
+  const at = canonical.lastIndexOf(marker);
+  if (at < 0 || at === canonical.indexOf(marker)) throw new Error("The canonical TLS relay boundary has changed.");
+  return `${canonical.slice(0, at)}${renderServerMediaLocation(options)}\n\n${canonical.slice(at)}`;
 }

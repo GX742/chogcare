@@ -1,4 +1,4 @@
-import { createLiveRetryBudget, LIVE_FIRST_BYTE_DEADLINE_MS, type createLiveLoadState } from "./live-player.ts";
+import { createLiveRetryBudget, liveRecoveryTiming, type LiveTransport, type createLiveLoadState } from "./live-player.ts";
 
 type Timer = ReturnType<typeof setTimeout>;
 type Media = {
@@ -9,10 +9,6 @@ type Media = {
   readonly readyState: number;
   play: () => Promise<void>;
 };
-const STARTUP_LOAD_DEADLINE_MS = 60_000;
-const PLAYBACK_STALL_MS = 45_000;
-const NETWORK_PROGRESS_GRACE_MS = 10_000;
-const MAX_PROGRESS_DEFERRAL_MS = 120_000;
 
 // A paused/offscreen video is not evidence of a browser autoplay rejection.
 // Recover the media itself, with a bounded fast budget and a slow cooldown,
@@ -20,6 +16,7 @@ const MAX_PROGRESS_DEFERRAL_MS = 120_000;
 export function createLivePlaybackRecovery({
   media, active, monitor, resumeLoading, reconnect, onPlaying, onWaiting,
   frameDriven = false, transferProgress = () => null,
+  transport = "relay",
   now = Date.now, schedule = setTimeout, cancel = clearTimeout,
 }: {
   media: Media;
@@ -30,12 +27,14 @@ export function createLivePlaybackRecovery({
   onPlaying: () => void;
   onWaiting: () => void;
   frameDriven?: boolean;
+  transport?: LiveTransport;
   transferProgress?: () => { request: object; loaded: number } | null;
   now?: () => number;
   schedule?: (callback: () => void, delay: number) => Timer;
   cancel?: (timer: Timer) => void;
 }) {
   const budget = createLiveRetryBudget(now);
+  const timing = liveRecoveryTiming(transport);
   let disposed = false, blocked = false, playPending = false, playEpoch = 0;
   let healthTimer: Timer | null = null, recoveryTimer: Timer | null = null;
   let lastTime = media.currentTime, lastProgress = now(), lastNudge = -Infinity;
@@ -147,15 +146,15 @@ export function createLivePlaybackRecovery({
       // Initial manifest, playlist and fragment requests can each take longer
       // than a playback stall. Give this source a finite first-frame deadline;
       // waiting events and seeks must not keep extending it or abort its loader.
-      const timedOut = hasPlayedFrame ? idle >= PLAYBACK_STALL_MS : now() - sourceStartedAt >= STARTUP_LOAD_DEADLINE_MS;
+      const timedOut = hasPlayedFrame ? idle >= timing.stallMs : now() - sourceStartedAt >= timing.startupMs;
       const stalledPlaylist = playlistStale && idle >= 4_000;
       const progressWindow = now() - (hasPlayedFrame ? lastProgress : sourceStartedAt);
       // A known request may still be waiting for the relay to switch transports.
       // Grant that request the same finite first-byte budget as the HLS loader;
       // source/playlist events cannot refresh it, and request churn cannot move
       // the overall hard ceiling measured from the last decoded progress.
-      const pendingFirstByte = transferRequest !== null && transferLoaded === 0 && now() - transferStartedAt < LIVE_FIRST_BYTE_DEADLINE_MS;
-      const usefulTransfer = (pendingFirstByte || now() - lastNetworkProgress < NETWORK_PROGRESS_GRACE_MS) && progressWindow < MAX_PROGRESS_DEFERRAL_MS;
+      const pendingFirstByte = transferRequest !== null && transferLoaded === 0 && now() - transferStartedAt < timing.firstByteMs;
+      const usefulTransfer = (pendingFirstByte || now() - lastNetworkProgress < timing.progressMs) && progressWindow < timing.hardMs;
       if (media.ended || ((timedOut || stalledPlaylist) && !usefulTransfer)) recover();
       else if ((media.paused || idle >= 4_000) && now() - lastNudge >= 3_000) {
         lastNudge = now();

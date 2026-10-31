@@ -5,6 +5,8 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 import { openStationEvents, stationDonation, STATION_MAX_LINE_BYTES, STATION_CAUSES } from "../server/station-events.mjs";
 import { createStationLeaderboard } from "./station-leaderboard.mjs";
 import { createStationBoardTransport, validStationBoardAck } from "./station-board-wire.mjs";
+import { readStationRemoteConfig, createRemoteStationEvents } from "./station-remote-client.mjs";
+import { createRemoteBroadcastFreshness } from "./station-broadcast-remote.mjs";
 
 const eventIdPattern = /^[a-f0-9]{24}$/;
 const RETRY_MS = 5000, ACCEPTED_TIMEOUT_MS = 60_000;
@@ -149,7 +151,10 @@ export async function runStationBridge(args = process.argv.slice(2), { onTestSta
   const options = parseStationArgs(args);
   if (!options.simulate && process.platform !== "win32") throw new Error("The native USB transport is for Windows; --simulate works without opening USB.");
   const project = resolve(dirname(fileURLToPath(import.meta.url)), "..");
+  const remoteConfig = !options.demo && !options.simulate ? readStationRemoteConfig(project) : null;
+  const remoteBroadcast = remoteConfig ? createRemoteBroadcastFreshness() : null;
   let events = null, serial = null, timer = null, stopping = false, tickRunning = false, healthy = options.demo, outputBuffer = "";
+  if (remoteConfig) events = createRemoteStationEvents({ filename: resolve(project, "work/station/remote-acks.sqlite"), ...remoteConfig });
   let broadcastLive = false, broadcastCheckedAt = -Infinity, broadcastCheck = null;
   let boardTransport, leaderboard, boardTask = null, lastBoardAttemptAt = Date.now() - 8000;
   const demoPayload = options.demo ? stationDonation({ id: randomBytes(12).toString("hex"), nick: "DEMO", amount: "300", cause: "solar-foundation", test: true }) : null;
@@ -158,6 +163,7 @@ export async function runStationBridge(args = process.argv.slice(2), { onTestSta
   const finished = new Promise(ok => { finishClose = ok; });
   const close = () => closePromise ??= (async () => {
     stopping = true; clearInterval(timer);
+    remoteBroadcast?.dispose();
     boardTransport?.close(); leaderboard?.close();
     // On Windows ChildProcess.kill is an abrupt TerminateProcess, not a
     // graceful signal. EOF lets the native transport dispose the USB handle.
@@ -166,7 +172,7 @@ export async function runStationBridge(args = process.argv.slice(2), { onTestSta
       serial.stdin.end();
       await exited;
     }
-    try { events?.close(); } catch { console.error("Station queue close failed. Preserve its database; payments were not changed."); process.exitCode = 1; }
+    try { await events?.close(); } catch { console.error("Station queue close failed. Preserve its database; payments were not changed."); process.exitCode = 1; }
     finishClose();
   })();
   const write = line => {
@@ -177,7 +183,7 @@ export async function runStationBridge(args = process.argv.slice(2), { onTestSta
   };
   const controller = createStationController({ write, onTestState, onFault() { console.error("Station display or storage reported a hardware fault. Gratitude is held; reconnect after fixing the device. Payments are unaffected."); }, done(id) { if (options.demo) { demoDone = true; console.log("Demo completed. This did not create or change a payment."); close(); } else events.complete(id); } });
   if (!options.demo && !options.simulate) {
-    leaderboard = createStationLeaderboard();
+    leaderboard = createStationLeaderboard(remoteConfig ? { endpoint: `${remoteConfig.origin}/api/payments/leaderboard` } : {});
     boardTransport = createStationBoardTransport({ write, canSend: () => !stopping && healthy && controller.canShowBoard });
   }
   try {
@@ -214,9 +220,9 @@ export async function runStationBridge(args = process.argv.slice(2), { onTestSta
       if (stopping || tickRunning) return; tickRunning = true;
       try {
         if (!options.simulate && !broadcastCheck && Date.now() - broadcastCheckedAt >= 5000) {
-          broadcastCheck = stationBroadcastLive().then(value => { broadcastLive = value; broadcastCheckedAt = Date.now(); }).finally(() => { broadcastCheck = null; });
+          broadcastCheck = (remoteBroadcast ? remoteBroadcast.check() : stationBroadcastLive()).then(value => { broadcastLive = value; broadcastCheckedAt = Date.now(); }).finally(() => { broadcastCheck = null; });
         }
-        healthy = options.demo || await stationWorkerHealthy();
+        healthy = options.demo || (remoteConfig ? await events.refresh(controller.pendingId) : await stationWorkerHealthy());
         if (stopping) return;
         if (healthy !== previousHealthy && !options.demo) { console.log(healthy ? "Payment worker is healthy; waiting for verified destination receipts." : "Station held: payment worker is offline, locked or not ready. No gratitude command is sent."); previousHealthy = healthy; }
         let allowedId = null;
@@ -225,12 +231,13 @@ export async function runStationBridge(args = process.argv.slice(2), { onTestSta
           // Do not even open payment databases until the trusted local worker
           // says that custody, processing and integrity are ready.
           if (!events && healthy) events = openStationEvents({ processorFilename: resolve(project, "work/payments/processor.sqlite"), profileFilename: resolve(project, "work/payments/preview.sqlite"), stationFilename: resolve(project, options.simulate ? "work/station/simulation.sqlite" : "work/station/station.sqlite") });
-          events?.sync(healthy); const payload = events?.next(Date.now(), controller.pendingId);
+          if (!remoteConfig) events?.sync(healthy);
+          const payload = events?.next(Date.now(), controller.pendingId);
           if (payload) { allowedId = payload.id; boardTransport?.cancel(); controller.offer(payload); }
         }
         // A previously offered arrival can become unverifiable after a reorg.
         // Revalidate its identity before retrying USB; test displays are separate.
-        controller.tick(healthy && (options.demo || allowedId === controller.pendingId), broadcastLive && Date.now() - broadcastCheckedAt <= 8000);
+        controller.tick(healthy && (options.demo || allowedId === controller.pendingId), remoteBroadcast ? remoteBroadcast.live : broadcastLive && Date.now() - broadcastCheckedAt <= 8000);
         // Public board refresh/thumbnail work never occupies the donation tick.
         // Every upload uses a fresh wire nonce, so late thumbnail ACKs cannot
         // acknowledge a new rotation or a real gratitude event.
@@ -242,7 +249,7 @@ export async function runStationBridge(args = process.argv.slice(2), { onTestSta
           }).catch(() => false).finally(() => { lastBoardAttemptAt = Date.now(); boardTask = null; });
         }
         if (options.simulate && controller.pendingId) controller.receive({ v: 1, type: "ack", id: controller.pendingId, status: "done" });
-      } catch { console.error("Station safety check failed; forwarding is paused. Preserve station and payment databases. Payments were not changed."); healthy = false; events?.sync(false); }
+      } catch { console.error("Station safety check failed; forwarding is paused. Preserve station and payment databases. Payments were not changed."); healthy = false; if (!remoteConfig) events?.sync(false); }
       finally { tickRunning = false; }
     };
     process.once("SIGINT", close); process.once("SIGTERM", close);

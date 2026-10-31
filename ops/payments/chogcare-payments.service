@@ -12,12 +12,15 @@ Group=chogcare
 StateDirectory=chogcare
 StateDirectoryMode=0700
 WorkingDirectory=/var/lib/chogcare
-ExecStart=/usr/bin/node /opt/chogcare-payments/scripts/cloud-payments.mjs
+ExecStart=/opt/chogcare-node-v24.22.0/bin/node /opt/chogcare-payments/scripts/cloud-payments.mjs
 LoadCredentialEncrypted=custody-password:/etc/credstore.encrypted/chogcare-custody
 Environment=CHOGCARE_PUBLIC_ORIGIN=https://chogcare.xyz
 Restart=on-failure
 RestartSec=5
 TimeoutStopSec=120
+# An overdue stop needs operator reconciliation; never force-kill custody while
+# it is draining a durable transaction/checkpoint/recovery snapshot.
+SendSIGKILL=no
 KillSignal=SIGTERM
 UMask=0077
 NoNewPrivileges=true

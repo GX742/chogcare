@@ -2,6 +2,10 @@
   "$schema": "https://openapi.vercel.sh/vercel.json",
   "rewrites": [
     {
+      "source": "/live/:path*",
+      "destination": "https://45.38.60.159/live/:path*"
+    },
+    {
       "source": "/hls/:path*",
       "destination": "https://45.38.60.159/hls/:path*"
     },
@@ -13,6 +17,14 @@
     { "source": "/dashboard/", "destination": "/index.html" }
   ],
   "headers": [
+    {
+      "source": "/live/:path*",
+      "headers": [
+        { "key": "Cache-Control", "value": "no-store" },
+        { "key": "CDN-Cache-Control", "value": "no-store" },
+        { "key": "x-vercel-enable-rewrite-caching", "value": "0" }
+      ]
+    },
     {
       "source": "/assets/:path*",
       "headers": [{ "key": "Cache-Control", "value": "public, max-age=31536000, immutable" }]

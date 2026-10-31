@@ -44,7 +44,7 @@ function deferred() {
   return { promise, resolve, reject };
 }
 
-function playerFixture({frameDriven=false}={}) {
+function playerFixture({frameDriven=false,transport="relay"}={}) {
   const clock = fakeClock(), states = [], calls = { play: [], load: [], catchUp: [], reconnect: [], playing: [], waiting: [], transfer: [] };
   let active = true, playBehavior, reconnectBehavior, transfer=null;
   const media = {
@@ -62,7 +62,7 @@ function playerFixture({frameDriven=false}={}) {
   });
   const recovery = createLivePlaybackRecovery({
     media, active: () => active, monitor,
-    frameDriven, transferProgress:()=>{calls.transfer.push(clock.now());return transfer;},
+    frameDriven, transport, transferProgress:()=>{calls.transfer.push(clock.now());return transfer;},
     resumeLoading(catchUp = false) { calls.load.push(clock.now()); calls.catchUp.push(catchUp); },
     reconnect() { calls.reconnect.push(clock.now()); reconnectBehavior?.(); },
     onPlaying() { calls.playing.push(clock.now()); },
@@ -79,6 +79,44 @@ function playerFixture({frameDriven=false}={}) {
     dispose() { recovery.dispose(); monitor.dispose(); },
   };
 }
+
+test("server delivery rebuilds a frozen player after six seconds instead of the relay's long failover window", async () => {
+  const fixture = playerFixture({ frameDriven: true, transport: "server" });
+  await fixture.start();
+  fixture.recovery.frame(11);
+  fixture.recovery.waiting();
+  await fixture.clock.advance(5999);
+  assert.equal(fixture.calls.reconnect.length, 0);
+  await fixture.clock.advance(1001);
+  assert.deepEqual(fixture.calls.reconnect, [7000]);
+  fixture.dispose();
+});
+
+test("a server source without its first frame has a twelve-second startup deadline", async () => {
+  const fixture = playerFixture({ frameDriven: true, transport: "server" });
+  await fixture.start();
+  await fixture.clock.advance(11_999);
+  assert.equal(fixture.calls.reconnect.length, 0);
+  await fixture.clock.advance(1001);
+  assert.deepEqual(fixture.calls.reconnect, [13_000]);
+  fixture.dispose();
+});
+
+test("server request churn cannot extend a frozen decoder beyond the hard deadline", async () => {
+  const fixture = playerFixture({ frameDriven: true, transport: "server" });
+  await fixture.start();
+  fixture.recovery.frame(11);
+  for (let index=0; index<23; index++) {
+    fixture.setTransfer({ request: {}, loaded: index+1 });
+    fixture.recovery.receivedData(1);
+    await fixture.clock.advance(1000);
+  }
+  assert.equal(fixture.calls.reconnect.length, 0, "Useful transfers get a bounded chance to finish");
+  fixture.setTransfer({ request: {}, loaded: 1 });
+  await fixture.clock.advance(2000);
+  assert.deepEqual(fixture.calls.reconnect, [25_000], "Only decoded progress resets the hard deadline");
+  fixture.dispose();
+});
 
 test("scrolling a playing video offscreen for more than 15 seconds resumes without a tap or Retry", async () => {
   const fixture = playerFixture();

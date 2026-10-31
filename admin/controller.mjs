@@ -15,7 +15,9 @@ const PASSWORD = value => typeof value === "string" && value.length >= 1 && valu
 class SafeAdminError extends Error {}
 const failure = message => new SafeAdminError(message);
 const DESIRED_VIDEO = Object.freeze({ latencyLevel: 0, videoQualityVariants: [{ name: "1080p", videoPassthrough: false, audioPassthrough: false, videoBitrate: 4500, audioBitrate: 128, scaledWidth: 1080, scaledHeight: 0, framerate: 30, cpuUsageLevel: 2 }] });
+const HOST_RETIRED_MESSAGE = "Payments were retired on this computer for migration. Keep the recovery files; use the designated payment server. Do not remove the retirement marker to restart custody.";
 const CHILD_EVENTS = Object.freeze({
+  "HOST_RETIRED": ["error", HOST_RETIRED_MESSAGE],
   "backup-saved": ["info", "Encrypted payment recovery bundle saved locally. Keep an off-device copy."],
   "backup-verified": ["info", "Payment recovery bundle passed an isolated restore check. No funds moved."],
   "backup-failed": ["warning", "Payment recovery backup needs attention. Existing payments continue; check protected storage and free disk space."],
@@ -317,6 +319,14 @@ export async function createAdminController({ workspacePath, nodePath, onChange 
 
   async function launchChild(id, password, port) {
     if (children.has(id)) throw failure("This service is already managed by the app.");
+    if (id === "payments") {
+      try {
+        // Installed Admin is packaged independently of the trusted workspace.
+        // Load its guard from that workspace, just like the financial worker.
+        const check = dependencies.assertPaymentHostActive ?? (await import(pathToFileURL(join(workspace, "server/payment-host-retirement.mjs")).href)).assertPaymentHostActive;
+        await check(workspace);
+      } catch { throw failure(HOST_RETIRED_MESSAGE); }
+    }
     if (id === "payments") paymentHandoff = true;
     try {
     if (id === "payments") { await openingOffline; await closeOffline(); }

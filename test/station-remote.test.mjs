@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { DatabaseSync } from "node:sqlite";
-import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, renameSync, rmSync } from "node:fs";
+import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, renameSync, symlinkSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createHash } from "node:crypto";
@@ -227,4 +227,20 @@ test("sidecar relocation rejects source substitution and rollback before publish
   const wrong = new DatabaseSync(settings.stationSnapshot); wrong.prepare("UPDATE station_meta SET value=? WHERE name='source'").run("f".repeat(64)); wrong.close();
   assert.throws(() => relocateStationOutbox(settings), /another source/);
   assert.throws(() => readFileSync(settings.stationFilename), { code: "ENOENT" });
+});
+
+test("sidecar relocation refuses an existing destination without overwriting it or financial state", t => {
+  const { settings } = migratedState(t), before = [settings.processorFilename, settings.profileFilename].map(paymentStateDigest);
+  writeFileSync(settings.stationFilename, "synthetic existing sidecar");
+  assert.throws(() => relocateStationOutbox(settings), { code: "EEXIST" });
+  assert.equal(readFileSync(settings.stationFilename, "utf8"), "synthetic existing sidecar");
+  assert.deepEqual([settings.processorFilename, settings.profileFilename].map(paymentStateDigest), before);
+});
+
+test("sidecar relocation refuses a linked destination parent before creating a target", t => {
+  const { f, settings } = migratedState(t), actual = join(f.path, "actual"), linked = join(f.path, "linked");
+  mkdirSync(actual);
+  symlinkSync(actual, linked, process.platform === "win32" ? "junction" : "dir");
+  assert.throws(() => relocateStationOutbox({ ...settings, stationFilename: join(linked, "station.sqlite") }));
+  assert.throws(() => readFileSync(join(actual, "station.sqlite")), { code: "ENOENT" });
 });

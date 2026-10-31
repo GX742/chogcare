@@ -14,7 +14,7 @@ test("portrait camera frame uses the actual ratio without scaling/cropping lands
 
 const ranges = (...pairs) => ({ length: pairs.length, start: index => pairs[index][0], end: index => pairs[index][1] });
 
-test("server LL-HLS keeps a short buffer and finite origin timeouts without mutating shared vendor defaults", () => {
+test("server HLS keeps a short buffer and finite origin timeouts without mutating shared vendor defaults", () => {
   const before=structuredClone(Hls.DefaultConfig.manifestLoadPolicy);
   const config=liveHlsConfig(1,Hls.DefaultConfig,"server");
   assert.equal(config.liveSyncDurationCount,2);
@@ -22,7 +22,7 @@ test("server LL-HLS keeps a short buffer and finite origin timeouts without muta
   assert.equal(config.maxBufferLength,4);
   assert.equal(config.maxMaxBufferLength,6);
   assert.equal(config.backBufferLength,2);
-  assert.equal(config.lowLatencyMode,true);
+  assert.equal(config.lowLatencyMode,false);
   for (const name of ["manifestLoadPolicy","playlistLoadPolicy","fragLoadPolicy"]) {
     assert.equal(config[name].default.maxTimeToFirstByteMs,4000);
     assert.ok(config[name].default.maxLoadTimeMs<=12_000);
@@ -30,6 +30,80 @@ test("server LL-HLS keeps a short buffer and finite origin timeouts without muta
   }
   config.manifestLoadPolicy.default.maxTimeToFirstByteMs=999;
   assert.deepEqual(Hls.DefaultConfig.manifestLoadPolicy,before);
+});
+
+test("the installed HLS controller selects complete server segments instead of the unfinished LL-HLS fragment", t => {
+  const oldSelf = globalThis.self;
+  globalThis.self = { location: { href: "https://example.invalid/" }, performance };
+  t.after(() => { if (oldSelf === undefined) delete globalThis.self; else globalThis.self = oldSelf; });
+  const source = "https://example.invalid/live/station/index.m3u8";
+  const playlist = [
+    "#EXTM3U", "#EXT-X-VERSION:9", "#EXT-X-TARGETDURATION:1", "#EXT-X-MEDIA-SEQUENCE:100",
+    "#EXT-X-SERVER-CONTROL:CAN-BLOCK-RELOAD=YES,HOLD-BACK=3,PART-HOLD-BACK=0.6",
+    "#EXT-X-PART-INF:PART-TARGET=0.2", '#EXT-X-MAP:URI="init.mp4"',
+    ...Array.from({ length: 7 }, (_, index) => `#EXTINF:1.0,\nsegment-${100 + index}.mp4`),
+    '#EXT-X-PART:DURATION=0.2,URI="part-107-0.mp4",INDEPENDENT=YES',
+    '#EXT-X-PART:DURATION=0.2,URI="part-107-1.mp4"',
+    '#EXT-X-PART:DURATION=0.2,URI="part-107-2.mp4"',
+    '#EXT-X-PRELOAD-HINT:TYPE=PART,URI="part-107-3.mp4"', "",
+  ].join("\n");
+  // Exercise the installed playlist parser and controller. Only the byte source
+  // is replaced: this fixture cannot perform an HTTP request or load media.
+  class PlaylistFixtureLoader {
+    constructor() {
+      this.stats = { aborted: false, loaded: playlist.length, total: playlist.length, retry: 0, chunkCount: 1,
+        bwEstimate: 0, loading: { start: 1, first: 2, end: 3 }, parsing: { start: 0, end: 0 },
+        buffering: { start: 0, first: 0, end: 0 } };
+    }
+    load(context, _config, callbacks) {
+      assert.equal(context.url, source);
+      assert.equal(context.responseType, "text");
+      this.context = context;
+      callbacks.onSuccess({ url: source, data: playlist, code: 200 }, this.stats, context, null);
+    }
+    abort() { this.stats.aborted = true; }
+    destroy() {}
+    getCacheAge() { return null; }
+    getResponseHeader() { return null; }
+  }
+  for (const previousPartMode of [true, false]) {
+    const config = liveHlsConfig(1, Hls.DefaultConfig, "server");
+    const hls = new Hls({ ...config, ...(previousPartMode ? { lowLatencyMode: true } : {}),
+      loader: PlaylistFixtureLoader, pLoader: PlaylistFixtureLoader, autoStartLoad: false, enableWorker: false });
+    const controller = hls.streamController;
+    try {
+      let details;
+      hls.on(Hls.Events.LEVEL_LOADED, (_event, data) => { details = data.details; });
+      hls.on(Hls.Events.ERROR, (_event, data) => assert.fail(`Synthetic playlist failed: ${data.details}`));
+      hls.loadSource(source);
+      assert.equal(details.targetduration, 1);
+      assert.equal(details.partTarget, 0.2);
+      assert.equal(details.partHoldBack, 0.6);
+      assert.equal(details.partList.length, 3);
+      // No MediaSource is attached. Supply the parsed level as the controller's
+      // current rendition and skip only the initial media timestamp discovery.
+      const level = { details, iframes: false };
+      controller.levels = [level];
+      controller.levelLastLoaded = level;
+      details.PTSKnown = true;
+      controller.startPosition = 0;
+      assert.equal(hls.targetLatency, 2, "The explicit two-segment target wins over both hold-back values");
+      const fragment = controller.getNextFragment(7.3, details);
+      assert.ok(fragment);
+      assert.equal(controller.loadingParts, previousPartMode);
+      if (previousPartMode) {
+        assert.equal(fragment, details.fragmentHint, "Part mode enters the still-incomplete next fragment");
+        const part = details.partList[controller.getNextPart(details.partList, fragment, 7.3)];
+        assert.ok(part);
+        assert.equal(part.fragment.sn, 107);
+        assert.match(part.url, /\/part-107-\d\.mp4$/);
+      } else {
+        assert.equal(fragment, details.fragments.at(-1));
+        assert.equal(fragment.sn, 106);
+        assert.equal(fragment.url, "https://example.invalid/live/station/segment-106.mp4");
+      }
+    } finally { hls.destroy(); }
+  }
 });
 
 test("MSE wins when Chromium also advertises native HLS; native is a capability fallback", () => {

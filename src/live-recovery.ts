@@ -1,4 +1,4 @@
-import { createLiveRetryBudget, type createLiveLoadState } from "./live-player.ts";
+import { createLiveRetryBudget, LIVE_FIRST_BYTE_DEADLINE_MS, type createLiveLoadState } from "./live-player.ts";
 
 type Timer = ReturnType<typeof setTimeout>;
 type Media = {
@@ -42,6 +42,7 @@ export function createLivePlaybackRecovery({
   let sourceStartedAt = lastProgress, hasPlayedFrame = false, suspended = false;
   let recoveryOperation = reconnect, repairRequired = false;
   let playlistStale = false, transferRequest: object | null = null, transferLoaded = 0;
+  let transferStartedAt = 0;
   let lastNetworkProgress = -Infinity;
   const invalidatePlay = () => { playEpoch++; playPending = false; };
   const clearHealth = () => { if (healthTimer !== null) cancel(healthTimer); healthTimer = null; };
@@ -134,13 +135,13 @@ export function createLivePlaybackRecovery({
       const transfer = transferProgress();
       if (transfer && Number.isFinite(transfer.loaded) && transfer.loaded >= 0) {
         if (transfer.request !== transferRequest || transfer.loaded < transferLoaded) {
-          transferRequest = transfer.request; transferLoaded = 0;
+          transferRequest = transfer.request; transferLoaded = 0; transferStartedAt = now();
         }
         if (transfer.loaded > transferLoaded) {
           transferLoaded = transfer.loaded; lastNetworkProgress = now();
         }
-      } else { transferRequest = null; transferLoaded = 0; }
-    } catch { /* Missing loader statistics cannot disable the finite watchdog. */ }
+      } else { transferRequest = null; transferLoaded = 0; transferStartedAt = 0; }
+    } catch { transferRequest = null; transferLoaded = 0; transferStartedAt = 0; }
     if (!markProgress() && recoveryTimer === null) {
       const idle = now() - lastProgress;
       // Initial manifest, playlist and fragment requests can each take longer
@@ -149,7 +150,12 @@ export function createLivePlaybackRecovery({
       const timedOut = hasPlayedFrame ? idle >= PLAYBACK_STALL_MS : now() - sourceStartedAt >= STARTUP_LOAD_DEADLINE_MS;
       const stalledPlaylist = playlistStale && idle >= 4_000;
       const progressWindow = now() - (hasPlayedFrame ? lastProgress : sourceStartedAt);
-      const usefulTransfer = now() - lastNetworkProgress < NETWORK_PROGRESS_GRACE_MS && progressWindow < MAX_PROGRESS_DEFERRAL_MS;
+      // A known request may still be waiting for the relay to switch transports.
+      // Grant that request the same finite first-byte budget as the HLS loader;
+      // source/playlist events cannot refresh it, and request churn cannot move
+      // the overall hard ceiling measured from the last decoded progress.
+      const pendingFirstByte = transferRequest !== null && transferLoaded === 0 && now() - transferStartedAt < LIVE_FIRST_BYTE_DEADLINE_MS;
+      const usefulTransfer = (pendingFirstByte || now() - lastNetworkProgress < NETWORK_PROGRESS_GRACE_MS) && progressWindow < MAX_PROGRESS_DEFERRAL_MS;
       if (media.ended || ((timedOut || stalledPlaylist) && !usefulTransfer)) recover();
       else if ((media.paused || idle >= 4_000) && now() - lastNudge >= 3_000) {
         lastNudge = now();
@@ -201,7 +207,7 @@ export function createLivePlaybackRecovery({
         invalidatePlay(); clearRecovery(); repairRequired = false;
         lastTime = media.currentTime; lastProgress = now();
         sourceStartedAt = lastProgress; hasPlayedFrame = false;
-        playlistStale = false; transferRequest = null; transferLoaded = 0; lastNetworkProgress = -Infinity;
+        playlistStale = false; transferRequest = null; transferLoaded = 0; transferStartedAt = 0; lastNetworkProgress = -Infinity;
       }
     },
     unavailable() { if (!disposed) { clearHealth(); clearRecovery(); monitor.unavailable(); onWaiting(); } },

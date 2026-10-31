@@ -58,6 +58,11 @@ more time for a slow initial response before a live-edge correction interrupts
 the download. Native Safari also catches accumulated lag after
 playback starts. This small safety window absorbs relay latency; caching can
 reduce duplicate upstream traffic but cannot speed up the first cold transfer.
+The HLS loader allows fifty seconds to receive the first byte so it cannot
+cancel before the relay's bounded primary/fallback attempt completes. Manifest
+and playlist loads retain a finite sixty-second budget; fragment loads retain
+at least 120 seconds. The playback watchdog separately checks decoded frames,
+stale playlists and actual transfer progress, with a hard recovery cap.
 This is ordinary HLS, so total camera-to-viewer delay still includes segment
 completion, re-encoding, transport and the player's safety buffer.
 

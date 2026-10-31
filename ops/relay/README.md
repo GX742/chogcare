@@ -91,6 +91,11 @@ playlists, previews, failures and payment responses must remain uncached.
 Any prewarmer must read playlists through this same public HTTPS HLS route,
 with normal certificate verification, rather than depending on SSH being up.
 The isolated nginx fixture exercises failover without changing live services.
+Failover handles failures before response headers are sent; the player retries
+a stalled partial download. An existing strict cache-status map can leave a
+failed-over `502 : 200` response uncached on the relay. Keep that conservative
+guard: completed successful TS responses still carry the gateway's public CDN
+cache policy, while errors, playlists and payment responses remain uncached.
 
 ## IP certificate and renewal
 

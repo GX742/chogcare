@@ -271,6 +271,52 @@ test("an endless byte trickle without decoded frames still reaches the hard reco
   fixture.dispose();
 });
 
+test("a pending first-byte request gets the relay's fifty-second budget without changing generic stall recovery", async () => {
+  for(const stale of [false,true]){
+    const fixture=playerFixture();await fixture.start();fixture.setTransfer({request:{},loaded:0});
+    if(stale)fixture.recovery.playlistStalled();
+    await fixture.clock.advance(46_000);
+    assert.equal(fixture.calls.reconnect.length,0,"A real pending relay request must survive the former forty-five-second watchdog");
+    for(let index=0;index<4;index++){
+      fixture.recovery.waiting();await fixture.clock.advance(1000);
+    }
+    assert.equal(fixture.calls.reconnect.length,0,"Repeated waiting cannot reset or shorten the first-byte budget");
+    await fixture.clock.advance(2000);
+    assert.deepEqual(fixture.calls.reconnect,[52_000],"First health observation adds at most one tick, followed by normal recovery backoff");
+    fixture.dispose();
+  }
+  const generic=playerFixture();await generic.start();await generic.clock.advance(46_000);
+  assert.deepEqual(generic.calls.reconnect,[46_000],"A player without an actual pending request keeps its existing recovery deadline");
+  generic.dispose();
+});
+
+test("new zero-byte requests cannot keep extending the overall hard recovery ceiling", async () => {
+  const fixture=playerFixture();await fixture.start();
+  for(let index=0;index<24;index++){
+    fixture.setTransfer({request:{},loaded:0});fixture.recovery.waiting();
+    fixture.recovery.playlistAdvanced();await fixture.clock.advance(5000);
+  }
+  await fixture.clock.advance(1000);
+  assert.deepEqual(fixture.calls.reconnect,[121_000],"Retry/request identities and playlist events cannot postpone the hard ceiling");
+  fixture.dispose();
+});
+
+test("a pending playlist grants only first-byte grace and completion/error removes that grace without fabricating frames", async () => {
+  for(const outcome of ["loaded","nonfatal-error"]){
+    const fixture=playerFixture();await fixture.start();
+    const playlist={kind:"playlist",loaded:0},frames=fixture.calls.playing.length;
+    fixture.setTransfer({request:playlist,loaded:0});
+    await fixture.clock.advance(46_000);
+    assert.equal(fixture.calls.reconnect.length,0,"A playlist request can finish relay failover after the generic stall deadline");
+    assert.equal(fixture.calls.playing.length,frames,"Synthetic playlist metadata cannot invent bytes or decoded video");
+    fixture.setTransfer(null); // LEVEL_LOADED or its matching nonfatal load error.
+    await fixture.clock.advance(2000);
+    assert.equal(fixture.calls.reconnect.length,1,`${outcome} must release pending-request grace if the video remains frozen`);
+    assert.equal(fixture.calls.playing.length,frames);
+    fixture.dispose();
+  }
+});
+
 test("a fragment completing between watchdog ticks gets a short decode grace without inventing playback", async () => {
   const fixture=playerFixture();await fixture.start();
   await fixture.clock.advance(44_900);

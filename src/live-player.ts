@@ -4,6 +4,7 @@ export const DEFAULT_LIVE_SEGMENT_SECONDS = 3;
 export const MOBILE_LIVE_SEGMENT_SECONDS = 3;
 export const LIVE_SYNC_SEGMENT_COUNT = 3;
 export const LIVE_MAX_LATENCY_SEGMENT_COUNT = 6;
+export const LIVE_FIRST_BYTE_DEADLINE_MS = 50_000;
 
 // Three-second media amortizes the public relay's request overhead. Keep the
 // client target at six seconds rather than accumulating an unbounded backlog.
@@ -54,9 +55,29 @@ export function livePlaybackStrategy(mseSupported: boolean, nativeSupported: boo
   return mseSupported ? "hls" : nativeSupported ? "native" : "unsupported";
 }
 
-// Segment counts adapt when Owncast changes from 3-second to shorter segments.
+type LiveLoadPolicies = Pick<HlsConfig, "manifestLoadPolicy" | "playlistLoadPolicy" | "fragLoadPolicy">;
+
+function relayLoadPolicy(policy: HlsConfig["manifestLoadPolicy"], minimumLoadMs: number) {
+  const original = policy.default;
+  // A primary connection/idle failure plus the backup can consume 43 seconds.
+  // Keep CDN overhead inside a finite first-byte budget, and preserve the
+  // library's retry policies rather than replacing them with local defaults.
+  const firstByte = Math.max(LIVE_FIRST_BYTE_DEADLINE_MS, Number.isFinite(original.maxTimeToFirstByteMs) ? original.maxTimeToFirstByteMs : 0);
+  return {
+    ...policy,
+    default: {
+      ...original,
+      maxTimeToFirstByteMs: firstByte,
+      maxLoadTimeMs: Math.max(minimumLoadMs, firstByte, Number.isFinite(original.maxLoadTimeMs) ? original.maxLoadTimeMs : 0),
+      timeoutRetry: original.timeoutRetry === null ? null : { ...original.timeoutRetry },
+      errorRetry: original.errorRetry === null ? null : { ...original.errorRetry },
+    },
+  };
+}
+
+// Segment counts adapt to the actual rendition, including six-second media.
 // A smaller back buffer limits memory; it is not an end-to-end latency target.
-export function liveHlsConfig(segmentSeconds = DEFAULT_LIVE_SEGMENT_SECONDS): Partial<HlsConfig> {
+export function liveHlsConfig(segmentSeconds = DEFAULT_LIVE_SEGMENT_SECONDS, defaults?: LiveLoadPolicies): Partial<HlsConfig> {
   return {
     enableWorker: true,
     lowLatencyMode: true,
@@ -65,6 +86,11 @@ export function liveHlsConfig(segmentSeconds = DEFAULT_LIVE_SEGMENT_SECONDS): Pa
     liveSyncOnStallIncrease: 0,
     liveMaxUnchangedPlaylistRefresh: 6,
     backBufferLength: 4,
+    ...(defaults ? {
+      manifestLoadPolicy: relayLoadPolicy(defaults.manifestLoadPolicy, 60_000),
+      playlistLoadPolicy: relayLoadPolicy(defaults.playlistLoadPolicy, 60_000),
+      fragLoadPolicy: relayLoadPolicy(defaults.fragLoadPolicy, 120_000),
+    } : {}),
   };
 }
 

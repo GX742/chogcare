@@ -222,7 +222,13 @@ function NativeLivePlayer({ src, onReady, onWaiting, onAspect }: { src: string; 
       setLoadState(state);
       if (state === "blocked" || state === "unavailable") liveStatus.unavailable();
     } });
-    const resumeSync = createLiveResumeSync({ media: video, segmentSeconds: () => segmentSeconds, liveSyncPosition: () => hls?.liveSyncPosition ?? null });
+    const resumeSync = createLiveResumeSync({
+      media: video, segmentSeconds: () => segmentSeconds,
+      liveSyncPosition: () => hls?.liveSyncPosition ?? null,
+      // MSE seekable describes the advertised live window, including media
+      // still being downloaded. Resume only inside data already buffered.
+      bufferRanges: () => hls ? video.buffered : video.seekable,
+    });
     const driftSync = createLiveDriftSync({ media: video, active: () => nativeActive && active(), segmentSeconds: () => segmentSeconds });
     const updateAspect = () => {
       if (!cancelled && video.videoWidth > 0 && video.videoHeight > 0) callbacks.current.onAspect(portraitFrameAspect(video.videoWidth, video.videoHeight));

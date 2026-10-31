@@ -8,7 +8,7 @@ import { createAddressAllocator } from "./address-allocator.mjs";
 import { verifyChogDeposit, finalizedReceipt, inspectReceipt, AwaitingFinalityError, NonCanonicalReceiptError, ChogDepositMismatchError } from "./chain-receipts.mjs";
 import { bridgeQuote, relayJson, RELAY_DEPOSITORY } from "./relay-route.mjs";
 import { saleQuote, usdcQuote } from "./source-quotes.mjs";
-import { CHOG_DONATION_MAX_BRIDGE_LOSS_BPS, minimumBridgeDelivery, assertBridgeDelivery, assertCrossAssetBridgeDelivery } from "./bridge-cost-policy.mjs";
+import { minimumBridgeDelivery, assertBridgeDelivery, assertCrossAssetBridgeDelivery } from "./bridge-cost-policy.mjs";
 import { chogBeneficiary, acceptsNewChog, initiativeChain, CHOG_INITIATIVES, NFT_POOL_TREASURY } from "../src/chog-beneficiary.ts";
 import { contributionForDonationUnits, splitSettlementUnits } from "../src/pool-contribution.ts";
 import { sourceJournal, assertSourceNonceAvailable } from "./source-journal.mjs";
@@ -444,7 +444,7 @@ export function createChogProcessor({ filename, vault, root, checkpoint=()=>{}, 
     leaderboardDonation(id){return closed||!/^[a-f0-9]{64}$/.test(id??"")?null:verifiedLeaderboardDonation(load(id),id);},
     refreshReadiness,
     track:trackPending,
-    publicStatus(){const networkReady=!closed&&readinessNow()-healthyAt<60_000,queueFull=!closed&&db.prepare("SELECT COUNT(*) AS n FROM chog_invoices WHERE state IN ('awaiting-payment','processing','bridging','confirming')").get().n>=3;return {paymentsEnabled:networkReady&&gasBalance>=OPERATOR_READY_BALANCE&&!queueFull,chogQueueFull:queueFull,chogReadiness:!networkReady?"network-unavailable":gasBalance<OPERATOR_READY_BALANCE?"gas-needed":queueFull?"queue-full":"ready",paymentMode:"local-pilot",workerVersion:"2026-10-22-auto-refunds-v18",destinationChainId:newDestinationChainId,supportedModes:["chog"],supportedInitiatives:[...CHOG_INITIATIVES],poolContributionPercent:10,poolContributionMode:"added-on-top",poolContributionBatchMinimumUsdc:"5.00",poolContributionPendingUsdc:formatUnits(poolPendingUsdc,6)};},
+    publicStatus(){const networkReady=!closed&&readinessNow()-healthyAt<60_000,queueFull=!closed&&db.prepare("SELECT COUNT(*) AS n FROM chog_invoices WHERE state IN ('awaiting-payment','processing','bridging','confirming')").get().n>=3;return {paymentsEnabled:networkReady&&gasBalance>=OPERATOR_READY_BALANCE&&!queueFull,chogQueueFull:queueFull,chogReadiness:!networkReady?"network-unavailable":gasBalance<OPERATOR_READY_BALANCE?"gas-needed":queueFull?"queue-full":"ready",paymentMode:"local-pilot",workerVersion:"2026-10-31-small-chog-v19",destinationChainId:newDestinationChainId,supportedModes:["chog"],supportedInitiatives:[...CHOG_INITIATIVES],poolContributionPercent:10,poolContributionMode:"added-on-top",poolContributionBatchMinimumUsdc:"5.00",poolContributionPendingUsdc:formatUnits(poolPendingUsdc,6)};},
     cancelUnpaidChog(id){
       if(closed||!/^[a-f0-9]{64}$/.test(id??"")||activeInvoices.has(id))throw Error("Payment observation is in progress. Retry the same cancellation.");
       const x=load(id);
@@ -475,9 +475,11 @@ export function createChogProcessor({ filename, vault, root, checkpoint=()=>{}, 
       const allocation=contributionForDonationUnits(donationUnits),units=allocation.totalUnits;
       const sale=await quoteSale(source,units), swap=await quoteSwap(source,BigInt(sale.minMon));
       const sourceSplit=splitSettlementUnits(BigInt(swap.minUsdc));
-      const requiredDelivery=minimumBridgeDelivery(sourceSplit.causeUnits,CHOG_DONATION_MAX_BRIDGE_LOSS_BPS);
-      const estimate=await quoteBridge(root.address,sourceSplit.causeUnits,invoiceChain===SOLANA_CHAIN_ID?1n:200_000n,invoiceChain,input.initiativeId);
-      if(invoiceChain===SOLANA_CHAIN_ID)assertCrossAssetBridgeDelivery(estimate,requiredDelivery);else assertBridgeDelivery(estimate,requiredDelivery);
+      // The donor chooses the CHOG amount. Bind its validated, positive signed
+      // payout without imposing a dollar floor or percentage fee ceiling.
+      const estimate=await quoteBridge(root.address,sourceSplit.causeUnits,1n,invoiceChain,input.initiativeId);
+      assertBridgeDelivery(estimate,1n);
+      if(invoiceChain===SOLANA_CHAIN_ID)assertCrossAssetBridgeDelivery(estimate,1n);
       if(db.prepare("SELECT COUNT(*) AS n FROM chog_invoices WHERE state IN ('awaiting-payment','processing','bridging','confirming')").get().n>=3)throw new Error("Three payments are already active. Please wait.");
       // Finish every network read before reserving an address. A timeout after
       // allocation would otherwise leave an intent with no recoverable invoice.

@@ -77,7 +77,7 @@ export async function validateRelayOrder(quote, payer, amount, minimumOutput, no
   };
 }
 
-export async function bridgeQuote(payer, amount, minimumOutput = 200_000n, destinationChainId = 1, initiativeId = "burundi") {
+export async function bridgeQuote(payer, amount, minimumOutput = 1n, destinationChainId = 1, initiativeId = "burundi") {
   const network = deliveryNetwork(destinationChainId);
   const recipient = chogBeneficiary(initiativeId, destinationChainId);
   const quote = await relayJson("/quote/v2", {

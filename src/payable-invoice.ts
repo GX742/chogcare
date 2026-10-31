@@ -32,7 +32,7 @@ export function validatePayableInvoice(raw: unknown): PayableInvoice {
     !isAddress(x.depositAddress) || [zeroAddress,CHOG,GIVETH_PROJECT_RECIPIENT,recipient].some(a=>a.toLowerCase()===x.depositAddress.toLowerCase()) ||
     !matches(x.amount,/^\d{1,7}(\.\d{1,18})?$/) ||
     !["awaiting-payment","processing","bridging","confirming","delivered","expired","manual-review"].includes(x.state) ||
-    !Number.isSafeInteger(x.expiresAt) || x.expiresAt<=0 || !matches(x.minUsdc,/^\d{1,20}$/) || BigInt(x.minUsdc)<=0n || !matches(x.minimumUsd,/^\d{1,20}$/) || BigInt(x.minimumUsd)<200_000n ||
+    !Number.isSafeInteger(x.expiresAt) || x.expiresAt<=0 || !matches(x.minUsdc,/^\d{1,20}$/) || BigInt(x.minUsdc)<=0n || !matches(x.minimumUsd,/^\d{1,20}$/) || BigInt(x.minimumUsd)<=0n ||
     (x.message!==null&&(typeof x.message!=="string"||x.message.length>300)))throw new Error("Payment instructions failed verification.");
   const units=parseUnits(x.amount,18),contributionInvoice=x.contributionPercent===10;
   if(contributionInvoice){

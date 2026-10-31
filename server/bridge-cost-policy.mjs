@@ -1,5 +1,6 @@
-// Applies to NEW invoices only. This bounds bridge loss in USDC, not the
-// CHOG market price, sale slippage, network gas or recipient conversion fees.
+// Pool batching and historical policy checks retain these economic limits.
+// New individual CHOG invoices accept a positive signed delivery and pin its
+// actual minimum; they have no fixed USD floor or percentage bridge-loss gate.
 export const CHOG_DONATION_MAX_BRIDGE_LOSS_BPS = 600n;
 export function minimumBridgeDelivery(inputUnits, maximumLossBps = 400n) {
   if (typeof inputUnits !== "bigint" || inputUnits <= 0n || typeof maximumLossBps !== "bigint" || maximumLossBps < 0n || maximumLossBps > 1000n) throw new Error("Invalid bridge input.");

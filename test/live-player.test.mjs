@@ -40,6 +40,7 @@ test("live HLS uses adaptive segment-count latency with a finite recovery thresh
   assert.equal(config.maxMaxBufferLength, 12);
   assert.equal(config.backBufferLength, 4);
   assert.equal(config.lowLatencyMode, true);
+  assert.equal(config.liveSyncMode, "buffered");
   assert.equal(config.enableWorker, true);
   assert.equal(config.liveMaxUnchangedPlaylistRefresh, 6, "Repeated HTTP-200 playlists cannot remain silently stale forever");
   for (const property of ["liveSyncDuration", "liveMaxLatencyDuration", "startLevel", "loadLevel", "currentLevel", "capLevelToPlayerSize"]) assert.equal(Object.hasOwn(config, property), false, property);
@@ -184,6 +185,137 @@ function fakeTimers() {
   };
 }
 
+function installedHlsController(t, { mode = liveHlsConfig(6).liveSyncMode, buffered = [], readyState = 4, started = true, dispatchSeeking = false } = {}) {
+  const hls = new Hls({ ...liveHlsConfig(6), autoStartLoad: false, enableWorker: false, liveSyncMode: mode });
+  const controller = hls.streamController, seeks = [];
+  let currentTime = 60, aborted = 0;
+  const media = {
+    duration: Infinity, readyState, seeking: false, seekable: ranges([50, 118]), buffered: ranges(...buffered),
+    get currentTime() { return currentTime; },
+    set currentTime(value) {
+      currentTime = value; seeks.push(value);
+      if (dispatchSeeking) controller.onMediaSeeking();
+    },
+  };
+  controller.media = media;
+  controller.nextLoadPosition = controller.lastCurrentTime = 60;
+  controller._hasEnoughToStart = started;
+  Object.defineProperty(hls, "liveSyncPosition", { value: 100, configurable: true });
+  t.after(() => { controller.media = null; controller.fragCurrent = null; hls.destroy(); });
+  return {
+    hls, controller, media, seeks,
+    synchronize() { controller.synchronizeToLiveEdge({ fragmentStart: 50, edge: 118, targetduration: 6 }); },
+    downloading(start = 60) {
+      const fragment = { start, duration: 6, sn: 1, loader: {}, abortRequests() { aborted++; } };
+      controller.fragCurrent = fragment;
+      return fragment;
+    },
+    get aborted() { return aborted; },
+  };
+}
+
+test("the installed HLS controller preserves playable media and selects the next buffered range", t => {
+  for (const mode of ["edge", "buffered"]) {
+    const forward = installedHlsController(t, { mode, buffered: [[60, 66]] });
+    forward.synchronize();
+    assert.equal(forward.media.currentTime, mode === "buffered" ? 60 : 100,
+      "Buffered synchronization must retain playable forward media when the live target is still cold");
+    const next = installedHlsController(t, { mode, buffered: [[72, 78]] });
+    next.synchronize();
+    assert.equal(next.media.currentTime, mode === "buffered" ? 72 : 100,
+      "A gap resumes at available media instead of skipping into an unbuffered live target");
+  }
+});
+
+test("the installed HLS buffered mode still seeks with an empty buffer and cannot protect startup alone", t => {
+  for (const mode of ["edge", "buffered"]) {
+    const metadata = installedHlsController(t, { mode, readyState: 1, started: false, dispatchSeeking: true });
+    metadata.downloading();
+    metadata.synchronize();
+    assert.equal(metadata.media.currentTime, 100);
+    assert.equal(metadata.controller.nextLoadPosition, 100);
+    assert.equal(metadata.aborted, 1, "Both library modes can abort the old fragment while seeking from metadata alone");
+    const initial = installedHlsController(t, { mode, readyState: 0, started: false });
+    initial.synchronize();
+    assert.equal(initial.media.currentTime, 60, "A media element without metadata is not seeked");
+    assert.equal(initial.controller.nextLoadPosition, 100, "The library still retargets its next startup load before checking the mode");
+  }
+});
+
+test("MSE scroll resume keeps the current buffer and does not abort its healthy pending fragment", t => {
+  const timer = fakeTimers(), fixture = installedHlsController(t, { buffered: [[60, 66]], dispatchSeeking: true });
+  const fragment = fixture.downloading(66);
+  const sync = createLiveResumeSync({ media: fixture.media, bufferRanges: () => fixture.media.buffered,
+    liveSyncPosition: () => fixture.hls.liveSyncPosition, schedule: timer.schedule, cancel: timer.cancel });
+  t.after(() => sync.dispose());
+  sync.request();
+  assert.deepEqual(fixture.seeks, [], "Seekable live metadata is not evidence that the target has been downloaded");
+  assert.equal(fixture.media.currentTime, 60);
+  assert.equal(fixture.aborted, 0);
+  assert.equal(fixture.controller.fragCurrent, fragment, "The real controller keeps loading the same pending fragment");
+  assert.equal(sync.pending, false);
+  assert.equal(timer.size, 0);
+});
+
+test("MSE resume waits for actual forward media and catches up once when it arrives inside the retry budget", t => {
+  const timer = fakeTimers(), fixture = installedHlsController(t, { readyState: 2, dispatchSeeking: true });
+  fixture.downloading();
+  const sync = createLiveResumeSync({ media: fixture.media, bufferRanges: () => fixture.media.buffered,
+    liveSyncPosition: () => fixture.hls.liveSyncPosition, schedule: timer.schedule, cancel: timer.cancel });
+  t.after(() => sync.dispose());
+  sync.request();
+  assert.equal(timer.fire(), true);
+  assert.equal(sync.pending, true);
+  assert.deepEqual(fixture.seeks, []);
+  assert.equal(fixture.aborted, 0, "A decoded-ready flag without forward buffer cannot cancel an in-flight fragment");
+  fixture.controller.fragCurrent = null; // The pending download has completed and appended these frames.
+  fixture.media.buffered = ranges([90, 108]);
+  sync.update();
+  assert.deepEqual(fixture.seeks, [100]);
+  assert.ok(fixture.media.currentTime >= 90 && fixture.media.currentTime < 108, "Catch-up stays strictly inside downloaded media");
+  assert.equal(fixture.aborted, 0);
+  assert.equal(sync.pending, false);
+  assert.equal(timer.size, 0);
+  fixture.media.buffered = ranges([100, 118]);
+  sync.update();
+  assert.deepEqual(fixture.seeks, [100], "Subsequent buffer updates cannot keep chasing the edge");
+});
+
+test("MSE resume clamps a cold live target inside short and disjoint downloaded ranges", () => {
+  for (const [buffered, expected] of [[ranges([24, 27]), 24], [ranges([0, 5], [70, 90]), 84]]) {
+    const timer = fakeTimers(), media = { currentTime: 0, readyState: 2, seeking: false, seekable: ranges([0, 118]), buffered };
+    const sync = createLiveResumeSync({ media, bufferRanges: () => media.buffered, liveSyncPosition: () => 100,
+      schedule: timer.schedule, cancel: timer.cancel });
+    sync.request();
+    assert.equal(media.currentTime, expected);
+    const latest = latestLiveRange(media.buffered);
+    assert.ok(media.currentTime >= latest.start && media.currentTime < latest.end);
+    assert.equal(sync.pending, false);
+    assert.equal(timer.size, 0);
+    sync.dispose();
+  }
+});
+
+test("MSE resume exhausts three attempts for empty, back-only or temporarily unavailable buffers", () => {
+  for (const available of [() => ranges(), () => ranges([0, 20]), () => { throw new Error("Buffer changed"); }]) {
+    const timer = fakeTimers(), media = { currentTime: 60, readyState: 4, seeking: false, seekable: ranges([50, 118]) };
+    let buffer = available;
+    const sync = createLiveResumeSync({ media, bufferRanges: () => buffer(), liveSyncPosition: () => 100,
+      schedule: timer.schedule, cancel: timer.cancel });
+    sync.request();
+    assert.equal(timer.fire(), true);
+    assert.equal(timer.fire(), true);
+    assert.equal(timer.fire(), false);
+    assert.equal(sync.pending, false);
+    buffer = () => ranges([90, 108]);
+    sync.update();
+    assert.equal(media.currentTime, 60, "Late buffering cannot revive an expired synchronization request");
+    sync.request();
+    assert.equal(media.currentTime, 100, "A later explicit return can synchronize to the newly available buffer");
+    sync.dispose();
+  }
+});
+
 test("broadcast loading has one finite watchdog, not an infinite spinner", () => {
   const timer = fakeTimers(), states = [];
   const monitor = createLiveLoadState({ onChange: state => states.push(state), schedule: timer.schedule, cancel: timer.cancel });
@@ -237,7 +369,7 @@ test("resume synchronizes decoded media once, not on every playlist update", () 
   sync.dispose();
 });
 
-test("moving startup playlists and repeated recovery nudges cannot seek before a decoded frame", () => {
+test("native/default startup playlists and repeated recovery nudges cannot seek before a decoded frame", () => {
   const timer = fakeTimers(), seeks = [];
   let currentTime = 0;
   const media = {

@@ -81,6 +81,7 @@ export function liveHlsConfig(segmentSeconds = DEFAULT_LIVE_SEGMENT_SECONDS, def
   return {
     enableWorker: true,
     lowLatencyMode: true,
+    liveSyncMode: "buffered",
     ...liveBufferTiming(segmentSeconds),
     maxLiveSyncPlaybackRate: 1.03,
     liveSyncOnStallIncrease: 0,
@@ -188,12 +189,14 @@ export function createLiveResumeSync({
   media,
   segmentSeconds = () => DEFAULT_LIVE_SEGMENT_SECONDS,
   liveSyncPosition = () => null,
+  bufferRanges = () => media.seekable,
   schedule = setTimeout,
   cancel = clearTimeout,
 }: {
   media: LiveMedia & { readonly readyState: number; readonly seeking: boolean };
   segmentSeconds?: () => number;
   liveSyncPosition?: () => number | null;
+  bufferRanges?: () => SeekableRanges;
   schedule?: (callback: () => void, delay: number) => Timer;
   cancel?: (timer: Timer) => void;
 }) {
@@ -204,11 +207,12 @@ export function createLiveResumeSync({
     clearTimer();
     remaining--;
     try {
-      const ranges = media.seekable;
-      // Seekable metadata can arrive before the first decoded frame. Seeking
-      // then cancels the loader's pending fragment and can prevent startup.
-      if (media.readyState >= 2 && !media.seeking && latestLiveRange(ranges) && Number.isFinite(media.currentTime) && media.currentTime >= 0) {
-        const target = safeLiveResumeTarget(media.currentTime, ranges, segmentSeconds(), liveSyncPosition());
+      const ranges = bufferRanges(), range = latestLiveRange(ranges), currentTime = media.currentTime;
+      // MSE callers supply buffered media: seekable metadata can point past the
+      // downloaded frames and seeking there cancels a healthy pending fragment.
+      // Native HLS retains its seekable window; both paths wait for decoded data.
+      if (media.readyState >= 2 && !media.seeking && range && Number.isFinite(currentTime) && currentTime >= 0 && range.end > currentTime) {
+        const target = safeLiveResumeTarget(currentTime, ranges, segmentSeconds(), liveSyncPosition());
         if (target !== null) media.currentTime = target;
         pending = false;
         return;

@@ -156,6 +156,41 @@ and all health checks.
 
 ## Reverse tunnel boundary
 
+### Native Windows reserve
+
+When the Windows network path works but WSL's SSH connection is unstable,
+`windows-relay.ps1` supervises the same restricted remote forward through the
+installed Windows OpenSSH client. The destination public IPv4 and private file
+paths are supplied locally; no inventory or credential belongs in the source.
+An additional Windows copy of the existing identity requires the owner's
+authorization. Create and verify a protected directory and empty target files
+before copying any bytes. Only the current user and SYSTEM may have access;
+preserve the Linux originals and verify equality without printing credentials.
+
+Run the supervisor in its own hidden `powershell.exe -File` process, with
+`-RelayHost`, `-IdentityFile` and `-KnownHostsFile`. It validates the private-file
+ACLs, uses the pinned server identity, disables password/agent/session features,
+and permits only `127.0.0.1:18090:127.0.0.1:8090`. Connections retry after five
+seconds with the same fifteen-second, three-miss keepalives. Forward allocation
+failure exits the SSH child; it never evicts another connection or widens the
+listener. This permits an additive reserve alongside the existing WSL client.
+
+An unnamed Windows Job Object owns only this isolated supervisor and its
+children. Terminating it also terminates its own SSH child, avoiding an orphaned
+forward; unrelated SSH processes are unaffected. The test uses bounded dummy
+children and a separate sentinel, never real SSH, tasks or credentials.
+
+For persistence, install the reviewed script at a stable protected path outside
+Git and disposable worktrees. Register one current-user AtLogon task using
+InteractiveToken and LeastPrivilege, with no stored password, unlimited runtime,
+IgnoreNew instances, and bounded one-minute task-failure retries. Keep its action
+and arguments fixed and hidden, validate the task XML before registration, and
+refuse to overwrite an unrelated task or a changed installed script. A locked
+desktop can keep serving; logout, stopped WSL/OBS or a sleeping computer still
+prevents this local installation from producing live video.
+
+### WSL client
+
 Run the tunnel from the local environment that can already reach
 `127.0.0.1:8090`. In the current deployment that is WSL, alongside nginx.
 The remote forward is exactly:

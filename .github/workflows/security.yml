@@ -25,6 +25,8 @@ jobs:
       - run: python3 -B test/mobile-input.test.py
       - run: python3 -B test/broadcast-health.test.py
       - run: node --test test/public-relay.test.mjs test/resilient-relay.test.mjs
+      - name: Check bounded ingress recovery and Linux persistence
+        run: node --test test/ingress-watchdog.test.mjs test/ingress-watchdog-runtime.test.mjs
       - name: Install checksum-verified isolated stream fixture
         shell: bash
         run: |

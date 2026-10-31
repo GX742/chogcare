@@ -7,12 +7,13 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createHash } from "node:crypto";
 import { createState, evaluate } from "../ops/stream/ingress-watchdog.mjs";
-import { createPrivateStateStore, EMPTY_UNIT_PROPERTIES, hooksDisabled, parseSocketCgroup, parseUnitProperties, runWatchdogCycle, safeLoadedConfig, safeUnitDependencies, verifyCgroupOwnership } from "../ops/stream/ingress-watchdog-runtime.mjs";
+import { createPrivateStateStore, EMPTY_EXEC_PROPERTIES, EMPTY_UNIT_PROPERTIES, hooksDisabled, parseEmptyExecProperties, parseSocketCgroup, parseUnitProperties, runWatchdogCycle, safeLoadedConfig, safeUnitDependencies, verifyCgroupOwnership } from "../ops/stream/ingress-watchdog-runtime.mjs";
 import { renderIngressWatchdogService, renderIngressWatchdogTimer } from "../ops/stream/ingress-watchdog-units.mjs";
 
 const hash = value => createHash("sha256").update(value).digest("hex");
 const bootId = hash("synthetic-boot"), generation = hash("synthetic-process-and-socket");
 const playlist = sequence => ({ eligible: true, initId: hash("synthetic-muxer"), segments: Array.from({ length: 7 }, (_, index) => ({ sequence: sequence + index, id: hash(`synthetic-${sequence + index}`), durationMs: 1000 })) });
+const emptyExecProof = "a(sasbttttuii) 0\na(sasbttttuii) 0\na(sasbttttuii) 0\na(sasbttttuii) 0\na(sasbttttuii) 0\n";
 
 function actionableState() {
   let state = createState(bootId, 0);
@@ -84,8 +85,23 @@ test("corrupt state fails closed before any runtime observation or restart", asy
 test("only the exact running unit, fixed command, and an idle job are accepted", () => {
   const guards = Object.entries({...Object.fromEntries(EMPTY_UNIT_PROPERTIES.map(key=>[key, ""])),ControlGroup:"/system.slice/chogcare-stream.service",Conflicts:"shutdown.target",ConflictedBy:"",Requires:"system.slice -.mount sysinit.target tmp.mount",Wants:"network-online.target",FileDescriptorStoreMax:"0",NFileDescriptorStore:"0",FailureAction:"none",SuccessAction:"none",StartLimitAction:"none"}).map(([key,value])=>`${key}=${value}`).join("\n");
   const unit = `ActiveState=active\nSubState=running\nMainPID=123\nInvocationID=${"a".repeat(32)}\nJob=\nExecStart={ path=/opt/chogcare-stream/mediamtx ; argv[]=/opt/chogcare-stream/mediamtx /run/credentials/chogcare-stream.service/mediamtx.json ; ignore_errors=no ; }\n${guards}\n`;
-  assert.equal(parseUnitProperties(unit).pid, 123);
-  for (const invalid of [unit.replace("Job=", "Job=42"), unit.replace("MainPID=123", "MainPID=0"), unit.replace("ActiveState=active", "ActiveState=inactive"), unit.replace("path=/opt/chogcare-stream/mediamtx", "path=/usr/bin/other"), unit.replace("mediamtx.json ;", "mediamtx.json extra ;")]) assert.throws(() => parseUnitProperties(invalid));
+  assert.equal(parseUnitProperties(unit, emptyExecProof).pid, 123);
+  for (const invalid of [unit.replace("Job=", "Job=42"), unit.replace("MainPID=123", "MainPID=0"), unit.replace("ActiveState=active", "ActiveState=inactive"), unit.replace("path=/opt/chogcare-stream/mediamtx", "path=/usr/bin/other"), unit.replace("mediamtx.json ;", "mediamtx.json extra ;")]) assert.throws(() => parseUnitProperties(invalid, emptyExecProof));
+  // Ubuntu/systemd 255 omits all five empty compound Exec arrays. Sockets is
+  // not an exported D-Bus property. Neither omission is accepted as proof.
+  const actualFormat = unit.split("\n").filter(line => !EMPTY_EXEC_PROPERTIES.some(key => line.startsWith(`${key}=`))).join("\n").replace("Wants=network-online.target", "Wants=network-online.target tmp.mount");
+  assert.equal(EMPTY_UNIT_PROPERTIES.includes("Sockets"), false);
+  assert.equal(parseUnitProperties(actualFormat, emptyExecProof).pid, 123);
+  assert.throws(() => parseUnitProperties(actualFormat));
+  assert.throws(() => parseUnitProperties(unit));
+  for (const key of EMPTY_EXEC_PROPERTIES) assert.throws(() => parseUnitProperties(`${actualFormat}\n${key}={ path=/usr/bin/true ; }`, emptyExecProof));
+  assert.throws(() => parseUnitProperties(actualFormat.replace("RequiredBy=\n", ""), emptyExecProof));
+});
+
+test("every command array requires explicit typed-empty D-Bus proof without extras", () => {
+  assert.deepEqual(Object.keys(parseEmptyExecProperties(emptyExecProof)), ["ExecCondition", "ExecStartPre", "ExecStartPost", "ExecStop", "ExecStopPost"]);
+  assert.deepEqual(parseEmptyExecProperties(emptyExecProof), parseEmptyExecProperties(emptyExecProof.slice(0, -1)));
+  for (const invalid of [undefined, "", emptyExecProof.split("\n").slice(1).join("\n"), emptyExecProof + "a(sasbttttuii) 0\n", emptyExecProof.replace("a(sasbttttuii) 0", "a(sasbttttuii) 1"), emptyExecProof.replace("a(sasbttttuii)", "as"), emptyExecProof + "\n", " "+emptyExecProof, emptyExecProof.replace(" 0", " 00"), "x".repeat(1025)]) assert.throws(() => parseEmptyExecProperties(invalid));
 });
 
 test("a UID or cgroup path prefix alone cannot establish exact service socket ownership", () => {
@@ -100,8 +116,9 @@ test("a UID or cgroup path prefix alone cannot establish exact service socket ow
 test("stop propagation, reverse dependencies, hooks and descriptor transfer fail closed", () => {
   const safe={...Object.fromEntries(EMPTY_UNIT_PROPERTIES.map(key=>[key,""])),Conflicts:"shutdown.target",ConflictedBy:"shutdown.target",Requires:"system.slice -.mount sysinit.target tmp.mount",Wants:"network-online.target",FileDescriptorStoreMax:"0",NFileDescriptorStore:"0",FailureAction:"none",SuccessAction:"none",StartLimitAction:"none"};
   assert.equal(safeUnitDependencies(safe),true);
+  assert.equal(safeUnitDependencies({...safe,Wants:"network-online.target tmp.mount"}),true);
   for(const key of EMPTY_UNIT_PROPERTIES)assert.equal(safeUnitDependencies({...safe,[key]:"unexpected.service"}),false);
-  for(const bad of [{...safe,Conflicts:"other.service"},{...safe,ConflictedBy:"other.service"},{...safe,Requires:"payment.service"},{...safe,FileDescriptorStoreMax:"1"},{...safe,NFileDescriptorStore:"1"},{...safe,FailureAction:"reboot"},{...safe,SuccessAction:"poweroff"},{...safe,StartLimitAction:"reboot-force"}])assert.equal(safeUnitDependencies(bad),false);
+  for(const bad of [{...safe,Conflicts:"other.service"},{...safe,ConflictedBy:"other.service"},{...safe,Requires:"payment.service"},{...safe,Wants:"network-online.target chogcare-stream.socket"},{...safe,Wants:"network-online.target other.service"},{...safe,Wants:"tmp.mount.socket"},{...safe,FileDescriptorStoreMax:"1"},{...safe,NFileDescriptorStore:"1"},{...safe,FailureAction:"reboot"},{...safe,SuccessAction:"poweroff"},{...safe,StartLimitAction:"reboot-force"}])assert.equal(safeUnitDependencies(bad),false);
   const incomplete={...safe};delete incomplete.RequiredBy;assert.equal(safeUnitDependencies(incomplete),false);
 });
 

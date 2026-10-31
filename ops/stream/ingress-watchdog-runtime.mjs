@@ -119,9 +119,24 @@ export function safeLoadedConfig(config) {
     typeof config.hlsCDNSecret === "string" && config.hlsCDNSecret.length === 43 && /^[A-Za-z0-9_-]{43}$/.test(config.hlsCDNSecret);
 }
 
-export function parseUnitProperties(text) {
+export const EMPTY_EXEC_PROPERTIES = Object.freeze(["ExecCondition", "ExecStartPre", "ExecStartPost", "ExecStop", "ExecStopPost"]);
+
+export function parseEmptyExecProperties(text) {
+  // systemctl show omits empty compound arrays, even with --all. An explicit
+  // D-Bus result for every requested property is required instead of omission.
+  need(typeof text === "string" && Buffer.byteLength(text) <= 1024);
+  const expected = EMPTY_EXEC_PROPERTIES.map(() => "a(sasbttttuii) 0").join("\n");
+  need(text === expected || text === `${expected}\n`);
+  return Object.fromEntries(EMPTY_EXEC_PROPERTIES.map(key => [key, ""]));
+}
+
+export function parseUnitProperties(text, emptyExecText) {
   need(typeof text === "string" && text.length <= 16384);
   const properties = Object.fromEntries(text.trim().split("\n").map(line => { const at = line.indexOf("="); need(at > 0); return [line.slice(0, at), line.slice(at + 1)]; }));
+  for (const [key, value] of Object.entries(parseEmptyExecProperties(emptyExecText))) {
+    need(!Object.hasOwn(properties, key) || properties[key] === "");
+    properties[key] = value;
+  }
   need(properties.ActiveState === "active" && properties.SubState === "running" && /^\d{1,10}$/.test(properties.MainPID) && Number(properties.MainPID) > 1 && /^[a-f0-9]{32}$/.test(properties.InvocationID) && ["", "0"].includes(properties.Job));
   const start = properties.ExecStart ?? "";
   need((start.match(/\bpath=/g) ?? []).length === 1 && (start.match(/argv\[\]=/g) ?? []).length === 1 &&
@@ -148,13 +163,13 @@ export function verifyCgroupOwnership({ pid, uid, socket, controlGroup, cgroupIn
   const members = procs.trim().split(/\s+/); need(members.length === 1 && /^\d{1,10}$/.test(members[0]) && Number(members[0]) === pid);
 }
 
-export const EMPTY_UNIT_PROPERTIES = Object.freeze(["RequiredBy", "Requisite", "RequisiteOf", "BoundBy", "ConsistsOf", "PartOf", "BindsTo", "PropagatesStopTo", "StopPropagatedFrom", "Upholds", "UpheldBy", "OnFailure", "OnSuccess", "TriggeredBy", "Triggers", "Sockets", "ExecCondition", "ExecStartPre", "ExecStartPost", "ExecStop", "ExecStopPost"]);
+export const EMPTY_UNIT_PROPERTIES = Object.freeze(["RequiredBy", "Requisite", "RequisiteOf", "BoundBy", "ConsistsOf", "PartOf", "BindsTo", "PropagatesStopTo", "StopPropagatedFrom", "Upholds", "UpheldBy", "OnFailure", "OnSuccess", "TriggeredBy", "Triggers", ...EMPTY_EXEC_PROPERTIES]);
 export function safeUnitDependencies(properties) {
   if (!EMPTY_UNIT_PROPERTIES.every(key => Object.hasOwn(properties, key) && properties[key] === "")) return false;
   if (!["Conflicts", "ConflictedBy", "Requires", "Wants"].every(key => Object.hasOwn(properties, key))) return false;
   const values = key => properties[key].trim().split(/\s+/).filter(Boolean);
   return ["Conflicts", "ConflictedBy"].every(key => values(key).every(unit => unit === "shutdown.target")) &&
-    values("Requires").every(unit => ["sysinit.target", "system.slice", "-.mount", "tmp.mount"].includes(unit)) && values("Wants").every(unit => unit === "network-online.target") &&
+    values("Requires").every(unit => ["sysinit.target", "system.slice", "-.mount", "tmp.mount"].includes(unit)) && values("Wants").every(unit => ["network-online.target", "tmp.mount"].includes(unit)) &&
     properties.FileDescriptorStoreMax === "0" && properties.NFileDescriptorStore === "0" &&
     properties.FailureAction === "none" && properties.SuccessAction === "none" && properties.StartLimitAction === "none";
 }
@@ -163,7 +178,8 @@ async function inspectRuntime(token, bootId) {
   let guard = "unit_guard_failed";
   try {
   const { stdout } = await exec("/usr/bin/systemctl", ["show", "chogcare-stream.service", `--property=ActiveState,SubState,MainPID,InvocationID,Job,ExecStart,ControlGroup,Conflicts,ConflictedBy,Requires,Wants,FileDescriptorStoreMax,NFileDescriptorStore,FailureAction,SuccessAction,StartLimitAction,${EMPTY_UNIT_PROPERTIES.join(",")}`], { timeout: 2000, maxBuffer: 16384 });
-  const unit = parseUnitProperties(stdout);
+  const commands = await exec("/usr/bin/busctl", ["--system", "--no-pager", "get-property", "org.freedesktop.systemd1", "/org/freedesktop/systemd1/unit/chogcare_2dstream_2eservice", "org.freedesktop.systemd1.Service", "ExecCondition", "ExecStartPre", "ExecStartPost", "ExecStop", "ExecStopPost"], { timeout: 2000, maxBuffer: 1024 });
+  const unit = parseUnitProperties(stdout, commands.stdout);
   guard = "process_guard_failed";
   const status = (await boundedDescriptor(`/proc/${unit.pid}/status`, 65536)).text;
   const ids = /^Uid:\s+(\d+)\s+(\d+)\s+(\d+)\s+(\d+)$/m.exec(status); need(ids && ids.slice(1).every(value => value === ids[1]) && Number(ids[1]) > 0);

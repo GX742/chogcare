@@ -22,13 +22,13 @@ import { closeHeldCheckout, heldCheckoutKind, sameRefundCase } from "./refunded-
 import RefundStatus from "./RefundStatus";
 
 export const activeInvoiceKey=activeInvoiceKeys.chog;
-const presetAmounts=["500","3000","30000","300000","1000000"] as const;
+const presetAmounts=["300","3000","30000","300000","1000000"] as const;
 const integerFormatter=new Intl.NumberFormat("en-US",{maximumFractionDigits:0});
 const usdFormatter=new Intl.NumberFormat("en-US",{style:"currency",currency:"USD",minimumFractionDigits:2,maximumFractionDigits:2});
 export default function LiveChogCheckout({initiativeId,initiativeName,ready,destinationChainId=1,serviceAllowed=false,onViewLeaderboard,onSupport}:{initiativeId:string;initiativeName:string;ready:boolean;destinationChainId?:1|10|792703809;serviceAllowed?:boolean;onViewLeaderboard?:()=>void;onSupport?:(context:SupportContext)=>void}) {
   const [saved] = useState(()=>initialCheckout("chog"));
   const [pending,setPending]=useState(saved.pending);
-  const [amount,setAmount]=useState(saved.pending?.input.amount || "500"), [invoice,setInvoice]=useState<PayableInvoice|null>(null), [id,setId]=useState(saved.id);
+  const [amount,setAmount]=useState(saved.pending?.input.amount || "300"), [invoice,setInvoice]=useState<PayableInvoice|null>(null), [id,setId]=useState(saved.id);
   const [qr,setQr]=useState(""),[busy,setBusy]=useState(false),[error,setError]=useState(saved.error),[online,setOnline]=useState(false);
   const [rateUsdMicros,setRateUsdMicros]=useState<bigint|null>(null);
   const [bridgeCostRejected,setBridgeCostRejected]=useState(false);
@@ -125,7 +125,7 @@ export default function LiveChogCheckout({initiativeId,initiativeName,ready,dest
         <span className="checkout-amount-unit"><strong>$CHOG</strong>{estimatedUsd(amount)&&<small>≈ {estimatedUsd(amount)}</small>}</span>
       </div>
       <div className="checkout-amount-toolbar">
-        <p className="checkout-amount-hint" id="checkout-amount-hint">Suggested minimum 500 $CHOG · bridge fees vary</p>
+        <p className="checkout-amount-hint" id="checkout-amount-hint">Minimum 300 $CHOG · no minimum USD value</p>
         <button className="checkout-edit-amount" type="button" aria-label="Edit donation amount" disabled={busy||!!pending} onClick={()=>{amountInput.current?.focus();amountInput.current?.select();}}><PencilSimple size={15} aria-hidden="true"/>Edit amount</button>
       </div>
       <div className="checkout-presets" role="group" aria-label="Suggested $CHOG amounts">{presetAmounts.map(v=><button type="button" key={v} aria-pressed={amount===v} onClick={()=>changeAmount(v)} disabled={busy||!!pending}><strong>{integerFormatter.format(Number(v))}</strong></button>)}</div>

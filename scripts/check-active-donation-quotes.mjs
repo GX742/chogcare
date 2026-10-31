@@ -3,7 +3,7 @@ import { createPublicClient, http, formatUnits } from "viem";
 import { monad } from "viem/chains";
 import { saleQuote, usdcQuote } from "../server/source-quotes.mjs";
 import { bridgeQuote } from "../server/relay-route.mjs";
-import { minimumBridgeDelivery, assertBridgeDelivery, assertCrossAssetBridgeDelivery } from "../server/bridge-cost-policy.mjs";
+import { assertBridgeDelivery, assertCrossAssetBridgeDelivery } from "../server/bridge-cost-policy.mjs";
 const client=createPublicClient({chain:monad,transport:http("https://rpc.monad.xyz",{timeout:15000,retryCount:0})});
 const payer="0x1111111111111111111111111111111111111111";
 if(await client.getChainId()!==143)throw Error("Wrong source network");
@@ -26,14 +26,14 @@ for(const amount of [5000000n,10000000n]) {
     const s=await saleQuote(client,equivalent),u=await usdcQuote(client,BigInt(s.minMon));
     for(const route of routes) {
       try {
-        const q=await bridgeQuote(payer,BigInt(u.minUsdc),route.asset==="SOL"?1n:200000n,route.chainId,route.id);
-        let accepted=true;try{route.asset==="SOL"?assertCrossAssetBridgeDelivery(q,minimumBridgeDelivery(BigInt(u.minUsdc))):assertBridgeDelivery(q,minimumBridgeDelivery(BigInt(u.minUsdc)));}catch{accepted=false;}
+        const q=await bridgeQuote(payer,BigInt(u.minUsdc),1n,route.chainId,route.id);
+        let accepted=true;try{assertBridgeDelivery(q,1n);if(route.asset==="SOL")assertCrossAssetBridgeDelivery(q,1n);}catch{accepted=false;}
         console.log(JSON.stringify({kind:"CHOG-conservative-route",project:route.id,inputUsdcEquivalent:formatUnits(amount,6),chog:formatUnits(equivalent,18),conversionMinimumUsdc:formatUnits(BigInt(u.minUsdc),6),outputAsset:route.asset,expectedRecipient:formatUnits(BigInt(q.expectedOutput),route.decimals),minimumRecipient:formatUnits(BigInt(q.minOutput),route.decimals),expectedRecipientUsd:formatUnits(BigInt(q.expectedOutputUsdMicros),6),minimumRecipientUsd:formatUnits(BigInt(q.minimumOutputUsdMicros),6),accepted,solverSignatureVerified:true}));
       } catch(e) {console.log(JSON.stringify({project:route.id,error:e.message}));process.exitCode=1;}
     }
   }
   for(const route of routes) {
-    try {const q=await bridgeQuote(payer,amount,route.asset==="SOL"?1n:200000n,route.chainId,route.id);console.log(JSON.stringify({kind:"bridge-only",project:route.id,inputUsdc:formatUnits(amount,6),outputAsset:route.asset,expectedRecipient:formatUnits(BigInt(q.expectedOutput),route.decimals),minimumRecipient:formatUnits(BigInt(q.minOutput),route.decimals),expectedRecipientUsd:formatUnits(BigInt(q.expectedOutputUsdMicros),6),minimumRecipientUsd:formatUnits(BigInt(q.minimumOutputUsdMicros),6),solverSignatureVerified:true}));}
+    try {const q=await bridgeQuote(payer,amount,1n,route.chainId,route.id);console.log(JSON.stringify({kind:"bridge-only",project:route.id,inputUsdc:formatUnits(amount,6),outputAsset:route.asset,expectedRecipient:formatUnits(BigInt(q.expectedOutput),route.decimals),minimumRecipient:formatUnits(BigInt(q.minOutput),route.decimals),expectedRecipientUsd:formatUnits(BigInt(q.expectedOutputUsdMicros),6),minimumRecipientUsd:formatUnits(BigInt(q.minimumOutputUsdMicros),6),solverSignatureVerified:true}));}
     catch(e){console.log(JSON.stringify({project:route.id,error:e.message}));process.exitCode=1;}
   }
 }

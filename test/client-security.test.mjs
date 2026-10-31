@@ -91,6 +91,42 @@ test("CHOG instructions reject coerced amounts and ambiguous identifiers or rece
     assert.throws(() => validatePayableInvoice(chogInvoice(change)), JSON.stringify(change));
   }
 });
+test("CHOG invoice validation accepts positive signed minima below twenty cents without changing them", () => {
+  for (const network of [
+    { destinationChainId: 1, initiativeId: "burundi", destinationAsset: "USDC", destinationDecimals: 6 },
+    { destinationChainId: 10, initiativeId: "solar-foundation", destinationAsset: "USDC", destinationDecimals: 6 },
+    { destinationChainId: 792703809, initiativeId: "animal-ethics", destinationAsset: "SOL", destinationDecimals: 9 },
+  ]) {
+    for (const minimumUsd of ["1", "199999", "200000", "880000"]) {
+      const minUsdc = network.destinationAsset === "SOL" ? "12345" : minimumUsd;
+      const source = Object.freeze(chogInvoice({ ...network, recipient: chogBeneficiary(network.initiativeId, network.destinationChainId), minUsdc, minimumUsd }));
+      const original = structuredClone(source), parsed = validatePayableInvoice(source);
+      assert.equal(parsed.minUsdc, minUsdc);
+      assert.equal(parsed.minimumUsd, minimumUsd);
+      assert.equal(parsed.amount, source.amount);
+      assert.equal(parsed.paymentUri, source.paymentUri);
+      assert.deepEqual(source, original, "The supplied invoice and quoted minima remain unchanged");
+    }
+  }
+});
+
+test("CHOG invoice minima still reject zero and malformed values on EVM and Solana", () => {
+  for (const destinationChainId of [10, 792703809]) {
+    const initiativeId = destinationChainId === 10 ? "solar-foundation" : "animal-ethics";
+    const source = chogInvoice({ destinationChainId, initiativeId, recipient: chogBeneficiary(initiativeId, destinationChainId), destinationAsset: destinationChainId === 10 ? "USDC" : "SOL", destinationDecimals: destinationChainId === 10 ? 6 : 9, minUsdc: "1", minimumUsd: "1" });
+    for (const field of ["minUsdc", "minimumUsd"]) {
+      for (const value of ["0", "-1", "NaN", "1e3", "0.1", "", "1\n", undefined, null, 1, {}]) {
+        assert.throws(() => validatePayableInvoice({ ...source, [field]: value }), String(destinationChainId) + " " + field + ": " + JSON.stringify(value));
+      }
+    }
+    const destinationHash = destinationChainId === 10 ? hash : "3".repeat(88);
+    assert.equal(validatePayableInvoice({ ...source, state: "delivered", depositHash: hash, bridgeHash: hash, destinationHash, deliveredUsdc: "1" }).deliveredUsdc, "1");
+    assert.throws(() => validatePayableInvoice({ ...source, state: "delivered", depositHash: hash, bridgeHash: hash, destinationHash, deliveredUsdc: "0" }), /below the invoice minimum/);
+    assert.equal(validatePayableInvoice({ ...source, state: "confirming", depositHash: hash, bridgeHash: hash, observedDestinationHash: destinationHash, observedUsdc: "1" }).observedUsdc, "1");
+    assert.throws(() => validatePayableInvoice({ ...source, state: "confirming", depositHash: hash, bridgeHash: hash, observedDestinationHash: destinationHash, observedUsdc: "0" }), /Unverified destination observation/);
+  }
+});
+
 test("client DTO projection does not retain unexpected private invoice properties", () => {
   for (const [makeInvoice, validate] of [[chogInvoice, validatePayableInvoice], [nftInvoice, validateNftInvoice]]) {
     const source = makeInvoice({ privateKey: "synthetic", signedTransaction: "synthetic", vaultReference: "synthetic" });

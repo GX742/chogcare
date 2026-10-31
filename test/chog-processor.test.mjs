@@ -33,7 +33,8 @@ async function harness(t, destinationChainId=1, expensiveBridge=false, initiativ
   const root=HDNodeWallet.createRandom("",DEPOSIT_BASE_PATH), xpub=root.neuter().extendedKey;
   const vault={version:1,basePath:DEPOSIT_BASE_PATH,xpub,keyId:createHash("sha256").update(xpub).digest("hex")};
   let number=100n, paidLog=null, readyDelivery=false, chainId=143, sourceTimeout=false, destinationFinal=9999n, relayOffline=false, reorg=false, receiptReads=0, holdSource=false, relayGate=null;
-  const receipts=new Map(), broadcasts=[], nonces=new Map(),extraLogs=[];
+  const receipts=new Map(), broadcasts=[], nonces=new Map(),extraLogs=[],bridgeMinimums=[];
+  let bridgeOutput={};
   const solanaRoute=destinationChainId===SOLANA_CHAIN_ID;
   let destLog=solanaRoute?null:event(deliveryNetwork(destinationChainId).usdc,chogBeneficiary(initiativeId,destinationChainId),880_000n,h(9000),900n);
   const block=args=>({number:args.blockNumber??number,hash:h(args.blockNumber??number),timestamp:BigInt(Math.floor(Date.now()/1000))});
@@ -75,12 +76,14 @@ async function harness(t, destinationChainId=1, expensiveBridge=false, initiativ
     solanaVerifier:{ready:async()=>true,inspectNativeTransfer:async(_signature,recipient,minimum)=>readyDelivery&&_signature===solanaSignature&&recipient===chogBeneficiary("animal-ethics",SOLANA_CHAIN_ID)?{finalized:true,amount:minimum+50_000n,blockTime:Math.floor(Date.now()/1000),eventId:`solana:${_signature}:1`}:null},
     saleQuote:async()=>({router:NAD_DEX_ROUTER,minMon:String(19n*10n**18n)}),
     usdcQuote:async()=>({fee:500,minUsdc:"980000"}),
-    bridgeQuote:async(_payer,_amount,_minimum,chain)=>({requestId:h(8000),orderId:h(8001),minOutput:chain===SOLANA_CHAIN_ID?"8400000":expensiveBridge?"800000":"870000",expectedOutput:chain===SOLANA_CHAIN_ID?"8800000":"880000",minimumOutputUsdMicros:expensiveBridge?"800000":"870000",destinationChainId:chain,estimatedSeconds:2,to:RELAY_DEPOSITORY,data:encodeFunctionData({abi:parseAbi(["function depositErc20(address depositor,address token,uint256 amount,bytes32 id)"]),functionName:"depositErc20",args:[_payer,MONAD_USDC,_amount,h(8001)]}),value:"0",validUntil:Date.now()+60_000}),
+    bridgeQuote:async(_payer,_amount,_minimum,chain)=>{bridgeMinimums.push(_minimum);return {requestId:h(8000),orderId:h(8001),minOutput:chain===SOLANA_CHAIN_ID?"8400000":expensiveBridge?"800000":"870000",expectedOutput:chain===SOLANA_CHAIN_ID?"8800000":"880000",minimumOutputUsdMicros:expensiveBridge?"800000":"870000",destinationChainId:chain,estimatedSeconds:2,to:RELAY_DEPOSITORY,data:encodeFunctionData({abi:parseAbi(["function depositErc20(address depositor,address token,uint256 amount,bytes32 id)"]),functionName:"depositErc20",args:[_payer,MONAD_USDC,_amount,h(8001)]}),value:"0",validUntil:Date.now()+60_000,...bridgeOutput};},
     relayJson:async()=>{const bridgeHash=broadcasts.at(-1)?.hash;if(relayGate)await relayGate;if(relayOffline)throw new Error("Relay unavailable");return {status:readyDelivery?"success":"pending",originChainId:143,destinationChainId,inTxHashes:[bridgeHash],txHashes:[solanaRoute?solanaSignature:h(9000)]};},...extraDependencies};
   const settings={filename:join(dir,"processor.sqlite"),vault,root,newDestinationChainId:newChain};
   let processor=createChogProcessor(settings,dependencies);
   t.after(async()=>{await processor.close();await rm(dir,{recursive:true,force:true});});
-  return {get processor(){return processor;},get receiptReads(){return receiptReads;},broadcasts,source,
+  return {get processor(){return processor;},get receiptReads(){return receiptReads;},broadcasts,source,bridgeMinimums,
+    bridgeOutput(patch){bridgeOutput=patch;},
+    fixtureCounts(){const db=new DatabaseSync(settings.filename);try{return {invoices:db.prepare("SELECT COUNT(*) AS n FROM chog_invoices").get().n,addresses:db.prepare("SELECT COUNT(*) AS n FROM deposit_addresses").get().n,sends:db.prepare("SELECT COUNT(*) AS n FROM source_sends").get().n};}finally{db.close();}},
     async issue(){await processor.tick();return processor.issue({mode:"chog",amount:"300",initiativeId});},
     async seedLegacyAnimalInvoice(){
       await processor.tick();const issued=await processor.issue({mode:"chog",amount:"300",initiativeId:"burundi"});
@@ -231,11 +234,55 @@ test("donor NFT metadata cache is bounded instead of growing with every public p
   assert.equal(fetches,141,"the oldest entry is evicted after the bounded cache fills");
 });
 
-test("expensive bridge is rejected before issuing a QR or sending funds",async t=>{
+test("a 300 CHOG donation accepts signed bridge fees above the former six-percent ceiling",async t=>{
   const f=await harness(t,10,true);
-  await assert.rejects(f.issue(),/Bridge cost exceeds/);
+  const invoice=await f.issue();
+  assert.equal(invoice.donationAmount,"300");assert.equal(invoice.amount,"330");
+  assert.equal(invoice.minUsdc,"800000");assert.equal(invoice.minimumUsd,"800000");
+  assert.deepEqual(f.bridgeMinimums,[1n]);
   assert.equal(f.broadcasts.length,0);
 });
+
+for(const [chain,initiativeId] of [[10,"school-supplies"],[SOLANA_CHAIN_ID,"animal-ethics"]]){
+  test(`a positive signed payout below $0.20 is pinned for a 300 CHOG donation on ${chain}`,async t=>{
+    const f=await harness(t,chain,false,initiativeId,10);
+    f.bridgeOutput({minOutput:chain===SOLANA_CHAIN_ID?"1000":"199999",minimumOutputUsdMicros:"199999"});
+    const invoice=await f.issue();
+    assert.equal(invoice.donationAmount,"300");assert.equal(invoice.amount,"330");
+    assert.equal(invoice.minimumUsd,"199999");assert.equal(invoice.minUsdc,chain===SOLANA_CHAIN_ID?"1000":"199999");
+    assert.deepEqual(f.bridgeMinimums,[1n]);assert.equal(f.broadcasts.length,0);
+  });
+
+  test(`zero or malformed signed payout is rejected before address allocation on ${chain}`,async t=>{
+    const f=await harness(t,chain,false,initiativeId,10),id="c".repeat(64);
+    await f.processor.refreshReadiness();
+    const invalid=["0","-1","1.0","NaN",undefined];
+    const patches=invalid.map(minOutput=>({minOutput}));
+    if(chain===SOLANA_CHAIN_ID)patches.push(...invalid.map(minimumOutputUsdMicros=>({minimumOutputUsdMicros})));
+    for(const patch of patches){
+      f.bridgeOutput(patch);
+      await assert.rejects(f.processor.issue({mode:"chog",amount:"300",initiativeId},id),{code:"BRIDGE_COST_LIMIT"});
+      assert.equal(f.processor.canRetryUnissuedChog(id),true);
+      assert.equal(f.processor.get(id),null);
+      assert.deepEqual(f.fixtureCounts(),{invoices:0,addresses:0,sends:0});
+      assert.equal(f.broadcasts.length,0);
+    }
+  });
+
+  test(`an issued donation keeps its original delivery minimum across lower quotes and restart on ${chain}`,async t=>{
+    const f=await harness(t,chain,false,initiativeId,10),invoice=await f.issue();
+    f.bridgeOutput({minOutput:chain===SOLANA_CHAIN_ID?invoice.minUsdc:String(BigInt(invoice.minUsdc)-1n),minimumOutputUsdMicros:String(BigInt(invoice.minimumUsd)-1n)});
+    f.deposit(invoice);await f.advance(1);
+    assert.equal(f.processor.get(invoice.id).state,"processing");
+    assert.equal(f.processor.get(invoice.id).minUsdc,invoice.minUsdc);
+    assert.equal(f.processor.get(invoice.id).minimumUsd,invoice.minimumUsd);
+    assert.equal(f.broadcasts.length,6,"no bridge may be signed below the promised minimum");
+    await f.restart();await f.advance(2);
+    assert.equal(f.broadcasts.length,6,"restart cannot replace or duplicate the original sends");
+    assert.equal(f.processor.get(invoice.id).minimumUsd,invoice.minimumUsd);
+    assert.equal(f.bridgeMinimums.at(-1),chain===SOLANA_CHAIN_ID?1n:BigInt(invoice.minUsdc));
+  });
+}
 
 test("private leaderboard context reads the verified sender without changing or exposing payment data",async t=>{
   const f=await harness(t,10,false,"school-supplies"),invoice=await f.issue();

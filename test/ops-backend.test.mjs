@@ -201,7 +201,7 @@ function quoteFixture(overrides = {}) {
     saleQuote: async (_source, amount) => { calls++; assert.equal(amount, parseUnits("330", 18)); return { minMon: "100" }; },
     usdcQuote: async () => ({ minUsdc: "11000000" }),
     fetch: async (url, options) => { assert.equal(url, "https://api.relay.link/quote/v2"); assert.equal(options.redirect, "error"); sent = JSON.parse(options.body); return new Response("{}", { status: 200 }); },
-    validateRelayOrder: async (_quote, payer, amount, _minimum, checkedAt) => { assert.equal(payer, "0x" + "11".repeat(20)); assert.equal(amount, 10000000n); return { inputUsdMicros: "10000000", expectedOutputUsdMicros: "9500000", minimumOutputUsdMicros: "9400000", estimatedSeconds: 2, validUntil: checkedAt + 60000, data: "PRIVATE_CALLDATA", requestId: "PRIVATE_ORDER" }; },
+    validateRelayOrder: async (_quote, payer, amount, minimum, checkedAt) => { assert.equal(payer, "0x" + "11".repeat(20)); assert.equal(amount, 10000000n); assert.equal(minimum,1n); return { inputUsdMicros: "10000000", expectedOutputUsdMicros: "9500000", minimumOutputUsdMicros: "9400000", estimatedSeconds: 2, validUntil: checkedAt + 60000, data: "PRIVATE_CALLDATA", requestId: "PRIVATE_ORDER" }; },
     ...overrides,
   };
   return { service: createReadOnlyQuoteService({}, dependencies), calls: () => calls, sent: () => sent, advance: value => { now += value; } };
@@ -220,6 +220,20 @@ test("read-only estimates quote total then split charity, include exact fee and 
   assert.equal((await fixture.service.quote(input)).totalChog, "330"); assert.equal(fixture.calls(), 1);
   fixture.advance(30000); await fixture.service.quote(input); assert.equal(fixture.calls(), 2);
   fixture.service.close(); await assert.rejects(fixture.service.quote(input), /temporarily unavailable/);
+});
+
+test("300 CHOG estimates accept positive signed delivery below $0.20 on USDC and native SOL routes", async () => {
+  for (const initiativeId of ["school-supplies", "animal-ethics"]) {
+    const fixture = quoteFixture({ validateRelayOrder: async (_quote, _payer, _amount, minimum, checkedAt, chain) => {
+      assert.equal(minimum,1n,"read-only estimates must match the positive-only invoice quote policy");
+      assert.equal(chain,initiativeId==="animal-ethics"?792703809:10);
+      return { inputUsdMicros:"10000000",expectedOutputUsdMicros:"199999",minimumOutputUsdMicros:"1",estimatedSeconds:2,validUntil:checkedAt+60000 };
+    } });
+    const result=await fixture.service.quote({amount:"300",initiativeId});
+    assert.equal(result.totalChog,"330");assert.equal(result.minimumCharityUsd,"0.000001");
+    assert.equal(result.expectedCharityUsd,"0.199999");
+    fixture.service.close();
+  }
 });
 
 test("estimate input is allowlisted, one in-flight request is shared, other combos are bounded", async () => {

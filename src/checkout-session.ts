@@ -117,6 +117,13 @@ function waitForCreationRetry(delay: number, signal: AbortSignal): Promise<void>
     if (signal.aborted) cancelled();
   });
 }
+export class BridgeCostLimitError extends Error {
+  readonly code = "BRIDGE_COST_LIMIT";
+  constructor() {
+    super("Bridge fees are too high for this amount. No payment was created. Increase the amount or try again later.");
+    this.name = "BridgeCostLimitError";
+  }
+}
 export async function createPaymentRequest(pending: PendingCreation, signal: AbortSignal, request: typeof fetch = fetch, storage?: SessionStore) {
   // Snapshot once: every attempt, including session recovery, is byte-identical.
   const key = pending.key, mode = pending.input.mode, body = JSON.stringify(pending.input);
@@ -160,7 +167,7 @@ export async function createPaymentRequest(pending: PendingCreation, signal: Abo
   }
   if (!response.ok) {
     if (data?.creationNotStarted === true) clearUnstartedCreation(mode, key, storage);
-    if (data?.creationNotStarted === true && data?.code === "BRIDGE_COST_LIMIT") throw new Error("Bridge fees are too high for this amount. No payment was created. Increase the amount or try again later.");
+    if (mode === "chog" && data?.creationNotStarted === true && data?.code === "BRIDGE_COST_LIMIT") throw new BridgeCostLimitError();
     if (data?.creationNotStarted === true && data?.code === "NFT_NOT_OWNED") throw new Error("This NFT is not held by your wallet. No payment was created. Try again: your current CHOG NFT will be found automatically.");
     if (data?.creationNotStarted === true && data?.code === "NFT_DAILY_LIMIT") throw new Error("Your wallet or NFT already has today's donation. Try after 00:00 UTC. No payment was created.");
     if (data?.code === "PAYMENTS_NOT_READY") throw new Error(data?.creationNotStarted === true ? "The payment connection is recovering. No payment was created. Try again when payments are available." : "The payment connection is recovering. Your original request is saved. Retry it when payments are available; do not send another payment.");

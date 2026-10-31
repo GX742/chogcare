@@ -66,7 +66,9 @@ if [ "$memory_kib" -le 1048576 ] && [ "$swap_kib" -lt 1048576 ]; then
     if awk '$1=="/swapfile.chogcare"{found=1} END{exit !found}' /etc/fstab; then exit 1; fi
     free_kib=$(df -Pk / | awk 'NR==2{print $4}')
     [ "$free_kib" -ge 2097152 ] || exit 1
-    (umask 077; fallocate -l 1073741824 /swapfile.chogcare)
+    # mkswap reserves a header page. Allocate 1 GiB + 1 MiB so usable
+    # SwapTotal still satisfies the unchanged strict 1 GiB readiness gate.
+    (umask 077; fallocate -l 1074790400 /swapfile.chogcare)
     chmod 0600 /swapfile.chogcare
     mkswap /swapfile.chogcare >/dev/null
     swapon /swapfile.chogcare

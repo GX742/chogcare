@@ -1,5 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
+import { spawnSync } from "node:child_process";
 import { assessReadiness, parseMemoryInfo, parseTcpPorts, supportedNode } from "../readiness-preflight.mjs";
 
 const MIB = 1024 * 1024, GIB = 1024 * MIB;
@@ -88,4 +90,45 @@ test("fixed proc parsers reject malformed or incomplete facts and detect IPv4 an
   assert.deepEqual(parseTcpPorts(header + "0: 00000000000000000000000000000000:104F 00000000000000000000000000000000:0000 0A\n"), { 4174: true, 4175: false });
   assert.deepEqual(parseTcpPorts(header + "0: 0100007F:104E 00000000:0000 06\n"), { 4174: true, 4175: true });
   for (const value of ["", "wrong header", header + "malformed row", header + "0: BAD:104E 00000000:0000 0A\n"]) assert.equal(parseTcpPorts(value), null);
+});
+
+test("real mkswap header leaves the old allocation below the strict gate and padded allocation above it", { skip: process.platform === "win32" && process.env.CHOGCARE_STATION_WSL_TEST !== "1", timeout: 10000 }, () => {
+  const provisioner = readFileSync(new URL("../provision-stage.sh", import.meta.url), "utf8");
+  const allocation = Number(provisioner.match(/fallocate -l (\d+) \/swapfile\.chogcare/)?.[1]);
+  assert.equal(allocation, GIB + MIB, "keep the extra allocation bounded to one MiB");
+  const script = String.raw`
+import json,os,pathlib,shutil,struct,subprocess,sys,tempfile
+allocation=json.load(sys.stdin)["allocation"]
+page=os.sysconf("SC_PAGE_SIZE")
+binary=shutil.which("mkswap")
+if not binary:raise RuntimeError("ISOLATED_MKSWAP_MISSING")
+def capacity(path,size):
+    # Sparse disposable files exercise only mkswap metadata, not swap activation;
+    # they allocate no GiB of RAM/disk and are never passed to swapon.
+    with path.open("xb") as file:file.truncate(size)
+    path.chmod(0o600)
+    result=subprocess.run([binary,str(path)],stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL,timeout=3)
+    if result.returncode!=0:raise RuntimeError("ISOLATED_MKSWAP_FAILED")
+    with path.open("rb") as file:header=file.read(page)
+    if header[-10:]!=b"SWAPSPACE2":raise RuntimeError("ISOLATED_SWAP_SIGNATURE_INVALID")
+    version,last_page,bad_pages=struct.unpack_from("=III",header,1024)
+    if version!=1 or bad_pages!=0:raise RuntimeError("ISOLATED_SWAP_HEADER_INVALID")
+    return (last_page-bad_pages)*page
+with tempfile.TemporaryDirectory(prefix="chogcare-swap-header-test-") as directory:
+    parent=pathlib.Path(directory)
+    old=capacity(parent/"old.swap",1073741824)
+    new=capacity(parent/"padded.swap",allocation)
+print(json.dumps({"pageBytes":page,"oldUsableBytes":old,"newUsableBytes":new}))
+`;
+  const windows = process.platform === "win32", binary = windows ? "C:\\Windows\\System32\\wsl.exe" : "/usr/bin/python3";
+  const args = windows ? ["--exec", "/usr/bin/python3", "-c", script] : ["-c", script];
+  const result = spawnSync(binary, args, { input: JSON.stringify({ allocation }), encoding: "utf8", timeout: 8000, maxBuffer: 1024, windowsHide: true });
+  assert.equal(result.status, 0, "Disposable mkswap header fixture failed; no swap was activated or live file touched.");
+  const measured = JSON.parse(result.stdout);
+  assert.equal(measured.oldUsableBytes, GIB - measured.pageBytes);
+  assert.ok(measured.newUsableBytes >= GIB);
+  const old = fixture(); old.resources.swapTotal = measured.oldUsableBytes;
+  assert.equal(assessReadiness(old).checks.swapProvisioned, false);
+  const padded = fixture(); padded.resources.swapTotal = measured.newUsableBytes;
+  assert.equal(assessReadiness(padded).checks.swapProvisioned, true);
 });

@@ -43,7 +43,8 @@ payment health. Legacy local mode continues using local Owncast status.
    the reviewable generic helper. It validates every archive path/hash, installs
    pinned official Node 24.22.0 under `/opt/chogcare-node-v24.22.0` without replacing
    system Node, creates empty private directories/users, provisions at most one
-   new 1 GiB swapfile on a low-memory host, and installs disabled units. It refuses
+   new swapfile with at least 1 GiB usable capacity on a low-memory host (1 GiB +
+   1 MiB allocated for the header), and installs disabled units. It refuses
    existing code/runtime/unit paths or private files. It never reads/copies source
    state, provisions a token/password, starts/enables workers or publishes nginx.
    The helper is not resumable after a partial failure: review the exact staged

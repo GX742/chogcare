@@ -21,10 +21,22 @@ jobs:
         with:
           node-version-file: .node-version
       - name: Install local nginx fixture runtime
-        run: sudo apt-get update && sudo apt-get install -y nginx openssl
+        run: sudo apt-get update && sudo apt-get install -y nginx openssl ffmpeg
       - run: python3 -B test/mobile-input.test.py
       - run: python3 -B test/broadcast-health.test.py
       - run: node --test test/public-relay.test.mjs test/resilient-relay.test.mjs
+      - name: Install checksum-verified isolated stream fixture
+        shell: bash
+        run: |
+          set -euo pipefail
+          curl --proto '=https' --tlsv1.2 --fail --location --retry 2 \
+            https://github.com/bluenviron/mediamtx/releases/download/v1.21.3/mediamtx_v1.21.3_linux_amd64.tar.gz \
+            --output "$RUNNER_TEMP/mediamtx.tar.gz"
+          echo "0a2ea7eba96023631efa1bea7804823a9145b043b6646a8a05798d4ac24ed635  $RUNNER_TEMP/mediamtx.tar.gz" | sha256sum --check
+          mkdir -p work/server-owned-delivery/mediamtx-v1.21.3
+          tar -xzf "$RUNNER_TEMP/mediamtx.tar.gz" -C work/server-owned-delivery/mediamtx-v1.21.3 mediamtx
+      - name: Verify real server video and separate-user station access
+        run: CHOGCARE_STREAM_INTEGRATION=1 node --test test/server-stream.test.mjs test/server-stream-integration.test.mjs test/payment-host-readiness.test.mjs
   secrets:
     name: Secret scan of complete Git history
     runs-on: ubuntu-latest

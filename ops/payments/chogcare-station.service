@@ -1,0 +1,44 @@
+[Unit]
+Description=ChogCare authenticated station gratitude feed
+Wants=network-online.target
+After=network-online.target chogcare-payments.service
+StartLimitIntervalSec=300
+StartLimitBurst=10
+
+[Service]
+Type=simple
+User=chogcare-station
+Group=chogcare-station
+StateDirectory=chogcare-station
+StateDirectoryMode=0700
+WorkingDirectory=/var/lib/chogcare-station
+ExecStart=/opt/chogcare-node-v24.22.0/bin/node /opt/chogcare-payments/ops/payments/station-service.mjs
+LoadCredential=station-token:/etc/chogcare-station/token
+Restart=on-failure
+RestartSec=5
+TimeoutStopSec=30
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadOnlyPaths=/var/lib/chogcare/work/payments
+ReadWritePaths=/var/lib/chogcare-station
+InaccessiblePaths=-/var/lib/chogcare/work/payments/custody -/var/lib/chogcare/work/payments/backups -/var/lib/chogcare/work/payments/integrity -/var/lib/chogcare/work/support -/etc/credstore.encrypted -/run/credentials/chogcare-payments.service
+ProtectProc=invisible
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+IPAddressDeny=any
+IPAddressAllow=localhost
+CapabilityBoundingSet=
+LimitCORE=0
+MemoryHigh=96M
+MemoryMax=128M
+StandardOutput=null
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

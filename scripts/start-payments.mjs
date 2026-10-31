@@ -14,10 +14,12 @@ import { acquireOperatorLease } from "../server/operator-lease.mjs";
 import { createOperationsRuntime } from "../server/operations-runtime.mjs";
 import { openReadOnlyImpactSource } from "../server/ops-dashboard.mjs";
 import { createBackupProtection, createPaymentBackup, verifyRecoveryBundle } from "../server/payment-backup.mjs";
+import { assertPaymentHostActive, HOST_RETIRED_MESSAGE } from "../server/payment-host-retirement.mjs";
 
 // Fixed local diagnostics only. Never forward a caught error, RPC payload,
 // password, keystore or signed transaction into the desktop activity log.
 export const PAYMENT_STARTUP_FAILURES = Object.freeze({
+  "HOST_RETIRED": HOST_RETIRED_MESSAGE,
   "startup-vault-read": "Could not read the existing custody backup. No keys were unlocked. Preserve the backup file.",
   "startup-vault-unlock": "Custody backup could not be unlocked or its branch did not match. Check the existing custody password locally; never recreate the vault.",
   "startup-chog-init": "Custody unlocked, but CHOG storage or pinned route initialization failed. Preserve the databases; do not reset integrity.",
@@ -30,6 +32,7 @@ export const PAYMENT_STARTUP_FAILURES = Object.freeze({
 // Neither path bypasses the operator lease, integrity baseline or custody vault.
 export async function startPaymentWorker({ passwordProvider = hiddenPassword, onEvent = () => {}, registerStop = () => {}, serviceOptions, optionsFactory } = {}, dependencies = {}) {
 const acquireLease = dependencies.acquireOperatorLease ?? acquireOperatorLease;
+const assertHostActive = dependencies.assertPaymentHostActive ?? assertPaymentHostActive;
 const netServer = dependencies.createServer ?? createServer;
 const openIntegrity = dependencies.openPaymentIntegrity ?? openPaymentIntegrity;
 const read = dependencies.readFile ?? readFile;
@@ -79,6 +82,9 @@ try {
   const publicOrigin=(process.env.CHOGCARE_PUBLIC_ORIGIN?.trim()||"https://chogcare.xyz");
   if(!new Set(["https://chogcare.xyz","https://chogcare.vercel.app","https://chogcare.com","https://www.chogcare.com","http://127.0.0.1:4173"]).has(publicOrigin))throw new Error("Payment site origin is not approved.");
   lease=await acquireLease(); assertActive();
+  // Retirement is checked under the same lease as the offline fencing tool,
+  // before opening financial state or requesting any custody credential.
+  await assertHostActive(process.cwd()); assertActive();
   // Fail before asking for a password if another process occupies the API port.
   const probe=netServer();
   await new Promise((ok,bad)=>{probe.once("error",bad);probe.listen(4174,"127.0.0.1",ok);});
@@ -230,14 +236,14 @@ try {
   stopping = true;
   await cleanup();
   if (error?.code === "ADMIN_CANCELLED") return null;
-  emit(error instanceof PaymentIntegrityError ? "integrity-locked" : error?.code === "EADDRINUSE" ? "busy" : "startup-failed", "error");
+  emit(error?.code === "HOST_RETIRED" ? "HOST_RETIRED" : error instanceof PaymentIntegrityError ? "integrity-locked" : error?.code === "EADDRINUSE" ? "busy" : "startup-failed", "error");
   throw error;
 } finally { finishStartup(); }
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(resolve(process.argv[1])).href) {
   startPaymentWorker({ onEvent(event) { if (Object.hasOwn(PAYMENT_STARTUP_FAILURES,event.code)) console.error(PAYMENT_STARTUP_FAILURES[event.code]); }, registerStop(stop) { process.once("SIGINT", () => { void stop().catch(() => { process.exitCode=1; }); }); process.once("SIGTERM", () => { void stop().catch(() => { process.exitCode=1; }); }); } }).catch(error => {
-  console.error(error instanceof PaymentIntegrityError?"Payment integrity check blocked startup. First installation: stop payments and run npm run payments:integrity:enroll ONCE. If a checkpoint already exists, do not delete or reset it; reconcile the database against chain history.":error.code==="EADDRINUSE"?"Payment API or operator lease is busy (4174 / 4175). Close the other payment/maintenance terminal before restarting.":"Payment startup failed. Check your backup/password and network. No new payments enabled.");
+  console.error(error.code==="HOST_RETIRED"?HOST_RETIRED_MESSAGE:error instanceof PaymentIntegrityError?"Payment integrity check blocked startup. First installation: stop payments and run npm run payments:integrity:enroll ONCE. If a checkpoint already exists, do not delete or reset it; reconcile the database against chain history.":error.code==="EADDRINUSE"?"Payment API or operator lease is busy (4174 / 4175). Close the other payment/maintenance terminal before restarting.":"Payment startup failed. Check your backup/password and network. No new payments enabled.");
   process.exitCode=1;
   });
 }

@@ -10,7 +10,9 @@ const copyCard = card => card ? { ...card, image: card.image ? Buffer.from(card.
 
 // Read-only public presentation. No financial database, wallet lookup, payment
 // request or serial transport belongs here. Donation ticks never await this work.
-export function createStationLeaderboard({ fetcher = fetch, avatarLoader = fetchStationAvatar, now = Date.now } = {}) {
+export function createStationLeaderboard({ fetcher = fetch, avatarLoader = fetchStationAvatar, now = Date.now, remote = false } = {}) {
+  if (typeof remote !== "boolean") throw Error("Unsupported station leaderboard mode.");
+  const endpoint = remote ? "https://45.38.60.159/api/payments/leaderboard" : ENDPOINT;
   let closed = false, generation = 0, rows = [], cursor = 0;
   let loadedAt = -Infinity, attemptedAt = -Infinity, refreshTask = null, nextTask = null;
   let activeRead = null, finishClose;
@@ -30,13 +32,13 @@ export function createStationLeaderboard({ fetcher = fetch, avatarLoader = fetch
     activeRead = stop;
     const operation = async () => {
       try {
-        const response = await fetcher(ENDPOINT, {
+        const response = await fetcher(endpoint, {
           headers: { Accept: "application/json" }, credentials: "omit",
           redirect: "error", signal: controller.signal,
         });
         body = response.body;
         if (controller.signal.aborted || !response.ok || response.redirected ||
-            (response.url && response.url !== ENDPOINT) || !body) return null;
+            (response.url && response.url !== endpoint) || !body) return null;
         const length = response.headers.get("content-length");
         if (length !== null && (length.length > 16 || !/^\d+$/.test(length) || BigInt(length) > BigInt(MAX_BYTES))) return null;
         reader = body.getReader();

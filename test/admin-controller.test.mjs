@@ -10,6 +10,7 @@ import { runPrivatePaymentWorker } from "../admin/payment-worker.mjs";
 import { runPrivateStationWorker } from "../admin/station-worker.mjs";
 import { startPaymentWorker, PAYMENT_STARTUP_FAILURES } from "../scripts/start-payments.mjs";
 import { PaymentIntegrityError } from "../server/payment-integrity.mjs";
+import { HOST_RETIRED_MESSAGE, assertPaymentHostActive } from "../server/payment-host-retirement.mjs";
 
 const SECRET = "Never-log-this-custody-password!123";
 const config = { chainId: 143, paymentMode: "local-pilot", custodyConfigured: true, integrityLocked: false, paymentsEnabled: true, nftPaymentsEnabled: true, availableClaims: 3, poolHealthy: true, subsidyUsdc: "1.00", readiness: { processing: "connected", custody: "unlocked-local-pilot", pool: "funded" } };
@@ -33,6 +34,7 @@ async function fixture(overrides = {}) {
   let fallback = null, alive = false, external = overrides.external ?? false;
   let video = structuredClone(original), postCount = 0;
   const deps = {
+    assertPaymentHostActive,
     poll: false, startTimeout: 250, stopTimeout: 50,
     initDirectory: async (path, kind) => {
       assert.equal(path, workspace); assert.ok(["admin", "support"].includes(kind));
@@ -107,6 +109,18 @@ test("offline admin hosts only an owned loopback operations service and publishe
     assert.equal(f.calls.some(item => item.args?.includes("stop")), false);
     assert.deepEqual(f.calls.filter(item => item.protectDirectory).map(item => item.protectDirectory), ["admin", "support"]);
     assert.ok(f.calls.findIndex(item => item.protectDirectory === "support") < f.calls.findIndex(item => item.offlineOptions), "private storage is protected before inbox/API initialization");
+  } finally { await f.dispose(); }
+});
+
+test("retired desktop host rejects payment launch before forking or sending its password", async () => {
+  const f = await fixture();
+  try {
+    await mkdir(join(f.workspace, "work/payments/integrity"), { recursive: true });
+    // Corrupt metadata is a hold too; it cannot silently reactivate custody.
+    await writeFile(join(f.workspace, "work/payments/integrity/host-retired.json"), "{");
+    await assert.rejects(f.admin.action({ type: "payments.start", password: SECRET }), { message: HOST_RETIRED_MESSAGE });
+    assert.equal(f.children.length, 0);
+    assert.equal(JSON.stringify(f.admin.snapshot()).includes(SECRET), false);
   } finally { await f.dispose(); }
 });
 
@@ -484,6 +498,7 @@ function startupDependencies(overrides = {}) {
   const processor = { operatorAddress: "public-operator", treasuryAddress: "public-treasury", tick: async () => {}, close: async () => { calls.push("processor-close"); }, publicStatus: () => config };
   const api = new EventEmitter(); api.listen = (_port, _host, ok) => queueMicrotask(ok); api.close = ok => { calls.push("api-close"); ok(); };
   return { calls, dependencies: {
+    assertPaymentHostActive: () => { calls.push("host-active"); },
     acquireOperatorLease: async () => { calls.push("lease"); return { close: async () => { calls.push("lease-close"); } }; },
     createServer: () => { calls.push("port-probe"); return probe; },
     openPaymentIntegrity: () => { calls.push("integrity"); return { locked: false, checkpoint() { calls.push("checkpoint"); } }; },
@@ -594,10 +609,18 @@ test("shared worker requests GUI password only after lease, port and integrity c
   const f = startupDependencies(); let close;
   const worker = await startPaymentWorker({ passwordProvider: async () => { f.calls.push("password"); return SECRET; }, registerStop(value) { close = value; }, serviceOptions: {} }, f.dependencies);
   assert.ok(worker);
-  assert.deepEqual(f.calls.slice(0, 6), ["lease", "port-probe", "integrity", "vault-read", "password", "unlock"]);
+  assert.deepEqual(f.calls.slice(0, 7), ["lease", "host-active", "port-probe", "integrity", "vault-read", "password", "unlock"]);
   await close();
   assert.ok(f.calls.lastIndexOf("checkpoint") < f.calls.lastIndexOf("lease-close"));
   assert.ok(f.calls.indexOf("api-close") < f.calls.indexOf("processor-close"));
+});
+
+test("retired shared worker stops under its lease before state, port or password access", async () => {
+  const events = [], f = startupDependencies({ assertPaymentHostActive: () => { throw Object.assign(Error("private metadata must not escape"), { code: "HOST_RETIRED" }); } });
+  await assert.rejects(startPaymentWorker({ passwordProvider: async () => assert.fail("password requested"), onEvent: event => events.push(event) }, f.dependencies), { code: "HOST_RETIRED" });
+  assert.deepEqual(f.calls, ["lease", "lease-close"]);
+  assert.ok(events.some(event => event.code === "HOST_RETIRED"));
+  assert.equal(JSON.stringify(events).includes("private metadata"), false);
 });
 
 test("NFT readiness failure keeps CHOG alive, blocks NFT issuance, and retries safely", async () => {

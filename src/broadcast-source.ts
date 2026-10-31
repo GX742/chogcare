@@ -2,6 +2,7 @@
 // or connect directly to the relay's split-DNS hostname. Validate configuration
 // first: an unexpected URL must never become a proxy destination or local probe.
 export const publicBroadcastOrigin = "https://45.38.60.159";
+export const serverBroadcastPath = "/live/station/index.m3u8";
 // Existing deployment settings may still name the previous public relay.
 // Recognize only that exact origin, then route it through the replacement.
 const legacyBroadcastOrigin = "https://chogcare-stream.tail1f833b.ts.net";
@@ -37,4 +38,20 @@ export function broadcastStreamUrl(configuredUrl: unknown, applicationOrigin: st
     url.hash = "";
     return url.href;
   } catch { return null; }
+}
+
+// The server receives one publisher connection. Viewer requests never pull
+// individual media files through the station's desktop or its VPN.
+export function serverBroadcastStreamUrl(configuredUrl: unknown, applicationOrigin: string): string | null {
+  const previous = broadcastStreamUrl(configuredUrl, applicationOrigin, true);
+  if (!previous) return null;
+  const stream = new URL(previous);
+  if (localBroadcastOrigins.includes(stream.origin)) return previous;
+  stream.pathname = serverBroadcastPath;
+  return stream.href;
+}
+
+export function serverBroadcastSource(streamUrl: string): boolean {
+  try { return new URL(streamUrl).pathname === serverBroadcastPath; }
+  catch { return false; }
 }

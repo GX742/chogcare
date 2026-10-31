@@ -14,6 +14,24 @@ test("portrait camera frame uses the actual ratio without scaling/cropping lands
 
 const ranges = (...pairs) => ({ length: pairs.length, start: index => pairs[index][0], end: index => pairs[index][1] });
 
+test("server LL-HLS keeps a short buffer and finite origin timeouts without mutating shared vendor defaults", () => {
+  const before=structuredClone(Hls.DefaultConfig.manifestLoadPolicy);
+  const config=liveHlsConfig(1,Hls.DefaultConfig,"server");
+  assert.equal(config.liveSyncDurationCount,2);
+  assert.equal(config.liveMaxLatencyDurationCount,6);
+  assert.equal(config.maxBufferLength,4);
+  assert.equal(config.maxMaxBufferLength,6);
+  assert.equal(config.backBufferLength,2);
+  assert.equal(config.lowLatencyMode,true);
+  for (const name of ["manifestLoadPolicy","playlistLoadPolicy","fragLoadPolicy"]) {
+    assert.equal(config[name].default.maxTimeToFirstByteMs,4000);
+    assert.ok(config[name].default.maxLoadTimeMs<=12_000);
+    assert.notEqual(config[name].default,Hls.DefaultConfig[name].default);
+  }
+  config.manifestLoadPolicy.default.maxTimeToFirstByteMs=999;
+  assert.deepEqual(Hls.DefaultConfig.manifestLoadPolicy,before);
+});
+
 test("MSE wins when Chromium also advertises native HLS; native is a capability fallback", () => {
   assert.equal(livePlaybackStrategy(true, true), "hls");
   assert.equal(livePlaybackStrategy(true, false), "hls");

@@ -21,7 +21,7 @@ import { createLiveDriftSync, createLiveLoadState, createLiveResumeSync, liveBuf
 import { createLivePlaybackRecovery } from "./live-recovery";
 import { createLivePlaybackStatus } from "./live-status";
 import { createLiveViewportPresence } from "./live-viewport";
-import { broadcastPreviewUrl, broadcastStreamUrl } from "./broadcast-source";
+import { broadcastPreviewUrl, serverBroadcastStreamUrl, serverBroadcastSource } from "./broadcast-source";
 
 import "./station-redesign.css";
 import "./sunset-redesign.css";
@@ -175,7 +175,7 @@ function Funding({ initiative }: { initiative: Initiative }) {
 const configuredTwitchChannel = import.meta.env.VITE_TWITCH_CHANNEL?.trim().toLowerCase() || "";
 const twitchChannel = /^[a-z0-9_]{4,25}$/.test(configuredTwitchChannel) ? configuredTwitchChannel : null;
 function owncastStreamUrl() {
-  return broadcastStreamUrl(import.meta.env.VITE_OWNCAST_URL?.trim(), window.location.origin, window.matchMedia("(max-width: 767px), (pointer: coarse)").matches);
+  return serverBroadcastStreamUrl(import.meta.env.VITE_OWNCAST_URL?.trim(), window.location.origin);
 }
 
 function NativeLivePlayer({ src, onReady, onWaiting, onAspect }: { src: string; onReady: () => void; onWaiting: () => void; onAspect: (ratio: number | undefined) => void }) {
@@ -196,7 +196,8 @@ function NativeLivePlayer({ src, onReady, onWaiting, onAspect }: { src: string; 
     if (!element) return;
     const video: HTMLVideoElement = element;
     let cancelled = false, inViewport = false, generation = 0;
-    let segmentSeconds = src.endsWith("/hls/mobile/stream.m3u8") ? MOBILE_LIVE_SEGMENT_SECONDS : DEFAULT_LIVE_SEGMENT_SECONDS;
+    const transport = serverBroadcastSource(src) ? "server" : "relay";
+    let segmentSeconds = transport === "server" ? 1 : src.endsWith("/hls/mobile/stream.m3u8") ? MOBILE_LIVE_SEGMENT_SECONDS : DEFAULT_LIVE_SEGMENT_SECONDS;
     let hls: HlsType | null = null, nativeActive = false;
     let sourceStale = false, frameCallback: number | null = null;
     let pendingFragment: { readonly stats: { loaded: number } } | null = null;
@@ -235,7 +236,7 @@ function NativeLivePlayer({ src, onReady, onWaiting, onAspect }: { src: string; 
     };
     const playback = createLivePlaybackRecovery({
       media: video, active, monitor: loadMonitor,
-      frameDriven,
+      frameDriven, transport,
       transferProgress: () => pendingFragment ? { request: pendingFragment.stats, loaded: pendingFragment.stats.loaded }
         : pendingPlaylist ? { request: pendingPlaylist.stats, loaded: 0 } : null,
       resumeLoading: (catchUp = false) => {
@@ -317,7 +318,7 @@ function NativeLivePlayer({ src, onReady, onWaiting, onAspect }: { src: string; 
         if (cancelled || current !== generation) return;
         const strategy = livePlaybackStrategy(Hls.isSupported(), nativeHlsCapable, managedMediaSource);
         if (strategy !== "hls") { if (strategy === "native") startNative(); else playback.unavailable(); return; }
-        const engine = new Hls(liveHlsConfig(segmentSeconds, Hls.DefaultConfig));
+        const engine = new Hls(liveHlsConfig(segmentSeconds, Hls.DefaultConfig, transport));
         let previousPlaylist: string | null = null;
         hls = engine;
         engine.on(Hls.Events.MANIFEST_PARSED, () => { if (hls === engine && !cancelled) startPlayback(); });
@@ -334,7 +335,7 @@ function NativeLivePlayer({ src, onReady, onWaiting, onAspect }: { src: string; 
         engine.on(Hls.Events.LEVEL_UPDATED, (_event, data) => {
           if (hls !== engine || cancelled) return;
           segmentSeconds = liveSegmentSeconds(data.details.targetduration);
-          Object.assign(engine.config, liveBufferTiming(segmentSeconds));
+          Object.assign(engine.config, liveBufferTiming(segmentSeconds, transport));
           const key = livePlaylistKey(data.details);
           if (key !== null && key !== previousPlaylist) {
             previousPlaylist = key; sourceStale = !data.details.live;

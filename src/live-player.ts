@@ -5,6 +5,13 @@ export const MOBILE_LIVE_SEGMENT_SECONDS = 3;
 export const LIVE_SYNC_SEGMENT_COUNT = 3;
 export const LIVE_MAX_LATENCY_SEGMENT_COUNT = 6;
 export const LIVE_FIRST_BYTE_DEADLINE_MS = 50_000;
+export type LiveTransport = "relay" | "server";
+
+export function liveRecoveryTiming(transport: LiveTransport = "relay") {
+  return transport === "server"
+    ? { startupMs: 12_000, stallMs: 6_000, firstByteMs: 4_000, progressMs: 3_000, hardMs: 24_000 }
+    : { startupMs: 60_000, stallMs: 45_000, firstByteMs: LIVE_FIRST_BYTE_DEADLINE_MS, progressMs: 10_000, hardMs: 120_000 };
+}
 
 // Three-second media amortizes the public relay's request overhead. Keep the
 // client target at six seconds rather than accumulating an unbounded backlog.
@@ -18,7 +25,12 @@ export function livePlaybackTiming(segmentSeconds = DEFAULT_LIVE_SEGMENT_SECONDS
 
 // The deployed rendition can change segment duration without a frontend build.
 // Keep one extra segment ahead of the live target and another for recovery.
-export function liveBufferTiming(segmentSeconds = DEFAULT_LIVE_SEGMENT_SECONDS) {
+export function liveBufferTiming(segmentSeconds = DEFAULT_LIVE_SEGMENT_SECONDS, transport: LiveTransport = "relay") {
+  if (transport === "server") {
+    const segment = liveSegmentSeconds(segmentSeconds);
+    return { liveSyncDurationCount: 2, liveMaxLatencyDurationCount: 6,
+      maxBufferLength: Math.max(3, segment * 4), maxMaxBufferLength: Math.max(5, segment * 6) };
+  }
   const segment = liveSegmentSeconds(segmentSeconds), timing = livePlaybackTiming(segment);
   return {
     ...timing,
@@ -75,22 +87,30 @@ function relayLoadPolicy(policy: HlsConfig["manifestLoadPolicy"], minimumLoadMs:
   };
 }
 
+function serverLoadPolicy(policy: HlsConfig["manifestLoadPolicy"], maximumLoadMs: number) {
+  const original = policy.default;
+  return { ...policy, default: { ...original, maxTimeToFirstByteMs: 4_000, maxLoadTimeMs: maximumLoadMs,
+    timeoutRetry: original.timeoutRetry === null ? null : { ...original.timeoutRetry },
+    errorRetry: original.errorRetry === null ? null : { ...original.errorRetry } } };
+}
+
 // Segment counts adapt to the actual rendition, including six-second media.
 // A smaller back buffer limits memory; it is not an end-to-end latency target.
-export function liveHlsConfig(segmentSeconds = DEFAULT_LIVE_SEGMENT_SECONDS, defaults?: LiveLoadPolicies): Partial<HlsConfig> {
+export function liveHlsConfig(segmentSeconds = DEFAULT_LIVE_SEGMENT_SECONDS, defaults?: LiveLoadPolicies, transport: LiveTransport = "relay"): Partial<HlsConfig> {
+  const server = transport === "server";
   return {
     enableWorker: true,
     lowLatencyMode: true,
     liveSyncMode: "buffered",
-    ...liveBufferTiming(segmentSeconds),
-    maxLiveSyncPlaybackRate: 1.03,
+    ...liveBufferTiming(segmentSeconds, transport),
+    maxLiveSyncPlaybackRate: server ? 1.08 : 1.03,
     liveSyncOnStallIncrease: 0,
-    liveMaxUnchangedPlaylistRefresh: 6,
-    backBufferLength: 4,
+    liveMaxUnchangedPlaylistRefresh: server ? 3 : 6,
+    backBufferLength: server ? 2 : 4,
     ...(defaults ? {
-      manifestLoadPolicy: relayLoadPolicy(defaults.manifestLoadPolicy, 60_000),
-      playlistLoadPolicy: relayLoadPolicy(defaults.playlistLoadPolicy, 60_000),
-      fragLoadPolicy: relayLoadPolicy(defaults.fragLoadPolicy, 120_000),
+      manifestLoadPolicy: server ? serverLoadPolicy(defaults.manifestLoadPolicy, 8_000) : relayLoadPolicy(defaults.manifestLoadPolicy, 60_000),
+      playlistLoadPolicy: server ? serverLoadPolicy(defaults.playlistLoadPolicy, 8_000) : relayLoadPolicy(defaults.playlistLoadPolicy, 60_000),
+      fragLoadPolicy: server ? serverLoadPolicy(defaults.fragLoadPolicy, 12_000) : relayLoadPolicy(defaults.fragLoadPolicy, 120_000),
     } : {}),
   };
 }

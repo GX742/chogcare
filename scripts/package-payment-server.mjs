@@ -7,8 +7,9 @@ import {execFileSync} from "node:child_process";
 // enter it. The existing custody state is transferred separately, offline.
 const workspace=resolve("."),output=resolve("work/server-release");await mkdir(output,{recursive:true});
 const stage=await mkdtemp(join(output,"payment-server-"));
-const scripts=["start-payments.mjs","terminal-password.mjs","cloud-payments.mjs","relocate-payment-checkpoint.mjs","payment-integrity.mjs","payment-recovery.mjs"];
-const files=["ops/payments/package.json","ops/payments/package-lock.json","ops/payments/chogcare-payments.service","ops/payments/nginx.conf","docs/PAYMENT-SERVER.md",...scripts.map(name=>`scripts/${name}`)];
+const scripts=["start-payments.mjs","terminal-password.mjs","cloud-payments.mjs","relocate-payment-checkpoint.mjs","payment-integrity.mjs","payment-recovery.mjs","station-remote-client.mjs","station-broadcast-remote.mjs","check-station-remote-acl.ps1"];
+const operations=["package.json","package-lock.json","chogcare-payments.service","nginx.conf","readiness-preflight.mjs","retire-host.mjs","station-service.mjs","chogcare-station.service","configure-station-reader.sh","relocate-station-outbox.mjs","provision-stage.sh","verify-code-package.py","CUTOVER.md","test/readiness-preflight.test.mjs","test/station-reader-linux.test.mjs","test/code-package.test.mjs"];
+const files=[...operations.map(name=>`ops/payments/${name}`),"docs/PAYMENT-SERVER.md","test/station-remote.test.mjs","test/station-broadcast-remote.test.mjs","test/payment-host-retirement.test.mjs","test/payment-host-readiness.test.mjs",...scripts.map(name=>`scripts/${name}`)];
 for(const [directory,extension] of [["server",".mjs"],["src",".ts"]]){
   for(const name of await readdir(directory))if(name.endsWith(extension))files.push(`${directory}/${name}`);
 }

@@ -50,7 +50,7 @@ test("server remuxing has bounded segments, queues and no offline LIVE substitut
   assert.equal(config.hlsSegmentMaxSize, "2M");
   assert.equal(config.hlsDirectory, "");
   assert.equal(config.writeQueueSize, 64);
-  assert.equal(config.readTimeout, "5s");
+  assert.equal(config.readTimeout, "15s");
   assert.equal(config.writeTimeout, "5s");
   assert.equal(config.pathDefaults.alwaysAvailable, false);
   assert.equal(config.pathDefaults.overridePublisher, false);

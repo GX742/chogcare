@@ -148,9 +148,9 @@ test("verified MediaMTX parses the production renderer and serves authenticated 
     assert.deepEqual(configured.authInternalUsers[1].permissions, [{ action: "read", path: "station" }]);
   });
 
-  function publisher({ pass = password, path = "station", anonymous = false } = {}) {
+  function publisher({ pass = password, path = "station", anonymous = false, ingestPort = ingest.port } = {}) {
     const query = anonymous ? "" : `?user=publisher&pass=${encodeURIComponent(pass)}`;
-    const child = ownedProcess(ffmpeg, ["-hide_banner", "-loglevel", "error", "-nostdin", "-re", "-f", "lavfi", "-i", "testsrc2=size=160x96:rate=10", "-t", "60", "-an", "-c:v", "libx264", "-preset", "ultrafast", "-tune", "zerolatency", "-threads", "1", "-filter_threads", "1", "-g", "10", "-keyint_min", "10", "-sc_threshold", "0", "-pix_fmt", "yuv420p", "-tls_verify", "1", "-ca_file", certificate, "-f", "flv", "-flvflags", "no_duration_filesize", `rtmps://127.0.0.1:${ingest.port}/${path}${query}`], directory);
+    const child = ownedProcess(ffmpeg, ["-hide_banner", "-loglevel", "error", "-nostdin", "-re", "-f", "lavfi", "-i", "testsrc2=size=160x96:rate=10", "-t", "60", "-an", "-c:v", "libx264", "-preset", "ultrafast", "-tune", "zerolatency", "-threads", "1", "-filter_threads", "1", "-g", "10", "-keyint_min", "10", "-sc_threshold", "0", "-pix_fmt", "yuv420p", "-tls_verify", "1", "-ca_file", certificate, "-f", "flv", "-flvflags", "no_duration_filesize", `rtmps://127.0.0.1:${ingestPort}/${path}${query}`], directory);
     children.push(child); return child;
   }
 
@@ -327,5 +327,85 @@ test("verified MediaMTX parses the production renderer and serves authenticated 
       previousPart = part;
       return advanced;
     }, "A fresh authenticated publisher must restore advancing LL-HLS parts", 15_000);
+  });
+
+  await t.test("a delayed TLS publisher outlives the old startup deadline and produces real media", async () => {
+    // MediaMTX starts one read deadline before TLS/RTMP setup and retains it
+    // through its two-second media discovery. An opaque TCP relay preserves
+    // certificate verification while making this startup delay deterministic.
+    for (const legacy of [true, false]) {
+      const [delayedIngest, delayedHls] = await Promise.all([portLease(), portLease()]);
+      leases.push(delayedIngest, delayedHls);
+      const delayedConfig = JSON.parse(configuration);
+      delayedConfig.rtmpsAddress = `127.0.0.1:${delayedIngest.port}`;
+      delayedConfig.hlsAddress = `127.0.0.1:${delayedHls.port}`;
+      if (legacy) delayedConfig.readTimeout = "5s";
+      const delayedFile = join(directory, legacy ? "startup-legacy.json" : "startup-current.json");
+      await writeFile(delayedFile, JSON.stringify(delayedConfig), { flag: "wx", mode: 0o600 });
+      await Promise.all([delayedIngest.close(), delayedHls.close()]);
+      const delayedServer = ownedProcess(fixtureBinary, [delayedFile], directory);
+      children.push(delayedServer);
+      await waitUntil(async () => {
+        assert.equal(delayedServer.result, null);
+        return listening(delayedIngest.port);
+      }, "The isolated delayed-start origin must listen");
+
+      const sockets = new Set(), timers = new Set();
+      const tunnel = createServer(client => {
+        const upstream = connect({ host: "127.0.0.1", port: delayedIngest.port });
+        sockets.add(client); sockets.add(upstream);
+        client.pause();
+        const close = () => { client.destroy(); upstream.destroy(); sockets.delete(client); sockets.delete(upstream); };
+        client.on("error", close); upstream.on("error", close);
+        client.on("close", close); upstream.on("close", close);
+        upstream.once("connect", () => {
+          upstream.pipe(client);
+          const timer = setTimeout(() => {
+            timers.delete(timer);
+            if (!client.destroyed && !upstream.destroyed) { client.pipe(upstream); client.resume(); }
+          }, 3500);
+          timers.add(timer);
+        });
+      });
+      await new Promise(resolve => tunnel.listen(0, "127.0.0.1", resolve));
+      let delayedPublisher;
+      try {
+        delayedPublisher = publisher({ ingestPort: tunnel.address().port });
+        if (legacy) {
+          const ended = await within(delayedPublisher.ended, 9000);
+          assert.ok(ended, "The old five-second budget must close during delayed setup plus media discovery");
+          assert.equal(ended.spawnFailed, undefined);
+          assert.notEqual(ended.code, 0);
+        } else {
+          let playlist;
+          await waitUntil(async () => {
+            assert.equal(delayedPublisher.result, null, "The current budget must keep the same delayed publisher connected");
+            const response = await fetch(`http://127.0.0.1:${delayedHls.port}/station/index.m3u8`, {
+              headers: { Authorization: `Bearer ${readToken}` }, signal: AbortSignal.timeout(2000),
+            });
+            playlist = await response.text();
+            assert.ok(playlist.length < 64 * 1024);
+            return response.status === 200;
+          }, "The renderer must admit the delayed publisher and produce an actual HLS playlist", 14_000);
+          assert.match(playlist, /^#EXTM3U/);
+          const variant = playlist.split(/\r?\n/).find(line => line && !line.startsWith("#"));
+          assert.match(variant, /^[A-Za-z0-9_-]+\.m3u8$/);
+          const response = await fetch(`http://127.0.0.1:${delayedHls.port}/station/${variant}`, {
+            headers: { Authorization: `Bearer ${readToken}` }, signal: AbortSignal.timeout(2000),
+          });
+          assert.equal(response.status, 200);
+          const media = await response.text();
+          assert.ok(media.length < 64 * 1024);
+          assert.match(media, /^#EXT-X-PART:.*URI="[A-Za-z0-9_-]+\.mp4"/m);
+        }
+        assert.equal(delayedServer.result, null);
+      } finally {
+        await delayedPublisher?.stop();
+        for (const timer of timers) clearTimeout(timer);
+        for (const socket of sockets) socket.destroy();
+        await new Promise(resolve => tunnel.close(resolve));
+        await delayedServer.stop();
+      }
+    }
   });
 });

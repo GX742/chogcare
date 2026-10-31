@@ -61,7 +61,7 @@ export function renderMediaMtxConfig({
     logLevel: "warn",
     logDestinations: ["stdout"],
     dumpPackets: false,
-    readTimeout: "5s",
+    readTimeout: "15s",
     writeTimeout: "5s",
     writeQueueSize: 64,
     authMethod: "internal",

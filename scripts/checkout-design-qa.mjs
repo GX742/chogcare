@@ -63,13 +63,16 @@ try{
       assert.ok(parseFloat(initial.amountFont)>=48);assert.equal(initial.splitBorder,"0px");assert.equal(initial.splitBackground,"rgba(0, 0, 0, 0)");
       assert.match(await page.locator("#tab-chog").innerText(),/\$CHOG/);
       assert.equal(await page.locator(".checkout-amount-unit strong").innerText(),"$CHOG");
+      assert.equal(await page.locator("#live-amount").inputValue(),"500");
+      assert.match(await page.locator(".checkout-contribution-total").innerText(),/550/);
+      assert.match(await page.locator("#checkout-amount-hint").innerText(),/Suggested minimum 500 \$CHOG.*bridge fees vary/);
       const amountBox=await page.locator("#live-amount").boundingBox(),unitBox=await page.locator(".checkout-amount-unit").boundingBox();
       assert.ok(unitBox.x-(amountBox.x+amountBox.width)>=8&&unitBox.x-(amountBox.x+amountBox.width)<=18,"Ticker stays next to the amount");
       await page.getByRole("button",{name:"Edit donation amount"}).click();
       assert.deepEqual(await page.locator("#live-amount").evaluate(el=>({focused:document.activeElement===el,start:el.selectionStart,end:el.selectionEnd})),{focused:true,start:0,end:3});
       const presets=page.locator(".checkout-presets button");
-      assert.deepEqual(await presets.allTextContents(),["300","3,000","30,000","300,000","1,000,000"]);
-      for(const [index,amount] of ["300","3000","30000","300000","1000000"].entries()){
+      assert.deepEqual(await presets.allTextContents(),["500","3,000","30,000","300,000","1,000,000"]);
+      for(const [index,amount] of ["500","3000","30000","300000","1000000"].entries()){
         await presets.nth(index).click();
         assert.equal(await page.locator("#live-amount").inputValue(),amount);
         assert.equal(await presets.nth(index).getAttribute("aria-pressed"),"true");

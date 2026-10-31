@@ -2,7 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { getEventListeners } from "node:events";
 import { assertUnpaidCheckout } from "../src/checkout-session.ts";
-import { activeInvoiceKeys, beginCreation, checkoutSelection, closeSavedInvoice, createPaymentRequest, pendingCreation, recoveryBundle, rememberInvoice, rememberMode, savedInvoice, savedCheckoutModes, validInvoiceId } from "../src/checkout-session.ts";
+import { activeInvoiceKeys, beginCreation, BridgeCostLimitError, checkoutSelection, closeSavedInvoice, createPaymentRequest, pendingCreation, recoveryBundle, rememberInvoice, rememberMode, savedInvoice, savedCheckoutModes, validInvoiceId } from "../src/checkout-session.ts";
 
 const chogId = "a".repeat(64), nftId = "b".repeat(64);
 test("cancel guard refuses processing, wrong identity and any detected funds", () => {
@@ -345,6 +345,34 @@ test("only existing explicit pre-creation proof unlocks edits, including bridge 
     assert.equal(posts, 1);
     assert.equal(pendingCreation(input.mode, store), null);
   }
+});
+
+test("bridge amount suggestions are authorized only by explicit proof that creation did not start", async () => {
+  for (const creationNotStarted of [undefined, false, "true", true]) {
+    const store = memory(), pending = beginCreation(chog, store);
+    await assert.rejects(createPaymentRequest(pending, new AbortController().signal, async () =>
+      Response.json({ code: "BRIDGE_COST_LIMIT", creationNotStarted }, { status: 422 }), store), problem => {
+      assert.equal(problem instanceof BridgeCostLimitError, creationNotStarted === true);
+      assert.equal(problem.code, creationNotStarted === true ? "BRIDGE_COST_LIMIT" : undefined);
+      return true;
+    });
+    if (creationNotStarted === true) {
+      assert.equal(pendingCreation("chog", store), null);
+      const reviewed = beginCreation({ ...chog, amount: "500" }, store);
+      assert.notEqual(reviewed.key, pending.key, "a donor-reviewed larger amount uses a new request");
+      assert.equal(reviewed.input.amount, "500");
+    } else {
+      assert.deepEqual(pendingCreation("chog", store), pending);
+      assert.throws(() => beginCreation({ ...chog, amount: "500" }, store), /Retry it unchanged/);
+    }
+  }
+  const store = memory(), pending = beginCreation(nft, store);
+  await assert.rejects(createPaymentRequest(pending, new AbortController().signal, async () =>
+    Response.json({ code: "BRIDGE_COST_LIMIT", creationNotStarted: true }, { status: 422 }), store), problem => {
+    assert.equal(problem instanceof BridgeCostLimitError, false, "NFT checkout cannot offer a CHOG amount suggestion");
+    assert.equal(problem.code, undefined);
+    return true;
+  });
 });
 test("invalid saved references are not silently erased or substituted", () => {
   const store=memory(); store.setItem(activeInvoiceKeys.nft,"../../config");

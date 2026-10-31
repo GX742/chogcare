@@ -15,22 +15,23 @@ import { formatDonationAmount } from "./donation-amount";
 import { deliveryNetwork } from "./delivery-network";
 import { supportsChog } from "./chog-beneficiary";
 import { contributionForDonationUnits, NFT_POOL_CONTRIBUTION_PERCENT } from "./pool-contribution";
-import { activeInvoiceKeys, beginCreation, closeSavedInvoice, createPaymentRequest, initialCheckout, pendingCreation, rememberInvoice, savedInvoice, validInvoiceId } from "./checkout-session";
+import { activeInvoiceKeys, beginCreation, BridgeCostLimitError, closeSavedInvoice, createPaymentRequest, initialCheckout, pendingCreation, rememberInvoice, savedInvoice, validInvoiceId } from "./checkout-session";
 import "./checkout.css";
 import type { SupportContext } from "./support-model";
 import { closeHeldCheckout, heldCheckoutKind, sameRefundCase } from "./refunded-checkout";
 import RefundStatus from "./RefundStatus";
 
 export const activeInvoiceKey=activeInvoiceKeys.chog;
-const presetAmounts=["300","3000","30000","300000","1000000"] as const;
+const presetAmounts=["500","3000","30000","300000","1000000"] as const;
 const integerFormatter=new Intl.NumberFormat("en-US",{maximumFractionDigits:0});
 const usdFormatter=new Intl.NumberFormat("en-US",{style:"currency",currency:"USD",minimumFractionDigits:2,maximumFractionDigits:2});
 export default function LiveChogCheckout({initiativeId,initiativeName,ready,destinationChainId=1,serviceAllowed=false,onViewLeaderboard,onSupport}:{initiativeId:string;initiativeName:string;ready:boolean;destinationChainId?:1|10|792703809;serviceAllowed?:boolean;onViewLeaderboard?:()=>void;onSupport?:(context:SupportContext)=>void}) {
   const [saved] = useState(()=>initialCheckout("chog"));
   const [pending,setPending]=useState(saved.pending);
-  const [amount,setAmount]=useState(saved.pending?.input.amount || "300"), [invoice,setInvoice]=useState<PayableInvoice|null>(null), [id,setId]=useState(saved.id);
+  const [amount,setAmount]=useState(saved.pending?.input.amount || "500"), [invoice,setInvoice]=useState<PayableInvoice|null>(null), [id,setId]=useState(saved.id);
   const [qr,setQr]=useState(""),[busy,setBusy]=useState(false),[error,setError]=useState(saved.error),[online,setOnline]=useState(false);
   const [rateUsdMicros,setRateUsdMicros]=useState<bigint|null>(null);
+  const [bridgeCostRejected,setBridgeCostRejected]=useState(false);
   const [now,setNow]=useState(Date.now);
   const heading=useRef<HTMLHeadingElement>(null);
   const amountInput=useRef<HTMLInputElement>(null);
@@ -81,7 +82,7 @@ export default function LiveChogCheckout({initiativeId,initiativeName,ready,dest
   },[invoice?.paymentUri,canPay]);
   const create=async(event:React.FormEvent)=>{
     event.preventDefault();if(!serviceAllowed||busy||id||(!ready&&!pending)||saved.error||!supportsChog(initiativeId))return;
-    setBusy(true);setError("");
+    setBusy(true);setError("");setBridgeCostRejected(false);
     try {
       if(!/^\d{1,7}(\.\d{1,18})?$/.test(amount)||parseUnits(amount,18)<300n*10n**18n||parseUnits(amount,18)>1_000_000n*10n**18n)throw new Error("Enter an amount between 300 and 1,000,000 $CHOG, with up to 18 decimal places.");
       const normalizedAmount=formatUnits(parseUnits(amount,18),18);
@@ -89,7 +90,7 @@ export default function LiveChogCheckout({initiativeId,initiativeName,ready,dest
       const next=validatePayableInvoice(await createPaymentRequest(request,AbortSignal.timeout(30_000)));
       if(next.donationAmount!==normalizedAmount || next.contributionPercent!==NFT_POOL_CONTRIBUTION_PERCENT || next.initiativeId!==initiativeId)throw new Error("Payment amount, contribution or initiative changed unexpectedly.");
       rememberInvoice("chog",next.id,undefined,next.initiativeId);setPending(null);currentInvoice.current=next;setInvoice(next);setOnline(true);setId(next.id);
-    } catch(problem){setError(problem instanceof Error?problem.message:"Could not resolve payment. Retry the same request; do not pay again.");try{setPending(pendingCreation("chog"));}catch{/* Keep existing request locked if storage is unavailable. */}}finally{setBusy(false);}
+    } catch(problem){setBridgeCostRejected(problem instanceof BridgeCostLimitError);setError(problem instanceof Error?problem.message:"Could not resolve payment. Retry the same request; do not pay again.");try{setPending(pendingCreation("chog"));}catch{/* Keep existing request locked if storage is unavailable. */}}finally{setBusy(false);}
   };
   const labels={"awaiting-payment":"Waiting for your $CHOG transfer",processing:"$CHOG received · exchanging",bridging:"Sending your donation to the charity",confirming:"Donation received · confirmation in progress",delivered:"Donation delivered",expired:"Invoice expired · do not pay", "manual-review":"Operator review required · do not pay again"};
   const progress=invoice?.state==="delivered"?4:invoice?.state==="confirming"?3:invoice?.state==="bridging"?2:invoice?.state==="processing"?1:0;
@@ -98,6 +99,8 @@ export default function LiveChogCheckout({initiativeId,initiativeName,ready,dest
   const startAfterHeldPayment=async()=>{if(busy||!archiveKind)return;setBusy(true);setError("");try{await closeHeldCheckout(id,archiveKind,reset,{expectedRefund:invoice?.refund,isCurrent:()=>savedInvoice("chog")===id&&currentInvoice.current?.id===id&&heldCheckoutKind(id,currentInvoice.current)===archiveKind&&sameRefundCase(invoice?.refund,currentInvoice.current?.refund)});}catch{setError("This payment could not be checked safely. Keep its recovery reference; do not pay this invoice again.");}finally{setBusy(false);}};
   const refund=invoice?.refund;
   const paymentAllocation=allocation(amount);
+  const suggestedAmount=bridgeCostRejected?presetAmounts.find(value=>parseUnits(value,18)>parseUnits(amount,18)):undefined;
+  const changeAmount=(value:string)=>{setAmount(value);setBridgeCostRejected(false);};
   const received=!!invoice&&["confirming","delivered"].includes(invoice.state);
   const inProgress=invoice?.state==="processing"||invoice?.state==="bridging";
   const receivedTotal=invoice?.receivedAmount??invoice?.amount??"";
@@ -117,15 +120,15 @@ export default function LiveChogCheckout({initiativeId,initiativeName,ready,dest
       <div className={`checkout-amount-input${amount.length>11?" is-precise":amount.length>6?" is-long":""}`}>
         <span className="checkout-amount-value">
           <span className="checkout-amount-measure" aria-hidden="true">{amount||"0"}</span>
-          <input ref={amountInput} id="live-amount" inputMode="decimal" autoComplete="off" spellCheck={false} size={1} aria-describedby="checkout-amount-hint" value={amount} maxLength={26} onChange={e=>setAmount(e.target.value)} disabled={busy||!!pending}/>
+          <input ref={amountInput} id="live-amount" inputMode="decimal" autoComplete="off" spellCheck={false} size={1} aria-describedby="checkout-amount-hint" value={amount} maxLength={26} onChange={e=>changeAmount(e.target.value)} disabled={busy||!!pending}/>
         </span>
         <span className="checkout-amount-unit"><strong>$CHOG</strong>{estimatedUsd(amount)&&<small>≈ {estimatedUsd(amount)}</small>}</span>
       </div>
       <div className="checkout-amount-toolbar">
-        <p className="checkout-amount-hint" id="checkout-amount-hint">Minimum 300 $CHOG</p>
+        <p className="checkout-amount-hint" id="checkout-amount-hint">Suggested minimum 500 $CHOG · bridge fees vary</p>
         <button className="checkout-edit-amount" type="button" aria-label="Edit donation amount" disabled={busy||!!pending} onClick={()=>{amountInput.current?.focus();amountInput.current?.select();}}><PencilSimple size={15} aria-hidden="true"/>Edit amount</button>
       </div>
-      <div className="checkout-presets" role="group" aria-label="Suggested $CHOG amounts">{presetAmounts.map(v=><button type="button" key={v} aria-pressed={amount===v} onClick={()=>setAmount(v)} disabled={busy||!!pending}><strong>{integerFormatter.format(Number(v))}</strong></button>)}</div>
+      <div className="checkout-presets" role="group" aria-label="Suggested $CHOG amounts">{presetAmounts.map(v=><button type="button" key={v} aria-pressed={amount===v} onClick={()=>changeAmount(v)} disabled={busy||!!pending}><strong>{integerFormatter.format(Number(v))}</strong></button>)}</div>
       {paymentAllocation&&<div className="checkout-contribution" aria-label="Payment split"><div><span>Your initiative</span><strong>{paymentAllocation.donation} <span className="checkout-token">$CHOG</span></strong></div><div><span>NFT community pool <small>+{NFT_POOL_CONTRIBUTION_PERCENT}%</small></span><strong>{paymentAllocation.contribution} <span className="checkout-token">$CHOG</span></strong></div><div className="checkout-contribution-total"><span>Total to send</span><strong>{paymentAllocation.total} <span>$CHOG</span>{estimatedUsd(paymentAllocation.total)&&<small>≈ {estimatedUsd(paymentAllocation.total)}</small>}</strong></div></div>}
       <div className="checkout-payment-notes">
         <p className="checkout-help"><strong>Fees.</strong> Exchange and delivery fees reduce what the charity receives. Keep MON for wallet gas.</p>
@@ -157,6 +160,7 @@ export default function LiveChogCheckout({initiativeId,initiativeName,ready,dest
       {invoice.state==="expired"&&!invoice.depositHash&&<><p className="checkout-help">Already sent $CHOG? Keep this invoice open. Do not pay again.</p><button className="button primary full checkout-submit" onClick={reset}>I haven't paid · start again <ArrowRight size={16}/></button></>}
     </div>:<p className="checkout-help">Restoring your payment status. Do not pay again.</p>}
     <p className="checkout-error" role="alert">{error}</p>
+    {!id&&!pending&&!busy&&suggestedAmount&&<button className="button primary full" type="button" onClick={()=>{changeAmount(suggestedAmount);setError("");amountInput.current?.focus({preventScroll:true});amountInput.current?.scrollIntoView({block:"center"});}}>Review {integerFormatter.format(Number(suggestedAmount))} $CHOG donation <ArrowRight size={16}/></button>}
     {onSupport && (error || invoice?.state === "manual-review" || invoice?.state === "expired") && <button className="support-checkout-link" type="button" onClick={() => onSupport({ mode: "chog", ...(validInvoiceId(id) ? { invoiceId: id } : {}), issue: invoice?.state === "manual-review" ? "invoice-review" : "checkout-error" })}>Contact support <ArrowRight size={15}/></button>}
     <details className="checkout-disclosure"><summary>{invoice?"Payment details":"Fees & payment details"}</summary><div>
       {invoice?.depositHash&&<><p>{overpaid?<>Selected donation: {selectedDonationAmount} $CHOG. Actual initiative allocation: {donationAmount} $CHOG. Actual NFT pool allocation: {poolAmount} $CHOG. Total received: {receivedTotal} $CHOG.</>:<>Donation: {donationAmount} $CHOG. NFT pool contribution: {poolAmount} $CHOG. Total sent: {receivedTotal} $CHOG.</>}</p>{received&&<p>{invoice.state==="confirming"?"The destination transfer is verified. Final confirmation continues in the background.":"The destination transfer is finalized."}</p>}<div className="checkout-receipts">{invoice.depositHash&&<a href={`https://monadscan.com/tx/${invoice.depositHash}`} target="_blank" rel="noreferrer">$CHOG transfer ↗</a>}{invoice.bridgeHash&&<a href={`https://monadscan.com/tx/${invoice.bridgeHash}`} target="_blank" rel="noreferrer">Bridge transfer ↗</a>}{(invoice.destinationHash||invoice.observedDestinationHash)&&<a href={`${network.explorer}/tx/${invoice.destinationHash||invoice.observedDestinationHash}`} target="_blank" rel="noreferrer">Donation receipt ↗</a>}</div></>}

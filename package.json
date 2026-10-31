@@ -61,7 +61,7 @@
     "@types/react": "19.2.2",
     "@types/react-dom": "19.2.2",
     "@vitejs/plugin-react": "6.1.2",
-    "electron": "44.9.0",
+    "electron": "44.9.1",
     "electron-builder": "26.15.3",
     "hardhat": "3.18.1",
     "solc": "0.8.37",

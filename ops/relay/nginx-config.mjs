@@ -180,3 +180,69 @@ ${securityHeaders}
 }
 `;
 }
+
+/** Optional HTTPS transport through an already configured, owner-approved Funnel. */
+export function renderFunnelRelayNginx({ publicIp, certificateName = DEFAULT_CERTIFICATE_NAME, funnelHostname } = {}) {
+  // Exactly a machine and tailnet label under ts.net. Compare the complete
+  // match as well: JavaScript's $ alone also accepts a trailing newline.
+  const hostnameMatch = typeof funnelHostname === "string"
+    ? funnelHostname.match(/^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.ts\.net$/)
+    : null;
+  if (!hostnameMatch || hostnameMatch[0] !== funnelHostname) {
+    throw new Error("A lowercase two-label Funnel hostname under ts.net is required.");
+  }
+  const canonical = renderRelayNginx({ publicIp, certificateName });
+  const originalHost = "    proxy_set_header Host chogcare.xyz;";
+  const originalTarget = "proxy_pass http://127.0.0.1:18090;";
+  const originalConnectTimeout = "    proxy_connect_timeout 3s;";
+  // Keep the canonical public boundary byte-for-byte. A future template
+  // change must be reviewed before this transport substitution can proceed.
+  if (canonical.split(originalHost).length !== 2 || canonical.split(originalTarget).length !== 3 || canonical.split(originalConnectTimeout).length !== 2) {
+    throw new Error("The canonical relay transport template has changed.");
+  }
+  const tlsHost = `    proxy_set_header Host ${funnelHostname};
+    proxy_ssl_server_name on;
+    proxy_ssl_name ${funnelHostname};
+    proxy_ssl_verify on;
+    proxy_ssl_trusted_certificate /etc/ssl/certs/ca-certificates.crt;
+    proxy_ssl_verify_depth 3;`;
+  return `upstream chogcare_funnel_upstream {
+    server ${funnelHostname}:443;
+    keepalive 16;
+}
+
+${canonical.replace(originalHost, tlsHost)
+  .replace(originalConnectTimeout, "    proxy_connect_timeout 10s;")
+  .replaceAll(originalTarget, "proxy_pass https://chogcare_funnel_upstream;")}`;
+}
+
+/** HLS can fail over between the two existing transports to the same gateway. */
+export function renderResilientHlsRelayNginx(options = {}) {
+  // Reuse the existing strict hostname, certificate and public-route validation.
+  const canonical = renderFunnelRelayNginx(options);
+  const original = `    location ^~ /hls/ {
+        limit_except GET { deny all; }
+        proxy_pass https://chogcare_funnel_upstream;
+    }`;
+  if (canonical.split(original).length !== 2) throw new Error("The canonical HLS route has changed.");
+  return canonical.replace(original, `    location ^~ /hls/ {
+        limit_except GET { deny all; }
+        # Reuse the existing verified peer and HTTP/1.1 keepalive pool.
+        proxy_connect_timeout 10s;
+        proxy_read_timeout 15s;
+        proxy_next_upstream off;
+        proxy_intercept_errors on;
+        error_page 502 503 504 = @chogcare_hls_ssh;
+        proxy_pass https://chogcare_funnel_upstream;
+    }
+
+    location @chogcare_hls_ssh {
+        internal;
+        limit_except GET { deny all; }
+        proxy_connect_timeout 3s;
+        proxy_read_timeout 15s;
+        proxy_next_upstream off;
+        proxy_intercept_errors off;
+        proxy_pass http://127.0.0.1:18090;
+    }`);
+}

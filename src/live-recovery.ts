@@ -11,12 +11,15 @@ type Media = {
 };
 const STARTUP_LOAD_DEADLINE_MS = 60_000;
 const PLAYBACK_STALL_MS = 45_000;
+const NETWORK_PROGRESS_GRACE_MS = 10_000;
+const MAX_PROGRESS_DEFERRAL_MS = 120_000;
 
 // A paused/offscreen video is not evidence of a browser autoplay rejection.
 // Recover the media itself, with a bounded fast budget and a slow cooldown,
 // instead of turning a temporary suspension into a permanent Retry screen.
 export function createLivePlaybackRecovery({
   media, active, monitor, resumeLoading, reconnect, onPlaying, onWaiting,
+  frameDriven = false, transferProgress = () => null,
   now = Date.now, schedule = setTimeout, cancel = clearTimeout,
 }: {
   media: Media;
@@ -26,6 +29,8 @@ export function createLivePlaybackRecovery({
   reconnect: () => void;
   onPlaying: () => void;
   onWaiting: () => void;
+  frameDriven?: boolean;
+  transferProgress?: () => { request: object; loaded: number } | null;
   now?: () => number;
   schedule?: (callback: () => void, delay: number) => Timer;
   cancel?: (timer: Timer) => void;
@@ -36,6 +41,8 @@ export function createLivePlaybackRecovery({
   let lastTime = media.currentTime, lastProgress = now(), lastNudge = -Infinity;
   let sourceStartedAt = lastProgress, hasPlayedFrame = false, suspended = false;
   let recoveryOperation = reconnect, repairRequired = false;
+  let playlistStale = false, transferRequest: object | null = null, transferLoaded = 0;
+  let lastNetworkProgress = -Infinity;
   const invalidatePlay = () => { playEpoch++; playPending = false; };
   const clearHealth = () => { if (healthTimer !== null) cancel(healthTimer); healthTimer = null; };
   const clearRecovery = () => { if (recoveryTimer !== null) cancel(recoveryTimer); recoveryTimer = null; };
@@ -48,11 +55,11 @@ export function createLivePlaybackRecovery({
     if (!active()) { suspend(); return; }
     monitor.waiting(); onWaiting(); armHealth();
   };
-  const markProgress = () => {
+  const markProgress = (decodedTime?: number) => {
     // A seek changes currentTime before a frame at that position is ready.
     // Those timeupdate events are not evidence of recovered playback.
-    if (media.paused || media.ended || media.seeking || media.readyState < 2) return false;
-    const time = media.currentTime;
+    if (media.paused || media.ended || media.seeking || media.readyState < 2 || (frameDriven && decodedTime === undefined)) return false;
+    const time = decodedTime ?? media.currentTime;
     if (Number.isFinite(time) && time < lastTime - .5) {
       // A restarted producer can establish a new timestamp origin without a
       // new playing event. Rebase once; only subsequent advancement is proof
@@ -82,7 +89,7 @@ export function createLivePlaybackRecovery({
         // play() on an already unpaused, stalled element can resolve without
         // any new frame. It must not erase a real buffering/connection state.
         const progressed = markProgress();
-        if (wasPaused && !progressed) { monitor.playing(); onPlaying(); }
+        if (!frameDriven && wasPaused && !progressed) { monitor.playing(); onPlaying(); }
       }
       armHealth();
     }).catch((problem: unknown) => {
@@ -121,13 +128,29 @@ export function createLivePlaybackRecovery({
     healthTimer = null;
     if (disposed || blocked) return;
     if (!active()) { suspend(); return; }
+    // Fragment.stats is the loader's live counter. Loading events, retries or
+    // repeated HTTP-200 playlists alone must not postpone recovery forever.
+    try {
+      const transfer = transferProgress();
+      if (transfer && Number.isFinite(transfer.loaded) && transfer.loaded >= 0) {
+        if (transfer.request !== transferRequest || transfer.loaded < transferLoaded) {
+          transferRequest = transfer.request; transferLoaded = 0;
+        }
+        if (transfer.loaded > transferLoaded) {
+          transferLoaded = transfer.loaded; lastNetworkProgress = now();
+        }
+      } else { transferRequest = null; transferLoaded = 0; }
+    } catch { /* Missing loader statistics cannot disable the finite watchdog. */ }
     if (!markProgress() && recoveryTimer === null) {
       const idle = now() - lastProgress;
       // Initial manifest, playlist and fragment requests can each take longer
       // than a playback stall. Give this source a finite first-frame deadline;
       // waiting events and seeks must not keep extending it or abort its loader.
       const timedOut = hasPlayedFrame ? idle >= PLAYBACK_STALL_MS : now() - sourceStartedAt >= STARTUP_LOAD_DEADLINE_MS;
-      if (media.ended || timedOut) recover();
+      const stalledPlaylist = playlistStale && idle >= 4_000;
+      const progressWindow = now() - (hasPlayedFrame ? lastProgress : sourceStartedAt);
+      const usefulTransfer = now() - lastNetworkProgress < NETWORK_PROGRESS_GRACE_MS && progressWindow < MAX_PROGRESS_DEFERRAL_MS;
+      if (media.ended || ((timedOut || stalledPlaylist) && !usefulTransfer)) recover();
       else if ((media.paused || idle >= 4_000) && now() - lastNudge >= 3_000) {
         lastNudge = now();
         waiting();
@@ -143,8 +166,13 @@ export function createLivePlaybackRecovery({
     play,
     waiting,
     recover,
+    playlistStalled() { if (!disposed) { playlistStale = true; armHealth(); } },
+    playlistAdvanced() { if (!disposed) playlistStale = false; },
+    receivedData(bytes: number) { if (!disposed && Number.isFinite(bytes) && bytes > 0) lastNetworkProgress = now(); },
+    frame(time: number) { if (!disposed && active() && !blocked) { markProgress(time); armHealth(); } },
     playing() {
       if (disposed || !active() || media.paused || media.ended || media.seeking || media.readyState < 2) return;
+      if (frameDriven) { blocked = false; armHealth(); return; }
       hasPlayedFrame = true;
       blocked = false; lastTime = media.currentTime; lastProgress = now();
       if (!repairRequired) clearRecovery(); monitor.playing(); onPlaying(); armHealth();
@@ -160,8 +188,9 @@ export function createLivePlaybackRecovery({
     resume() {
       if (disposed || !active() || blocked) return;
       if (suspended && !hasPlayedFrame) sourceStartedAt = now();
+      if (suspended) { lastTime = media.currentTime; lastProgress = now(); }
       suspended = false;
-      invalidatePlay(); lastTime = media.currentTime; lastProgress = now();
+      invalidatePlay();
       if (media.paused || media.readyState < 3) waiting();
       if (repairRequired) recover(recoveryOperation, true);
       else if (recoveryTimer === null) { try { resumeLoading(true); } catch { recover(); } }
@@ -172,6 +201,7 @@ export function createLivePlaybackRecovery({
         invalidatePlay(); clearRecovery(); repairRequired = false;
         lastTime = media.currentTime; lastProgress = now();
         sourceStartedAt = lastProgress; hasPlayedFrame = false;
+        playlistStale = false; transferRequest = null; transferLoaded = 0; lastNetworkProgress = -Infinity;
       }
     },
     unavailable() { if (!disposed) { clearHealth(); clearRecovery(); monitor.unavailable(); onWaiting(); } },

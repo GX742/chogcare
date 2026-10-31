@@ -68,7 +68,12 @@ class LivePlaylistSource:
 
     def load(self):
         with self.lock:
-            opener = self.opener or urllib.request.build_opener(urllib.request.ProxyHandler({}), NoRedirect())
+            # Reuse the opener under this lock. Building its handler/SSL graph
+            # in every request thread retains enough memory to exhaust the
+            # helper's cgroup and interrupt the downstream live transcoder.
+            if self.opener is None:
+                self.opener = urllib.request.build_opener(urllib.request.ProxyHandler({}), NoRedirect())
+            opener = self.opener
             last_problem = None
             for attempt in range(3):
                 try:

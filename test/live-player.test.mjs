@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { createLiveDriftSync, createLiveLoadState, createLiveResumeSync, createLiveRetryBudget, DEFAULT_LIVE_SEGMENT_SECONDS, MOBILE_LIVE_SEGMENT_SECONDS, latestLiveRange, liveHlsConfig, livePlaybackTiming, livePlaybackStrategy, liveSegmentSeconds, portraitFrameAspect, recoverLiveNetwork, safeLiveResumeTarget } from "../src/live-player.ts";
+import { createLiveDriftSync, createLiveLoadState, createLiveResumeSync, createLiveRetryBudget, DEFAULT_LIVE_SEGMENT_SECONDS, MOBILE_LIVE_SEGMENT_SECONDS, latestLiveRange, liveBufferTiming, liveHlsConfig, livePlaylistKey, livePlaybackTiming, livePlaybackStrategy, liveSegmentSeconds, portraitFrameAspect, recoverLiveNetwork, safeLiveResumeTarget } from "../src/live-player.ts";
 
 test("portrait camera frame uses the actual ratio without scaling/cropping landscape fallback footage", () => {
   assert.equal(portraitFrameAspect(1080, 1920), 9 / 16);
@@ -40,6 +40,7 @@ test("live HLS uses adaptive segment-count latency with a finite recovery thresh
   assert.equal(config.backBufferLength, 4);
   assert.equal(config.lowLatencyMode, true);
   assert.equal(config.enableWorker, true);
+  assert.equal(config.liveMaxUnchangedPlaylistRefresh, 6, "Repeated HTTP-200 playlists cannot remain silently stale forever");
   for (const property of ["liveSyncDuration", "liveMaxLatencyDuration", "startLevel", "loadLevel", "currentLevel", "capLevelToPlayerSize"]) assert.equal(Object.hasOwn(config, property), false, property);
   assert.equal(config.liveSyncDurationCount * 3, 6, "Three-second segments retain a bounded client target");
   assert.equal(liveHlsConfig(1).liveSyncDurationCount, 3, "Older one-second segments retain three seconds for network jitter");
@@ -53,6 +54,26 @@ test("native HLS resumes inside the rendition's bounded live window", () => {
   assert.equal(safeLiveResumeTarget(20, ranges([0, 100]), 1), 97);
   assert.equal(safeLiveResumeTarget(0, ranges([80, 100])), 94);
   assert.equal(safeLiveResumeTarget(1, ranges([10, 12])), 10, "A short window clamps to its safe start");
+});
+
+test("six-second rendition updates both the live target and forward buffer without rebuilding the loader", () => {
+  const config=liveHlsConfig(3), loader={config,loading:true};
+  Object.assign(loader.config,liveBufferTiming(6));
+  assert.equal(loader.loading,true);
+  assert.equal(config.liveSyncDurationCount,3);assert.equal(config.liveMaxLatencyDurationCount,6);
+  assert.equal(config.maxBufferLength,24);assert.equal(config.maxMaxBufferLength,30);
+  assert.equal(config.maxBufferLength,config.liveSyncDurationCount*6+6);
+  assert.equal(liveHlsConfig(6).maxBufferLength,24);
+});
+
+test("playlist freshness identifies repeated 200 responses and producer timestamp/sequence restarts", () => {
+  const details={endSN:50,lastPartSn:50,lastPartIndex:-1,fragments:[{cc:0,url:"https://example.invalid/stream-50.ts"}]};
+  const before=livePlaylistKey(details);
+  assert.equal(livePlaylistKey(structuredClone(details)),before,"Reloading the same body is not producer progress");
+  assert.notEqual(livePlaylistKey({...details,endSN:51}),before);
+  assert.notEqual(livePlaylistKey({...details,endSN:0,fragments:[{cc:1,url:"https://example.invalid/restarted-0.ts"}]}),before);
+  assert.notEqual(livePlaylistKey({...details,fragments:[{cc:0,url:"https://example.invalid/restarted-50.ts"}]}),before);
+  assert.equal(livePlaylistKey({...details,fragments:[]}),null);
 });
 
 test("three-second delivery keeps a six-second client target with one extra segment of headroom", () => {

@@ -1,0 +1,31 @@
+[Unit]
+Description=ChogCare bounded local broadcast progress recovery
+After=owncast.service chogcare-mobile.service chogcare-preview.service
+
+[Service]
+Type=oneshot
+User=root
+Group=root
+StateDirectory=chogcare-broadcast-health
+StateDirectoryMode=0700
+ExecStart=/usr/bin/python3 -B /usr/local/lib/chogcare/broadcast-health.py
+TimeoutStartSec=25
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectSystem=strict
+ProtectHome=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectKernelLogs=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+RestrictNamespaces=true
+RestrictRealtime=true
+LockPersonality=true
+RestrictAddressFamilies=AF_UNIX AF_INET
+CapabilityBoundingSet=
+AmbientCapabilities=
+MemoryMax=64M
+TasksMax=16

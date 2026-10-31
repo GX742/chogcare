@@ -20,6 +20,7 @@ ExecStart=/usr/bin/ssh -4 -N -T -n -a -x -F /dev/null \
     -o StrictHostKeyChecking=yes -o UpdateHostKeys=no -o VerifyHostKeyDNS=no \
     -o UserKnownHostsFile=/etc/chogcare-relay/known_hosts -o GlobalKnownHostsFile=/dev/null \
     -o ExitOnForwardFailure=yes -o ServerAliveInterval=15 -o ServerAliveCountMax=3 \
+    -o IPQoS=none \
     -o ConnectTimeout=10 -o PermitLocalCommand=no -o ProxyCommand=none -o ProxyJump=none \
     -o ControlMaster=no -o ControlPath=none \
     -p 22 -l chogcare-relay -R 127.0.0.1:18090:127.0.0.1:8090 ${RELAY_HOST}

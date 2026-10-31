@@ -15,6 +15,30 @@ export function livePlaybackTiming(segmentSeconds = DEFAULT_LIVE_SEGMENT_SECONDS
   };
 }
 
+// The deployed rendition can change segment duration without a frontend build.
+// Keep one extra segment ahead of the live target and another for recovery.
+export function liveBufferTiming(segmentSeconds = DEFAULT_LIVE_SEGMENT_SECONDS) {
+  const segment = liveSegmentSeconds(segmentSeconds), timing = livePlaybackTiming(segment);
+  return {
+    ...timing,
+    maxBufferLength: (timing.liveSyncDurationCount + 1) * segment,
+    maxMaxBufferLength: (timing.liveSyncDurationCount + 2) * segment,
+  };
+}
+
+export function livePlaylistKey(details: {
+  endSN: number; lastPartSn?: number; lastPartIndex?: number;
+  fragments: readonly ({ cc: number; readonly url: string } | null)[];
+}): string | null {
+  let last = null;
+  for (let index = details.fragments.length - 1; index >= 0; index--) {
+    if (details.fragments[index]) { last = details.fragments[index]; break; }
+  }
+  if (!last || !Number.isSafeInteger(details.endSN)) return null;
+  // A producer restart can lower sequence numbers or reuse them with new URLs.
+  return JSON.stringify([details.endSN, last.cc, last.url, details.lastPartSn ?? null, details.lastPartIndex ?? null]);
+}
+
 // Let portrait camera footage fill its frame without cropping the terminal.
 // Landscape/offline footage retains the existing contained fallback layout.
 export function portraitFrameAspect(width: number, height: number): number | undefined {
@@ -36,11 +60,10 @@ export function liveHlsConfig(segmentSeconds = DEFAULT_LIVE_SEGMENT_SECONDS): Pa
   return {
     enableWorker: true,
     lowLatencyMode: true,
-    ...livePlaybackTiming(segmentSeconds),
+    ...liveBufferTiming(segmentSeconds),
     maxLiveSyncPlaybackRate: 1.03,
     liveSyncOnStallIncrease: 0,
-    maxBufferLength: segmentSeconds === MOBILE_LIVE_SEGMENT_SECONDS ? 9 : 6,
-    maxMaxBufferLength: segmentSeconds === MOBILE_LIVE_SEGMENT_SECONDS ? 12 : 10,
+    liveMaxUnchangedPlaylistRefresh: 6,
     backBufferLength: 4,
   };
 }

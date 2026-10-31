@@ -1,16 +1,18 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { renderBootstrapNginx, renderRelayNginx } from "../ops/relay/nginx-config.mjs";
+import { renderBootstrapNginx, renderRelayNginx, renderFunnelRelayNginx } from "../ops/relay/nginx-config.mjs";
 
 // Public example input only. The integration test connects exclusively to
 // random local ports; it never reaches this address or an ACME/RPC service.
 const publicIp = "8.8.8.8";
+const funnelHostname = "example-node.example-tailnet.ts.net";
 
 test("relay renderer rejects private/special IPv4 and configuration injection", () => {
   for (const value of [undefined, null, 123, "", " 8.8.8.8", "8.8.8.8\n", "8.8.8.8/32", "8.8.8.8:443", "https://8.8.8.8", "example.com", "[::1]", "::ffff:8.8.8.8", "008.8.8.8", "0x08080808", "134744072", "8.8.8.256", "8.8.8.8; include /tmp/other;", "0.1.2.3", "10.20.30.40", "100.64.0.1", "100.127.255.254", "127.0.0.1", "169.254.1.1", "172.16.0.1", "172.31.255.254", "192.168.1.1", "192.0.0.1", "192.0.2.1", "192.88.99.1", "198.18.0.1", "198.19.255.254", "198.51.100.1", "203.0.113.1", "224.0.0.1", "239.255.255.254", "240.0.0.1", "255.255.255.255"]) {
     assert.throws(() => renderBootstrapNginx({ publicIp: value }));
     assert.throws(() => renderRelayNginx({ publicIp: value }));
+    assert.throws(() => renderFunnelRelayNginx({ publicIp: value, funnelHostname }));
   }
   for (const value of ["1.1.1.1", publicIp, "100.63.255.254", "100.128.0.1", "172.15.255.254", "172.32.0.1"]) {
     assert.ok(renderRelayNginx({ publicIp: value }).includes(`server_name ${value};`));
@@ -20,6 +22,7 @@ test("relay renderer rejects private/special IPv4 and configuration injection", 
 test("certificate paths accept only a bounded safe name", () => {
   for (const certificateName of [null, "", ".", "..", "../other", "/tmp/cert", "a/b", "A", "a.b", "bad_name", "-name", "name-", "a".repeat(65), "name\ninclude /tmp/other;"]) {
     assert.throws(() => renderRelayNginx({ publicIp, certificateName }));
+    assert.throws(() => renderFunnelRelayNginx({ publicIp, certificateName, funnelHostname }));
   }
   assert.match(renderRelayNginx({ publicIp }), /ssl_certificate \/etc\/letsencrypt\/live\/chogcare-relay\/fullchain\.pem;/);
   assert.match(renderRelayNginx({ publicIp, certificateName: "relay-2" }), /ssl_certificate_key \/etc\/letsencrypt\/live\/relay-2\/privkey\.pem;/);
@@ -77,6 +80,42 @@ test("request privacy, inherited security headers and diskless proxying cover bo
       assert.match(headerScope, new RegExp(`add_header ${header}[^\\n]*always;`));
     }
     assert.doesNotMatch(server.slice(server.indexOf("location ")), /\badd_header\s/);
+  }
+});
+
+test("Funnel transport accepts only two bounded lowercase DNS labels under ts.net", () => {
+  for (const value of [undefined, null, 123, "", "ts.net", "node.ts.net", "node.tailnet.other.ts.net", "node.tailnet.example.com", "Node.tailnet.ts.net", "node.Tailnet.ts.net", "node.tailnet.ts.NET", "node.tailnet.ts.net.", " node.tailnet.ts.net", "node.tailnet.ts.net\n", "node.tailnet.ts.net\r\n", "node.tailnet.ts.net\0", "https://node.tailnet.ts.net", "user@node.tailnet.ts.net", "node.tailnet.ts.net:443", "node.tailnet.ts.net/", "node.tailnet.ts.net?key=value", "node.tailnet.ts.net#fragment", "node..ts.net", "-node.tailnet.ts.net", "node-.tailnet.ts.net", "node.-tailnet.ts.net", "node.tailnet-.ts.net", "node_name.tailnet.ts.net", `${"a".repeat(64)}.tailnet.ts.net`, `node.${"a".repeat(64)}.ts.net`, "node.tailnet.ts.net; include /tmp/other;"]) {
+    assert.throws(() => renderFunnelRelayNginx({ publicIp, funnelHostname: value }));
+  }
+  for (const value of [funnelHostname, "a.b.ts.net", `${"a".repeat(63)}.${"b".repeat(63)}.ts.net`]) {
+    assert.ok(renderFunnelRelayNginx({ publicIp, funnelHostname: value }).includes(`server ${value}:443;`));
+  }
+});
+
+test("Funnel transport verifies its fixed TLS peer and reuses HTTP/1.1 connections", () => {
+  const config = renderFunnelRelayNginx({ publicIp, funnelHostname });
+  assert.match(config, /^upstream chogcare_funnel_upstream \{\n    server example-node\.example-tailnet\.ts\.net:443;\n    keepalive 16;\n\}/);
+  for (const directive of [`proxy_set_header Host ${funnelHostname};`, "proxy_ssl_server_name on;", `proxy_ssl_name ${funnelHostname};`, "proxy_ssl_verify on;", "proxy_ssl_trusted_certificate /etc/ssl/certs/ca-certificates.crt;", "proxy_ssl_verify_depth 3;", "proxy_http_version 1.1;", 'proxy_set_header Connection "";']) {
+    assert.ok(config.includes(directive), directive);
+  }
+  assert.deepEqual([...config.matchAll(/proxy_pass\s+([^;]+);/g)].map(match => match[1]), ["https://chogcare_funnel_upstream", "https://chogcare_funnel_upstream"]);
+  assert.deepEqual([...config.matchAll(/proxy_connect_timeout\s+([^;]+);/g)].map(match => match[1]), ["10s"]);
+  assert.deepEqual([...renderRelayNginx({ publicIp }).matchAll(/proxy_connect_timeout\s+([^;]+);/g)].map(match => match[1]), ["3s"]);
+  assert.doesNotMatch(config, /127\.0\.0\.1:18090|proxy_ssl_verify\s+off|\bresolver\s|proxy_pass\s+[^;]*\$|proxy_cache\s+(?!off;)/);
+});
+
+test("Funnel substitution preserves the entire canonical public boundary and default renderer", () => {
+  for (const options of [{ publicIp }, { publicIp: "1.1.1.1", certificateName: "relay-2" }]) {
+    const original = renderRelayNginx(options);
+    const config = renderFunnelRelayNginx({ ...options, funnelHostname });
+    const restored = config
+      .replace(`upstream chogcare_funnel_upstream {\n    server ${funnelHostname}:443;\n    keepalive 16;\n}\n\n`, "")
+      .replace(`    proxy_set_header Host ${funnelHostname};\n    proxy_ssl_server_name on;\n    proxy_ssl_name ${funnelHostname};\n    proxy_ssl_verify on;\n    proxy_ssl_trusted_certificate /etc/ssl/certs/ca-certificates.crt;\n    proxy_ssl_verify_depth 3;`, "    proxy_set_header Host chogcare.xyz;")
+      .replaceAll("proxy_pass https://chogcare_funnel_upstream;", "proxy_pass http://127.0.0.1:18090;")
+      .replace("    proxy_connect_timeout 10s;", "    proxy_connect_timeout 3s;");
+    assert.equal(restored, original);
+    assert.equal(renderRelayNginx(options), original);
+    assert.doesNotMatch(original, /chogcare_funnel_upstream|proxy_ssl_/);
   }
 });
 

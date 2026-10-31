@@ -43,7 +43,7 @@ function nftInvoice(changes = {}) {
 
 test("public broadcast stays on the application origin and never contacts relay split DNS", () => {
   for (const application of ["https://chogcare.xyz", "https://chogcare.vercel.app", "https://chogcare-preview.vercel.app"]) {
-    const expected = `${application}/hls/stream.m3u8`;
+    const expected = `${application}/hls/mobile/stream.m3u8`;
     assert.equal(broadcastStreamUrl(undefined, application), expected);
     assert.equal(broadcastStreamUrl(`${publicBroadcastOrigin}/admin?secret=1#key`, application), expected);
     assert.equal(broadcastStreamUrl(publicBroadcastOrigin, application, true), `${application}/hls/mobile/stream.m3u8`);
@@ -54,6 +54,16 @@ test("public broadcast stays on the application origin and never contacts relay 
     assert.equal(broadcastStreamUrl(value, "https://chogcare.vercel.app"), null, String(value));
   }
 });
+test("public desktop playback opens the light rendition directly instead of the mixed-codec master", () => {
+  for (const application of ["https://chogcare.xyz", "https://chogcare.vercel.app", "https://chogcare-preview.vercel.app"]) {
+    for (const source of [undefined, publicBroadcastOrigin, "https://chogcare-stream.tail1f833b.ts.net"]) {
+      assert.equal(broadcastStreamUrl(source, application, false), `${application}/hls/mobile/stream.m3u8`);
+    }
+  }
+  assert.equal(broadcastStreamUrl(publicBroadcastOrigin, "http://localhost:4173", false), `${publicBroadcastOrigin}/hls/stream.m3u8`);
+  assert.equal(broadcastStreamUrl(publicBroadcastOrigin, "http://localhost:4173", true), `${publicBroadcastOrigin}/hls/mobile/stream.m3u8`);
+});
+
 test("loopback Owncast is allowed only from the local app and only on the CSP port", () => {
   for (const app of ["http://127.0.0.1:4173", "http://localhost:4173", "http://[::1]:4173"]) {
     for (const source of ["http://127.0.0.1:8082", "http://localhost:8082"]) {

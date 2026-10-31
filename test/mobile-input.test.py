@@ -86,6 +86,23 @@ class LiveWindowTests(unittest.TestCase):
 
 
 class LivePlaylistSourceTests(unittest.TestCase):
+    def test_request_threads_reuse_one_bounded_upstream_opener(self):
+        opener = Mock()
+        opener.open.side_effect = lambda *args, **kwargs: io.BytesIO(playlist().encode())
+        source = module.LivePlaylistSource()
+        results = []
+        with patch.object(module.urllib.request, "build_opener", return_value=opener) as build_opener:
+            threads = [threading.Thread(target=lambda: results.append(source.load())) for _ in range(32)]
+            for thread in threads:
+                thread.start()
+            for thread in threads:
+                thread.join(timeout=3)
+                self.assertFalse(thread.is_alive())
+        self.assertEqual(len(results), 32)
+        self.assertTrue(all(body.count(b"#EXTINF:") == 3 for body in results))
+        self.assertEqual(opener.open.call_count, 32)
+        build_opener.assert_called_once()
+
     def problem(self, code):
         return urllib.error.HTTPError(module.SOURCE + "stream.m3u8", code, "test", {}, io.BytesIO())
 

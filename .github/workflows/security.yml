@@ -9,6 +9,22 @@ concurrency:
   group: security-${{ github.ref }}
   cancel-in-progress: true
 jobs:
+  broadcast:
+    name: Broadcast recovery and nginx boundaries
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38
+        with:
+          node-version-file: .node-version
+      - name: Install local nginx fixture runtime
+        run: sudo apt-get update && sudo apt-get install -y nginx openssl
+      - run: python3 -B test/mobile-input.test.py
+      - run: python3 -B test/broadcast-health.test.py
+      - run: node --test test/public-relay.test.mjs test/resilient-relay.test.mjs
   secrets:
     name: Secret scan of complete Git history
     runs-on: ubuntu-latest
@@ -59,6 +75,8 @@ jobs:
       - run: npm run security:source
       - name: Check bounded live input playlist
         run: python -B test/mobile-input.test.py
+      - name: Check source-aware broadcast recovery
+        run: python -B test/broadcast-health.test.py
       - name: Run tests as a disposable non-administrator
         shell: pwsh
         run: ./scripts/ci-tests-unprivileged.ps1

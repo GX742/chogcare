@@ -1,4 +1,5 @@
 import type { HlsConfig } from "hls.js";
+import { createServerPlaylistLoader } from "./server-playlist-loader.ts";
 
 export const DEFAULT_LIVE_SEGMENT_SECONDS = 3;
 export const MOBILE_LIVE_SEGMENT_SECONDS = 3;
@@ -67,7 +68,7 @@ export function livePlaybackStrategy(mseSupported: boolean, nativeSupported: boo
   return mseSupported ? "hls" : nativeSupported ? "native" : "unsupported";
 }
 
-type LiveLoadPolicies = Pick<HlsConfig, "manifestLoadPolicy" | "playlistLoadPolicy" | "fragLoadPolicy">;
+type LiveLoadPolicies = Pick<HlsConfig, "manifestLoadPolicy" | "playlistLoadPolicy" | "fragLoadPolicy" | "loader">;
 
 function relayLoadPolicy(policy: HlsConfig["manifestLoadPolicy"], minimumLoadMs: number) {
   const original = policy.default;
@@ -100,7 +101,11 @@ export function liveHlsConfig(segmentSeconds = DEFAULT_LIVE_SEGMENT_SECONDS, def
   const server = transport === "server";
   return {
     enableWorker: true,
-    lowLatencyMode: true,
+    // The public origin has one-second segments and 200 ms parts. A part can
+    // take longer than its media duration to fetch over a remote connection;
+    // serial part requests then drain the buffer despite ample bandwidth.
+    // Full segments amortize that request cost while retaining the live target.
+    lowLatencyMode: !server,
     liveSyncMode: "buffered",
     ...liveBufferTiming(segmentSeconds, transport),
     maxLiveSyncPlaybackRate: server ? 1.08 : 1.03,
@@ -108,6 +113,7 @@ export function liveHlsConfig(segmentSeconds = DEFAULT_LIVE_SEGMENT_SECONDS, def
     liveMaxUnchangedPlaylistRefresh: server ? 3 : 6,
     backBufferLength: server ? 2 : 4,
     ...(defaults ? {
+      ...(server ? { pLoader: createServerPlaylistLoader(defaults.loader) } : {}),
       manifestLoadPolicy: server ? serverLoadPolicy(defaults.manifestLoadPolicy, 8_000) : relayLoadPolicy(defaults.manifestLoadPolicy, 60_000),
       playlistLoadPolicy: server ? serverLoadPolicy(defaults.playlistLoadPolicy, 8_000) : relayLoadPolicy(defaults.playlistLoadPolicy, 60_000),
       fragLoadPolicy: server ? serverLoadPolicy(defaults.fragLoadPolicy, 12_000) : relayLoadPolicy(defaults.fragLoadPolicy, 120_000),

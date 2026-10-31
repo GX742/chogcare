@@ -208,7 +208,7 @@ try {
   $arguments = @(Get-ChogCareRelayArguments -RelayHost $RelayHost -IdentityFile $IdentityFile -KnownHostsFile $KnownHostsFile)
   Assert-ChogCarePrivateRelayFile $IdentityFile
   Assert-ChogCarePrivateRelayFile $KnownHostsFile
-  $sshPath = Join-Path $env:WINDIR 'System32\OpenSSH\ssh.exe'
+  $sshPath = Join-Path ([System.Environment]::SystemDirectory) 'OpenSSH\ssh.exe'
   if (!(Test-Path -LiteralPath $sshPath -PathType Leaf)) { throw 'Windows OpenSSH is unavailable.' }
   $mutex = New-Object System.Threading.Mutex($false, 'Local\ChogCareNativePublicRelay')
   try { $ownsMutex = $mutex.WaitOne(0) } catch [System.Threading.AbandonedMutexException] { $ownsMutex = $true }

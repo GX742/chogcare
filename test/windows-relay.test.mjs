@@ -108,6 +108,10 @@ test("Windows relay policy binds the restricted account and loopback forwarding 
   assert.equal(policy.forward, "127.0.0.1:18090:127.0.0.1:8090");
   assert.deepEqual(policy.arguments, fixedFlags);
   assert.deepEqual(policy.options, fixedOptions);
+  assert.doesNotMatch(source, /\$env:(?:WINDIR|SystemRoot|PATH)\b/i,
+    "The supervisor must not select executable code through inherited environment variables.");
+  assert.match(source, /\$sshPath\s*=\s*Join-Path\s+\(\[System\.Environment\]::SystemDirectory\)\s+'OpenSSH\\ssh\.exe'/,
+    "The SSH executable must come from the OS system directory and its fixed OpenSSH suffix.");
 });
 
 test("Windows relay library loading and argument generation perform no operational work", { skip: windowsOnly }, () => {

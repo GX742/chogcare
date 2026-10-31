@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { DatabaseSync } from "node:sqlite";
-import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, rmSync } from "node:fs";
+import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, renameSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createHash } from "node:crypto";
@@ -154,7 +154,7 @@ test("remote client rejects extra identity fields, redirects, oversized bodies a
 
 test("remote deadline and shutdown release a fetch that never returns without fabricating health", async t => {
   const path = directory(t); let signal;
-  const client = createRemoteStationEvents({ filename: join(path, "acks.sqlite"), token, deadlineMs: 20, fetcher: async (_url, options) => { signal = options.signal; return new Promise(() => {}); } });
+  const client = createRemoteStationEvents({ filename: join(path, "acks.sqlite"), token, fetcher: async (_url, options) => { signal = options.signal; return new Promise(() => {}); } }, { schedule: callback => setTimeout(callback, 20) });
   const pending = client.refresh(); await client.close(); assert.equal(await pending, false); assert.equal(signal.aborted, true); assert.equal(client.next(), null);
 });
 
@@ -167,13 +167,33 @@ test("cloud selection requires an explicit private exact-origin config; malforme
   for (const contents of ["{", JSON.stringify({ version: 1, origin: "https://example.invalid", token }), JSON.stringify({ version: 1, origin: STATION_REMOTE_ORIGIN, token, invoiceId: "x" })]) { writeFileSync(filename, contents); assert.throws(() => readStationRemoteConfig(path, options)); }
 });
 
+test("remote config replacement during its ACL check fails closed rather than selecting local custody", t => {
+  const path = directory(t); mkdirSync(join(path, "work/station"), { recursive: true });
+  const filename = join(path, "work/station/remote.json");
+  writeFileSync(filename, JSON.stringify({ version: 1, origin: STATION_REMOTE_ORIGIN, token }), { mode: 0o600 });
+  assert.throws(() => readStationRemoteConfig(path, { platform: "win32", checkWindowsAcl() { renameSync(filename, `${filename}.original`); return true; } }), /unavailable|private/);
+});
+
 test("station token reader accepts only a protected service credential and clears raw bytes", async () => {
-  const bytes = Buffer.from(token), metadata = { isFile: () => true, isSymbolicLink: () => false, nlink: 1, size: 64, mode: 0o100400, uid: 1000 };
-  const options = { platform: "linux", directory: "/run/credentials/chogcare-station.service", uid: 1000, stat: async () => metadata, read: async () => bytes };
-  assert.equal(await readStationServiceToken(options), token); assert.ok(bytes.every(x => x === 0));
+  const metadata = { isFile: () => true, nlink: 1n, size: 64n, mode: 0o100400n, uid: 1000n, mtimeNs: 1n, ctimeNs: 1n };
+  let bytes, closed = 0, reads = 0;
+  const openFile = async (path, flags) => {
+    assert.equal(path, "/run/credentials/chogcare-station.service/station-token"); assert.ok(Number.isInteger(flags));
+    let offset = 0;
+    return { stat: async () => metadata, read: async (buffer, at) => { bytes = buffer; reads++; if (offset) return { bytesRead: 0 }; buffer.write(token, at); offset = 64; return { bytesRead: 64 }; }, close: async () => { closed++; } };
+  };
+  const options = { platform: "linux", directory: "/run/credentials/chogcare-station.service", uid: 1000, openFile };
+  assert.equal(await readStationServiceToken(options), token); assert.ok(bytes.every(x => x === 0)); assert.equal(closed, 1); assert.equal(reads, 2);
   await assert.rejects(readStationServiceToken({ ...options, directory: "/tmp" }));
-  await assert.rejects(readStationServiceToken({ ...options, stat: async () => ({ ...metadata, mode: 0o100600 }) }));
-  await assert.rejects(readStationServiceToken({ ...options, stat: async () => ({ ...metadata, isSymbolicLink: () => true }) }));
+  for (const invalid of [{ mode: 0o100600n }, { nlink: 2n }, { size: 66n }, { isFile: () => false }]) {
+    await assert.rejects(readStationServiceToken({ ...options, openFile: async () => ({ stat: async () => ({ ...metadata, ...invalid }), close: async () => { closed++; } }) }));
+  }
+  assert.equal(closed, 5, "rejected metadata closes the same opened descriptor before reading");
+  await assert.rejects(readStationServiceToken({ ...options, openFile: async (...args) => {
+    const handle = await openFile(...args); let checks = 0;
+    handle.stat = async () => ({ ...metadata, ctimeNs: checks++ ? 2n : 1n }); return handle;
+  } }));
+  assert.ok(bytes.every(x => x === 0), "changed credentials clear buffers on rejection");
 });
 
 test("station health uses only actual custody, processing and integrity state, independent of new-invoice capacity", async () => {

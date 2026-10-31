@@ -19,15 +19,9 @@ def allowed_file(name):
     )
 
 
-def verify_package(filename, expected_sha, destination=None):
+def verify_package(data, expected_sha):
     if not re.fullmatch(r"[a-f0-9]{64}", expected_sha):
         raise ValueError("CODE_PACKAGE_DIGEST_REQUIRED")
-    descriptor = os.open(filename, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
-    with os.fdopen(descriptor, "rb") as source:
-        metadata = os.fstat(source.fileno())
-        if not stat.S_ISREG(metadata.st_mode) or metadata.st_nlink != 1 or metadata.st_size > 64 * 1024 * 1024:
-            raise ValueError("CODE_PACKAGE_FILE_INVALID")
-        data = source.read(64 * 1024 * 1024 + 1)
     if len(data) > 64 * 1024 * 1024 or hashlib.sha256(data).hexdigest() != expected_sha:
         raise ValueError("CODE_PACKAGE_DIGEST_MISMATCH")
     files = {}; total = 0; members = 0
@@ -64,24 +58,40 @@ def verify_package(filename, expected_sha, destination=None):
             raise ValueError("CODE_PACKAGE_SOURCE_MISMATCH")
     if listed != set(files) - {"release-manifest.json"} or not {"package.json", "package-lock.json", "scripts/cloud-payments.mjs"}.issubset(listed):
         raise ValueError("CODE_PACKAGE_SOURCE_SET_INVALID")
-    if destination is not None:
-        # The root-created 0700 stage holds the exact verified bytes. Extraction
-        # never reopens an attacker-replaceable original archive pathname.
-        descriptor = os.open(destination, os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0), 0o600)
-        with os.fdopen(descriptor, "wb") as output:
-            output.write(data); output.flush(); os.fsync(output.fileno())
     return {"verified": True, "codeOnly": True, "sourceFiles": len(listed)}
+
+
+def write_verified_copy(data, directory):
+    # A descriptor to the checked private stage anchors the only output name.
+    descriptor = os.open("code.tar.gz", os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600, dir_fd=directory)
+    with os.fdopen(descriptor, "wb") as output:
+        output.write(data); output.flush(); os.fsync(output.fileno())
+    os.fsync(directory)
+
+
+def main():
+    if len(sys.argv) != 3 or sys.argv[1] not in {"--verify-stdin", "--copy-safe"}:
+        raise ValueError("CODE_PACKAGE_ARGUMENTS_INVALID")
+    # No CLI-controlled source or destination pathname reaches a file API.
+    data = sys.stdin.buffer.read(64 * 1024 * 1024 + 1)
+    result = verify_package(data, sys.argv[2])
+    if sys.argv[1] == "--copy-safe":
+        if not re.fullmatch(r"/opt/chogcare-stage-[A-Za-z0-9]{8}", os.getcwd()):
+            raise ValueError("CODE_PACKAGE_STAGE_INVALID")
+        directory = os.open(".", os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+        try:
+            metadata = os.fstat(directory)
+            if not stat.S_ISDIR(metadata.st_mode) or metadata.st_uid != 0 or stat.S_IMODE(metadata.st_mode) != 0o700:
+                raise ValueError("CODE_PACKAGE_STAGE_INVALID")
+            write_verified_copy(data, directory)
+        finally:
+            os.close(directory)
+    return result
 
 
 if __name__ == "__main__":
     try:
-        if len(sys.argv) == 5 and sys.argv[1] == "--copy-safe":
-            result = verify_package(sys.argv[2], sys.argv[3], sys.argv[4])
-        elif len(sys.argv) == 3:
-            result = verify_package(sys.argv[1], sys.argv[2])
-        else:
-            raise ValueError("CODE_PACKAGE_ARGUMENTS_INVALID")
-        print(json.dumps(result))
+        print(json.dumps(main()))
     except Exception:
         print("Code package verification failed; nothing was extracted.", file=sys.stderr)
         sys.exit(1)

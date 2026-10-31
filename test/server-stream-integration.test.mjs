@@ -5,11 +5,12 @@ import { spawn, execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { createServer, connect } from "node:net";
 import { createServer as createHttpServer, request as httpRequest } from "node:http";
-import { readFile, writeFile, mkdir, mkdtemp, rm, readdir, readlink, stat } from "node:fs/promises";
+import { readFile, writeFile, mkdir, mkdtemp, rm, readdir, readlink } from "node:fs/promises";
 import { existsSync } from "node:fs";
 import { join, resolve, relative } from "node:path";
 import { renderMediaMtxConfig } from "../ops/stream/mediamtx-config.mjs";
 import { renderServerMediaLocation } from "../ops/relay/nginx-config.mjs";
+import { readRegularFileSync } from "../server/regular-file.mjs";
 
 const exec = promisify(execFile);
 const work = resolve(import.meta.dirname, "../work/server-owned-delivery");
@@ -95,10 +96,10 @@ test("verified MediaMTX parses the production renderer and serves authenticated 
   assert.equal(process.platform, "linux", "This fixture verifies Linux process-owned listeners");
   assert.ok(existsSync(binary) && existsSync(ffmpeg), "Explicit integration runs require the fixed verified MediaMTX and ffmpeg locations");
   assert.ok(existsSync("/usr/sbin/nginx"), "Explicit integration runs also require the fixed system nginx executable");
-  assert.ok((await stat(binary)).size < 64 * 1024 * 1024);
-  assert.equal(createHash("sha256").update(await readFile(binary)).digest("hex"), verifiedBinarySha256, "Refuse an unverified executable");
-  const version = await exec(binary, ["--version"], { timeout: 3000 });
-  assert.match(version.stdout, /v1\.21\.3\b/);
+  // The shared reader opens once, fstats/reads that descriptor with a byte cap,
+  // and rejects replacements or changes. Never execute the mutable source path.
+  const binaryBytes = readRegularFileSync(binary, 64 * 1024 * 1024);
+  assert.equal(createHash("sha256").update(binaryBytes).digest("hex"), verifiedBinarySha256, "Refuse an unverified executable");
 
   await mkdir(work, { recursive: true });
   const directory = await mkdtemp(join(work, "fixture-"));
@@ -110,20 +111,27 @@ test("verified MediaMTX parses the production renderer and serves authenticated 
     assert.ok(inside && !inside.startsWith("..") && !inside.startsWith("/"));
     await rm(directory, { recursive: true, force: true });
   });
+  const fixtureBinary = join(directory, "mediamtx");
+  await writeFile(fixtureBinary, binaryBytes, { flag: "wx", mode: 0o500 });
+  const version = await exec(fixtureBinary, ["--version"], { timeout: 3000 });
+  assert.match(version.stdout, /v1\.21\.3\b/);
   const [ingest, hls] = await Promise.all([portLease(), portLease()]);
   leases.push(ingest, hls);
   const certificate = join(directory, "fixture.crt"), key = join(directory, "fixture.key");
   await exec("/usr/bin/openssl", ["req", "-x509", "-newkey", "ec", "-pkeyopt", "ec_paramgen_curve:prime256v1", "-nodes", "-days", "1", "-subj", "/CN=localhost", "-addext", "subjectAltName=IP:127.0.0.1,DNS:localhost", "-keyout", key, "-out", certificate], { timeout: 5000 });
   const password = "integration-fixture-only", readToken = createHash("sha256").update("integration-reader-fixture-only").digest("base64url");
+  // Independently calculated synthetic fixture vector for the renderer's
+  // MediaMTX SHA-256 credential format, not a real stored password or KDF.
+  const publisherPasswordHash = "sha256:u2h2Qxcv6A6KdM+vggkTTRMApEyIaDEFWwO9WdIp138=";
   const configuration = renderMediaMtxConfig({
-    publisherPasswordHash: `sha256:${createHash("sha256").update(password).digest("base64")}`,
+    publisherPasswordHash,
     hlsReadToken: readToken, rtmpsPort: ingest.port, hlsPort: hls.port,
     rtmpsBindAddress: "127.0.0.1", tlsCertificatePath: certificate, tlsKeyPath: key,
   });
   const configFile = join(directory, "mediamtx.json");
   await writeFile(configFile, configuration, { flag: "wx", mode: 0o600 });
   await Promise.all(leases.splice(0).map(lease => lease.close()));
-  const server = ownedProcess(binary, [configFile], directory); children.push(server);
+  const server = ownedProcess(fixtureBinary, [configFile], directory); children.push(server);
   await waitUntil(async () => {
     assert.equal(server.result, null, "MediaMTX rejected the generated configuration or exited");
     return await listening(ingest.port) && await listening(hls.port);

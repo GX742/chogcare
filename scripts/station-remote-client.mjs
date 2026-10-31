@@ -1,9 +1,10 @@
-import { lstatSync, readFileSync, mkdirSync } from "node:fs";
+import { lstatSync, mkdirSync, openSync } from "node:fs";
 import { execFileSync } from "node:child_process";
 import { DatabaseSync } from "node:sqlite";
 import { resolve, dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { sanitizedStationEvent, validStationToken, validStationEventId, STATION_REMOTE_PREFIX } from "../server/station-remote-service.mjs";
+import { sanitizedStationEvent, validStationToken, validStationEventId } from "../server/station-remote-service.mjs";
+import { readRegularFileSync } from "../server/regular-file.mjs";
 
 export const STATION_REMOTE_ORIGIN = "https://45.38.60.159";
 const DEADLINE_MS = 5000, MAX_RESPONSE_BYTES = 2048;
@@ -18,23 +19,26 @@ export function readStationRemoteConfig(workspace, { platform = process.platform
     let stat; try { stat = lstatSync(parent); } catch (error) { if (error.code === "ENOENT") return null; throw privateFailure(); }
     if (!stat.isDirectory() || stat.isSymbolicLink()) throw privateFailure();
   }
-  const path = join(parent, "remote.json"); let stat;
-  try { stat = lstatSync(path); } catch (error) { if (error.code === "ENOENT") return null; throw privateFailure(); }
-  if (!stat.isFile() || stat.isSymbolicLink() || stat.nlink !== 1 || stat.size < 2 || stat.size > 1024) throw privateFailure();
-  if (platform === "win32") {
+  const path = join(parent, "remote.json");
+  const validate = metadata => {
+    if (metadata.size < 2n || (platform !== "win32" && ((metadata.mode & 0o077n) !== 0n || ![0n, BigInt(uid)].includes(metadata.uid)))) throw privateFailure();
+    if (platform !== "win32") return;
     if (checkWindowsAcl) { if (checkWindowsAcl(path) !== true) throw privateFailure(); }
     else {
       const script = fileURLToPath(new URL("./check-station-remote-acl.ps1", import.meta.url));
       try { execFileSync("C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe", ["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File", script, "-WorkspacePath", resolve(workspace)], { timeout: 5000, maxBuffer: 1024, stdio: "ignore", shell: false, windowsHide: true }); } catch { throw privateFailure(); }
     }
-  } else if ((stat.mode & 0o077) !== 0 || ![0, uid].includes(stat.uid)) throw privateFailure();
-  let value; try { value = JSON.parse(readFileSync(path, "utf8")); } catch { throw privateFailure(); }
+  };
+  let value, bytes, opened = false;
+  try { bytes = readRegularFileSync(path, 1024, { validate, open(filename, flags) { const fd = openSync(filename, flags); opened = true; return fd; } }); value = JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(bytes)); }
+  catch (error) { if (!opened && error.code === "ENOENT") return null; throw privateFailure(); }
+  finally { bytes?.fill(0); }
   if (!value || Array.isArray(value) || Object.keys(value).sort().join(",") !== "origin,token,version" || value.version !== 1 || value.origin !== STATION_REMOTE_ORIGIN || !validStationToken(value.token)) throw privateFailure();
-  return value;
+  return { version: 1, origin: STATION_REMOTE_ORIGIN, token: value.token };
 }
 
-export function createRemoteStationEvents({ filename, token, origin = STATION_REMOTE_ORIGIN, fetcher = fetch, now = Date.now, deadlineMs = DEADLINE_MS }) {
-  if (origin !== STATION_REMOTE_ORIGIN || !validStationToken(token) || !Number.isFinite(deadlineMs) || deadlineMs <= 0 || deadlineMs > DEADLINE_MS) throw Error("Invalid remote station configuration.");
+export function createRemoteStationEvents({ filename, token, origin = STATION_REMOTE_ORIGIN, fetcher = fetch, now = Date.now }, { schedule = callback => setTimeout(callback, DEADLINE_MS), cancel = clearTimeout } = {}) {
+  if (origin !== STATION_REMOTE_ORIGIN || !validStationToken(token)) throw Error("Invalid remote station configuration.");
   const path = resolve(filename), parent = dirname(path); mkdirSync(parent, { recursive: true, mode: 0o700 });
   if (!lstatSync(parent).isDirectory() || lstatSync(parent).isSymbolicLink()) throw privateFailure();
   try { const metadata = lstatSync(path); if (!metadata.isFile() || metadata.isSymbolicLink() || metadata.nlink !== 1) throw privateFailure(); } catch (error) { if (error.code !== "ENOENT") throw error; }
@@ -47,7 +51,9 @@ export function createRemoteStationEvents({ filename, token, origin = STATION_RE
   let offeredId = null;
   async function request(route, body, pendingId) {
     const controller = new AbortController(); activeController = controller;
-    const url = `${origin}${STATION_REMOTE_PREFIX}/${route}`; let timer, reader;
+    const url = route === "next" ? "https://45.38.60.159/api/station/v1/next" : route === "ack" ? "https://45.38.60.159/api/station/v1/ack" : null;
+    if (!url) throw Error("Invalid station route.");
+    let timer, reader;
     const operation = async () => {
       const response = await fetcher(url, { method: body ? "POST" : "GET", headers: { Accept: "application/json", Authorization: `Bearer ${token}`, ...(body ? { "Content-Type": "application/json" } : {}), ...(pendingId ? { "X-Chogcare-Station-Pending": pendingId } : {}) }, ...(body ? { body: JSON.stringify(body) } : {}), credentials: "omit", redirect: "error", signal: controller.signal });
       if ((!response.ok && !(route === "ack" && response.status === 409)) || response.redirected || (response.url && response.url !== url) || !response.body) throw Error("Station feed unavailable.");
@@ -62,8 +68,8 @@ export function createRemoteStationEvents({ filename, token, origin = STATION_RE
       }
       return value;
     };
-    try { return await Promise.race([operation(), new Promise((_, reject) => { timer = setTimeout(() => { controller.abort(); reject(Error("Station deadline expired.")); }, deadlineMs); })]); }
-    finally { clearTimeout(timer); controller.abort(); try { void reader?.cancel().catch(() => {}); reader?.releaseLock(); } catch {} if (activeController === controller) activeController = null; }
+    try { return await Promise.race([operation(), new Promise((_, reject) => { timer = schedule(() => { controller.abort(); reject(Error("Station deadline expired.")); }); })]); }
+    finally { cancel(timer); controller.abort(); try { void reader?.cancel().catch(() => {}); reader?.releaseLock(); } catch {} if (activeController === controller) activeController = null; }
   }
   return {
     async refresh(pendingId = null) {

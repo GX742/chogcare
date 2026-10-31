@@ -10,8 +10,9 @@ const copyCard = card => card ? { ...card, image: card.image ? Buffer.from(card.
 
 // Read-only public presentation. No financial database, wallet lookup, payment
 // request or serial transport belongs here. Donation ticks never await this work.
-export function createStationLeaderboard({ fetcher = fetch, avatarLoader = fetchStationAvatar, now = Date.now, endpoint = ENDPOINT } = {}) {
-  if (![ENDPOINT, "https://45.38.60.159/api/payments/leaderboard"].includes(endpoint)) throw Error("Unsupported station leaderboard endpoint.");
+export function createStationLeaderboard({ fetcher = fetch, avatarLoader = fetchStationAvatar, now = Date.now, remote = false } = {}) {
+  if (typeof remote !== "boolean") throw Error("Unsupported station leaderboard mode.");
+  const endpoint = remote ? "https://45.38.60.159/api/payments/leaderboard" : ENDPOINT;
   let closed = false, generation = 0, rows = [], cursor = 0;
   let loadedAt = -Infinity, attemptedAt = -Infinity, refreshTask = null, nextTask = null;
   let activeRead = null, finishClose;

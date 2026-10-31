@@ -1,5 +1,8 @@
 import { createHash, randomUUID } from "node:crypto";
 
+// OBS WebSocket 5.x requires these exact SHA-256/base64 challenge operations;
+// this is wire authentication, not password storage or a configurable KDF.
+// https://github.com/obsproject/obs-websocket/blob/5.6.3/docs/generated/protocol.md#creating-an-authentication-string
 const digest = value => createHash("sha256").update(value).digest("base64");
 
 // Use only OBS's authenticated local API. Never log RPC response comments:

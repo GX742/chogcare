@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import { DatabaseSync } from "node:sqlite";
-import { existsSync, lstatSync, mkdirSync, mkdtempSync, copyFileSync, constants, chmodSync, openSync, fsyncSync, closeSync, rmSync } from "node:fs";
+import { existsSync, lstatSync, mkdirSync, mkdtempSync, constants, writeFileSync, openSync, fsyncSync, closeSync, rmSync } from "node:fs";
 import { resolve, dirname, join } from "node:path";
 import { readRegularFileSync } from "./regular-file.mjs";
 import { openPaymentIntegrity, paymentStateDigest } from "./payment-integrity.mjs";
@@ -35,8 +35,9 @@ export function relocateStationOutbox({ stationSnapshot, stationFilename, source
     target.close(); target = null;
     events = openStationEvents({ processorFilename: paths[3], profileFilename: paths[4], stationFilename: snapshot });
     const summary = events.summary(); events.close(); events = null;
-    copyFileSync(snapshot, paths[1], constants.COPYFILE_EXCL); chmodSync(paths[1], 0o600);
-    const fd = openSync(paths[1], "r+"); try { fsyncSync(fd); } finally { closeSync(fd); }
+    const bytes = readRegularFileSync(snapshot, 64 * 1024 * 1024);
+    const fd = openSync(paths[1], constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL | (constants.O_NOFOLLOW ?? 0), 0o600);
+    try { writeFileSync(fd, bytes); fsyncSync(fd); } finally { closeSync(fd); bytes.fill(0); }
     if (process.platform !== "win32") { const directory = openSync(parent, "r"); try { fsyncSync(directory); } finally { closeSync(directory); } }
     return { relocated: true, pending: summary.pending, completed: summary.completed, financialFilesChanged: false };
   } finally { events?.close(); target?.close(); source?.close(); rmSync(stage, { recursive: true, force: true }); }

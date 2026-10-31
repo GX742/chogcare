@@ -8,6 +8,16 @@ const entry = (rank = 1, patch = {}) => ({ rank, nickname: `Donor ${rank}`, amou
 const response = entries => new Response(JSON.stringify({ entries }), { headers: { "Content-Type": "application/json" } });
 const turn = () => new Promise(resolve => setImmediate(resolve));
 
+test("remote leaderboard selects one fixed HTTPS URL and never forwards station credentials", async t => {
+  const board = createStationLeaderboard({ remote: true, fetcher: async (url, options) => {
+    assert.equal(url, "https://45.38.60.159/api/payments/leaderboard");
+    assert.deepEqual(options.headers, { Accept: "application/json" });
+    assert.equal(options.redirect, "error"); return response([entry()]);
+  } }); t.after(() => board.close());
+  assert.equal((await board.next()).rank, 1);
+  for (const remote of ["https://example.invalid", "file:///tmp/private", "data:secret", 1]) assert.throws(() => createStationLeaderboard({ remote }));
+});
+
 test("station board reads only the fixed public GET, keeps five ranks and rounds exact selected totals without leaking capabilities", async t => {
   let requests = 0;
   const board = createStationLeaderboard({ fetcher: async (url, options) => {

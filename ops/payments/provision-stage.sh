@@ -4,6 +4,9 @@ set -eu
 [ "$#" = 3 ] && [ "$1" = --stage-only ] && [ "$(id -u)" = 0 ] || exit 1
 archive=$2
 archive_sha=$3
+[ "$archive" = /var/tmp/chogcare-code/code.tar.gz ] || exit 1
+[ ! -L /var/tmp/chogcare-code ] && [ "$(stat -c '%u:%a' /var/tmp/chogcare-code)" = 0:700 ] || exit 1
+[ -f /var/tmp/chogcare-code/code.tar.gz ] && [ ! -L /var/tmp/chogcare-code/code.tar.gz ] && [ "$(stat -c '%u:%a:%h' /var/tmp/chogcare-code/code.tar.gz)" = 0:600:1 ] || exit 1
 runtime=/opt/chogcare-node-v24.22.0
 code=/opt/chogcare-payments
 node_sha=cc2f601cee82d9a5a233302fe307abc600727035fd7d2c3a3571755989e95008
@@ -27,7 +30,7 @@ for directory in /var/lib/chogcare /var/lib/chogcare-station; do
 done
 stage=$(mktemp -d /opt/chogcare-stage-XXXXXXXX)
 chmod 0700 "$stage"
-python3 "$helper_dir/verify-code-package.py" --copy-safe "$archive" "$archive_sha" "$stage/code.tar.gz"
+(cd "$stage" && python3 "$helper_dir/verify-code-package.py" --copy-safe "$archive_sha" < /var/tmp/chogcare-code/code.tar.gz)
 # The verified fixed archive has no links, special files or out-of-tree paths.
 tar -xzf "$stage/code.tar.gz" --no-same-owner --no-same-permissions -C "$stage"
 curl --fail --silent --show-error --proto '=https' --tlsv1.2 --max-time 120 --max-filesize 134217728 "https://nodejs.org/dist/v24.22.0/node-v24.22.0-linux-x64.tar.xz" -o "$stage/node.tar.xz"

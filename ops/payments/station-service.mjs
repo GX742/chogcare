@@ -1,16 +1,26 @@
-import { lstat, readFile } from "node:fs/promises";
+import { lstat, open } from "node:fs/promises";
+import { constants } from "node:fs";
 import { resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import { openStationEvents } from "../../server/station-events.mjs";
 import { createStationRemoteService, validStationToken } from "../../server/station-remote-service.mjs";
 
-export async function readStationServiceToken({ platform = process.platform, directory = process.env.CREDENTIALS_DIRECTORY, uid = process.getuid?.(), stat = lstat, read = readFile } = {}) {
+export async function readStationServiceToken({ platform = process.platform, directory = process.env.CREDENTIALS_DIRECTORY, uid = process.getuid?.(), openFile = open } = {}) {
   if (platform !== "linux" || directory !== "/run/credentials/chogcare-station.service") throw Error("Protected station credentials are required.");
-  const path = `${directory}/station-token`, metadata = await stat(path);
-  if (!metadata.isFile() || metadata.isSymbolicLink() || metadata.nlink !== 1 || ![64, 65].includes(metadata.size) || (metadata.mode & 0o222) !== 0 || ![0, uid].includes(metadata.uid)) throw Error("Protected station credential is unavailable.");
-  const bytes = await read(path);
-  try { const token = new TextDecoder("utf-8", { fatal: true }).decode(bytes).replace(/\n$/, ""); if (!validStationToken(token)) throw Error("Invalid station credential."); return token; }
-  finally { bytes.fill(0); }
+  const handle = await openFile("/run/credentials/chogcare-station.service/station-token", constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
+  const bytes = Buffer.alloc(66);
+  try {
+    const metadata = await handle.stat({ bigint: true });
+    const valid = value => value.isFile() && value.nlink === 1n && [64n, 65n].includes(value.size) && (value.mode & 0o222n) === 0n && [0n, BigInt(uid)].includes(value.uid);
+    if (!valid(metadata)) throw Error("Protected station credential is unavailable.");
+    let size = 0;
+    while (size < bytes.length) { const { bytesRead } = await handle.read(bytes, size, bytes.length - size, null); if (!bytesRead) break; size += bytesRead; }
+    const after = await handle.stat({ bigint: true });
+    if (!valid(after) || BigInt(size) !== metadata.size || after.size !== metadata.size || after.mtimeNs !== metadata.mtimeNs || after.ctimeNs !== metadata.ctimeNs) throw Error("Protected station credential changed during reading.");
+    const token = new TextDecoder("utf-8", { fatal: true }).decode(bytes.subarray(0, size)).replace(/\n$/, "");
+    if (!validStationToken(token)) throw Error("Invalid station credential.");
+    return token;
+  } finally { bytes.fill(0); await handle.close(); }
 }
 
 export async function stationPaymentWorkerHealthy(fetcher = fetch) {

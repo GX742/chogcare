@@ -183,7 +183,7 @@ export async function runStationBridge(args = process.argv.slice(2), { onTestSta
   };
   const controller = createStationController({ write, onTestState, onFault() { console.error("Station display or storage reported a hardware fault. Gratitude is held; reconnect after fixing the device. Payments are unaffected."); }, done(id) { if (options.demo) { demoDone = true; console.log("Demo completed. This did not create or change a payment."); close(); } else events.complete(id); } });
   if (!options.demo && !options.simulate) {
-    leaderboard = createStationLeaderboard(remoteConfig ? { endpoint: `${remoteConfig.origin}/api/payments/leaderboard` } : {});
+    leaderboard = createStationLeaderboard({ remote: remoteConfig !== null });
     boardTransport = createStationBoardTransport({ write, canSend: () => !stopping && healthy && controller.canShowBoard });
   }
   try {

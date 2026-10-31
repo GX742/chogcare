@@ -1,11 +1,12 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { createHash } from "node:crypto";
 import { WebSocketServer } from "ws";
 import { connectLocalObs } from "../ops/stream/obs-client.mjs";
 
-const digest=value=>createHash("sha256").update(value).digest("base64");
 const password="synthetic-local-test-password", salt="synthetic-salt-long-enough", challenge="synthetic-challenge-long-enough";
+// Fixed synthetic protocol vector calculated independently of the client.
+// A duplicated implementation here could reproduce the same hashing bug.
+const authentication="EEyz2LaWJ53lRcZHJZdJYj8Ww/P/4mMPe4mmWAJK7UA="; // gitleaks:allow -- public test vector from the three synthetic literals above, never a live credential.
 
 async function fixture(t, handle, { authenticated=true }={}) {
   const server=new WebSocketServer({host:"127.0.0.1",port:0});
@@ -16,7 +17,7 @@ async function fixture(t, handle, { authenticated=true }={}) {
     socket.on("message",raw=>{
       const message=JSON.parse(raw);
       if(message.op===1){
-        assert.equal(message.d.authentication,digest(digest(password+salt)+challenge));
+        assert.equal(message.d.authentication,authentication);
         assert.equal(message.d.eventSubscriptions,0);
         socket.send(JSON.stringify({op:2,d:{negotiatedRpcVersion:1}}));
       } else handle(socket,message);

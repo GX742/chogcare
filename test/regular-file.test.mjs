@@ -50,3 +50,11 @@ test("size refusal closes its file descriptor without reading or changing the fi
   assert.throws(() => fstatSync(handle), { code: "EBADF" });
   assert.equal(readFileSync(file, "utf8"), "fixture bytes");
 });
+
+test("private metadata checks apply to the opened descriptor before and after reading", t => {
+  const { file } = fixture(t); let checks = 0, handle;
+  assert.equal(readRegularFileSync(file, 100, { validate(metadata) { checks++; assert.equal(metadata.size, 13n); } }).toString(), "fixture bytes");
+  assert.equal(checks, 2);
+  assert.throws(() => readRegularFileSync(file, 100, { open(path, flags) { return handle = openSync(path, flags); }, validate() { throw Error("Private metadata refused"); } }), /Private metadata/);
+  assert.throws(() => fstatSync(handle), { code: "EBADF" });
+});

@@ -39,8 +39,13 @@ payment health. Legacy local mode continues using local Owncast status.
    nonwritable by service users. Create separate `chogcare` and
    `chogcare-station` users and private state directories. Do not start either
    service and do not copy a vault or financial state during preparation.
-   `sh ops/payments/provision-stage.sh --stage-only <code-archive> <sha256>` is
-   the reviewable generic helper. It validates every archive path/hash, installs
+   Put the public code-only archive at the fixed
+   `/var/tmp/chogcare-code/code.tar.gz` path (root-owned 0600, one link) inside
+   root-owned 0700 `/var/tmp/chogcare-code` with no symlink. Then
+   `sh ops/payments/provision-stage.sh --stage-only /var/tmp/chogcare-code/code.tar.gz <sha256>` is
+   the reviewable generic helper. The verifier consumes bounded stdin rather
+   than accepting filesystem paths and creates one exclusive fixed-name copy
+   in a checked private staging directory. It validates every archive path/hash, installs
    pinned official Node 24.22.0 under `/opt/chogcare-node-v24.22.0` without replacing
    system Node, creates empty private directories/users, provisions at most one
    new swapfile with at least 1 GiB usable capacity on a low-memory host (1 GiB +

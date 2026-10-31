@@ -13,6 +13,7 @@ StateDirectoryMode=0700
 UMask=0077
 UnsetEnvironment=NODE_OPTIONS NODE_USE_ENV_PROXY HTTP_PROXY HTTPS_PROXY ALL_PROXY NO_PROXY http_proxy https_proxy all_proxy no_proxy
 LoadCredential=hls-reader-token:/etc/chogcare-stream/hls-reader-token
+LoadCredential=active-media-config:/run/credentials/chogcare-stream.service/mediamtx.json
 ExecStart=/usr/bin/flock --exclusive --nonblock --conflict-exit-code=75 --no-fork /var/lib/chogcare-ingress-watchdog/execution.lock /opt/chogcare-node-v24.22.0/bin/node /opt/chogcare-ingress-watchdog/ingress-watchdog-runtime.mjs --tick
 TimeoutStartSec=45s
 TimeoutStopSec=5s

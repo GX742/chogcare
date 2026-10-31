@@ -7,7 +7,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createHash } from "node:crypto";
 import { createState, evaluate } from "../ops/stream/ingress-watchdog.mjs";
-import { createPrivateStateStore, EMPTY_EXEC_PROPERTIES, EMPTY_UNIT_PROPERTIES, hooksDisabled, parseEmptyExecProperties, parseSocketCgroup, parseUnitProperties, runWatchdogCycle, safeLoadedConfig, safeUnitDependencies, verifyCgroupOwnership } from "../ops/stream/ingress-watchdog-runtime.mjs";
+import { createPrivateStateStore, EMPTY_EXEC_PROPERTIES, EMPTY_UNIT_PROPERTIES, hooksDisabled, parseEmptyExecProperties, parseSocketCgroup, parseUnitProperties, runWatchdogCycle, safeConfigSnapshot, safeLoadedConfig, safeUnitDependencies, verifyCgroupOwnership } from "../ops/stream/ingress-watchdog-runtime.mjs";
 import { renderIngressWatchdogService, renderIngressWatchdogTimer } from "../ops/stream/ingress-watchdog-units.mjs";
 
 const hash = value => createHash("sha256").update(value).digest("hex");
@@ -113,6 +113,13 @@ test("a UID or cgroup path prefix alone cannot establish exact service socket ow
   for(const invalid of [{...input,procs:"123\n124\n"},{...input,procs:"124\n"},{...input,uid:999},{...input,cgroupInode:0n},{...input,controlGroup:"/other"}])assert.throws(()=>verifyCgroupOwnership(invalid));
 });
 
+test("ss extended and explicit cgroup fields must both identify the exact same service", () => {
+  const cgroup = "cgroup:/system.slice/chogcare-stream.service";
+  const row = `0 0 192.0.2.1:1936 198.51.100.2:12345 uid:61234 ino:9988 sk:a ${cgroup} <-> ${cgroup}`;
+  assert.deepEqual(parseSocketCgroup(row), { uid: 61234, inode: "9988", cgroup: "/system.slice/chogcare-stream.service" });
+  for (const invalid of [row + ` ${cgroup}`, row.replace(cgroup, "cgroup:/other.service"), row.replaceAll(cgroup, "cgroup:/other.service"), row.replace(cgroup, `${cgroup}-other`), row + " uid:61234", row + " ino:9988", row + "\n" + row]) assert.throws(() => parseSocketCgroup(invalid));
+});
+
 test("stop propagation, reverse dependencies, hooks and descriptor transfer fail closed", () => {
   const safe={...Object.fromEntries(EMPTY_UNIT_PROPERTIES.map(key=>[key,""])),Conflicts:"shutdown.target",ConflictedBy:"shutdown.target",Requires:"system.slice -.mount sysinit.target tmp.mount",Wants:"network-online.target",FileDescriptorStoreMax:"0",NFileDescriptorStore:"0",FailureAction:"none",SuccessAction:"none",StartLimitAction:"none"};
   assert.equal(safeUnitDependencies(safe),true);
@@ -131,10 +138,30 @@ test("loaded media safety policy refuses active APIs, publisher replacement and 
   assert.equal(hooksDisabled({ paths: { station: { runOnUnread: "", runOnUnreadRestart: false } } }), true);
 });
 
+test("an own credential snapshot must match disk and its media invocation must predate the watchdog", () => {
+  const configA = '{"synthetic":"config-a"}\n', configB = '{"synthetic":"config-b"}\n';
+  assert.equal(safeConfigSnapshot(configA, configA, "100", "101"), true);
+  assert.equal(safeConfigSnapshot(configA, configA, "9007199254740993", "9007199254740994"), true);
+  for (const [active, disk, media, own] of [
+    [configA, configA, "101", "101"],
+    [configA, configB, "100", "101"], [configB, configA, "100", "101"],
+    // A new media invocation cannot reuse an older copy even if disk was
+    // changed back to the older bytes while this watchdog process was alive.
+    [configA, configA, "102", "101"],
+    [undefined, configA, "100", "101"], [configA, undefined, "100", "101"],
+    ["", "", "100", "101"], ["x".repeat(32769), "x".repeat(32769), "100", "101"],
+    ...["0", "-1", "01", "100\n", "x", undefined, 100].flatMap(value => [[configA, configA, value, "101"], [configA, configA, "100", value]]),
+  ]) assert.equal(safeConfigSnapshot(active, disk, media, own), false);
+});
+
 test("units retain dedicated credentials, fixed runtime, bounded timer and no activation side effects", () => {
   const service = renderIngressWatchdogService(), timer = renderIngressWatchdogTimer();
+  assert.match(service, /^After=chogcare-stream\.service$/m);
   assert.match(service, /ExecStart=\/usr\/bin\/flock .*\/opt\/chogcare-node-v24\.22\.0\/bin\/node \/opt\/chogcare-ingress-watchdog\/ingress-watchdog-runtime\.mjs --tick/);
   assert.match(service, /LoadCredential=hls-reader-token:\/etc\/chogcare-stream\/hls-reader-token/);
+  assert.match(service, /^LoadCredential=active-media-config:\/run\/credentials\/chogcare-stream\.service\/mediamtx\.json$/m);
+  assert.equal((service.match(/^LoadCredential=/gm) ?? []).length, 2);
+  assert.doesNotMatch(service, /BindReadOnlyPaths|LoadCredential=.*(?:tls\.key|tls\.crt)/);
   assert.match(service, /StateDirectoryMode=0700/); assert.match(service, /CapabilityBoundingSet=\n/); assert.doesNotMatch(service, /SYS_PTRACE|NET_ADMIN|payments|ExecStartPost|ExecStopPost/);
   assert.match(service, /IPAddressDeny=any/); assert.match(service, /IPAddressAllow=localhost/); assert.match(timer, /OnUnitInactiveSec=5s/);
   assert.match(service, /^RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6 AF_NETLINK$/m);

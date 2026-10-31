@@ -13,7 +13,9 @@ const STATE_DIRECTORY = "/var/lib/chogcare-ingress-watchdog";
 const CREDENTIAL = "/run/credentials/chogcare-ingress-watchdog.service/hls-reader-token";
 const OBSERVE_CREDENTIAL = "/run/credentials/chogcare-ingress-watchdog-observe.service/hls-reader-token";
 const CONTROL_GROUP = "/system.slice/chogcare-stream.service";
-const ACTIVE_CONFIG = "/run/credentials/chogcare-stream.service/mediamtx.json";
+const ACTIVE_CONFIG = "/run/credentials/chogcare-ingress-watchdog.service/active-media-config";
+const OBSERVE_ACTIVE_CONFIG = "/run/credentials/chogcare-ingress-watchdog-observe.service/active-media-config";
+const DISK_CONFIG = "/etc/chogcare-stream/mediamtx.json";
 const hash = value => createHash("sha256").update(value).digest("hex");
 const need = value => { if (!value) throw Error("watchdog_guard_failed"); };
 const lease = value => [value.dev, value.ino, value.size, value.mtimeNs, value.ctimeNs].join(":");
@@ -23,7 +25,7 @@ const integer = value => Number.isSafeInteger(value) && value >= 0;
 async function boundedDescriptor(path, maximum, { privateMode = null, uid = 0, parentMode = null } = {}) {
   if (parentMode !== null) {
     const parent = await lstat(path.slice(0, path.lastIndexOf("/")), { bigint: true });
-    need(parent.isDirectory() && !parent.isSymbolicLink() && parent.uid === BigInt(uid) && (parent.mode & 0o777n) === BigInt(parentMode));
+    need(parent.isDirectory() && !parent.isSymbolicLink() && parent.uid === BigInt(uid) && parent.gid === BigInt(uid) && (parent.mode & 0o777n) === BigInt(parentMode));
   }
   const file = await open(path, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
   const bytes = Buffer.alloc(maximum + 1);
@@ -119,6 +121,20 @@ export function safeLoadedConfig(config) {
     typeof config.hlsCDNSecret === "string" && config.hlsCDNSecret.length === 43 && /^[A-Za-z0-9_-]{43}$/.test(config.hlsCDNSecret);
 }
 
+const validStartTicks = value => typeof value === "string" && /^[1-9]\d{0,19}$/.exec(value)?.[0] === value;
+function processStartTicks(text) {
+  const start = text.slice(text.lastIndexOf(")") + 1).trim().split(/\s+/)[19];
+  need(validStartTicks(start)); return start;
+}
+
+export function safeConfigSnapshot(activeText, diskText, mediaStartTicks, ownStartTicks) {
+  // systemd captures this service's credential inside its executor process.
+  // Reject a media invocation created since that process, including one in the
+  // same clock tick, so a pre-restart snapshot cannot authorize a new instance.
+  return typeof activeText === "string" && typeof diskText === "string" && Buffer.byteLength(activeText) > 0 && Buffer.byteLength(activeText) <= 32768 && Buffer.byteLength(diskText) <= 32768 &&
+    validStartTicks(mediaStartTicks) && validStartTicks(ownStartTicks) && BigInt(mediaStartTicks) < BigInt(ownStartTicks) && hash(activeText) === hash(diskText);
+}
+
 export const EMPTY_EXEC_PROPERTIES = Object.freeze(["ExecCondition", "ExecStartPre", "ExecStartPost", "ExecStop", "ExecStopPost"]);
 
 export function parseEmptyExecProperties(text) {
@@ -153,9 +169,12 @@ export function parseSocketCgroup(text) {
   need(local?.endsWith(":1936"));
   const value = expression => { const matches = [...line.matchAll(expression)]; need(matches.length === 1); return matches[0][1]; };
   const uid = value(/(?:^|\s)uid:(\d{1,10})(?=\s|$)/g), inode = value(/(?:^|\s)ino:(\d{1,20})(?=\s|$)/g);
-  const cgroup = value(/(?:^|\s)cgroup:([^\s]+)(?=\s|$)/g);
-  need(Number(uid) > 0 && BigInt(inode) > 0n && cgroup === CONTROL_GROUP);
-  return { uid: Number(uid), inode, cgroup };
+  // ss -e and --cgroup each print this field on supported iproute2 versions.
+  // Both copies must independently identify the exact fixed service cgroup.
+  const cgroups = [...line.matchAll(/(?:^|\s)cgroup:([^\s]+)(?=\s|$)/g)].map(match => match[1]);
+  need((cgroups.length === 1 || cgroups.length === 2) && cgroups.every(cgroup => cgroup === CONTROL_GROUP));
+  need(Number(uid) > 0 && BigInt(inode) > 0n);
+  return { uid: Number(uid), inode, cgroup: CONTROL_GROUP };
 }
 
 export function verifyCgroupOwnership({ pid, uid, socket, controlGroup, cgroupInode, procs }) {
@@ -174,7 +193,7 @@ export function safeUnitDependencies(properties) {
     properties.FailureAction === "none" && properties.SuccessAction === "none" && properties.StartLimitAction === "none";
 }
 
-async function inspectRuntime(token, bootId) {
+async function inspectRuntime(token, bootId, activeConfigPath, ownStartTicks) {
   let guard = "unit_guard_failed";
   try {
   const { stdout } = await exec("/usr/bin/systemctl", ["show", "chogcare-stream.service", `--property=ActiveState,SubState,MainPID,InvocationID,Job,ExecStart,ControlGroup,Conflicts,ConflictedBy,Requires,Wants,FileDescriptorStoreMax,NFileDescriptorStore,FailureAction,SuccessAction,StartLimitAction,${EMPTY_UNIT_PROPERTIES.join(",")}`], { timeout: 2000, maxBuffer: 16384 });
@@ -184,7 +203,7 @@ async function inspectRuntime(token, bootId) {
   const status = (await boundedDescriptor(`/proc/${unit.pid}/status`, 65536)).text;
   const ids = /^Uid:\s+(\d+)\s+(\d+)\s+(\d+)\s+(\d+)$/m.exec(status); need(ids && ids.slice(1).every(value => value === ids[1]) && Number(ids[1]) > 0);
   const stat = (await boundedDescriptor(`/proc/${unit.pid}/stat`, 16384)).text;
-  const start = stat.slice(stat.lastIndexOf(")") + 1).trim().split(/\s+/)[19]; need(/^\d{1,20}$/.test(start));
+  const start = processStartTicks(stat);
   guard = "socket_cgroup_guard_failed";
   const diagnostic = await exec("/usr/bin/ss", ["-H", "-t", "-n", "-e", "--cgroup", "state", "established", "( sport = :1936 )"], { timeout: 2000, maxBuffer: 16384 });
   const socket = parseSocketCgroup(diagnostic.stdout);
@@ -199,7 +218,9 @@ async function inspectRuntime(token, bootId) {
     cgroupInode = before.ino.toString();
   } finally { await group.close(); }
   guard = "active_config_guard_failed";
-  const active = await boundedDescriptor(ACTIVE_CONFIG, 32768, { privateMode: 0o440, parentMode: 0o550 });
+  const active = await boundedDescriptor(activeConfigPath, 32768, { privateMode: 0o400, parentMode: 0o500 });
+  const disk = await boundedDescriptor(DISK_CONFIG, 32768, { privateMode: 0o600, parentMode: 0o700 });
+  need(safeConfigSnapshot(active.text, disk.text, start, ownStartTicks));
   const config = JSON.parse(active.text); need(safeLoadedConfig(config));
   const configured = Buffer.from(config.hlsCDNSecret), supplied = Buffer.from(token);
   try { need(configured.length === supplied.length && timingSafeEqual(configured, supplied)); }
@@ -247,6 +268,8 @@ export async function runWatchdogCycle(io, { observeOnly = false } = {}) {
 export async function createProductionIo() {
   need(process.platform === "linux" && process.getuid?.() === 0);
   const credentialPath = process.env.CREDENTIALS_DIRECTORY === "/run/credentials/chogcare-ingress-watchdog.service" ? CREDENTIAL : process.env.CREDENTIALS_DIRECTORY === "/run/credentials/chogcare-ingress-watchdog-observe.service" ? OBSERVE_CREDENTIAL : null; need(credentialPath);
+  const activeConfigPath = process.env.CREDENTIALS_DIRECTORY === "/run/credentials/chogcare-ingress-watchdog.service" ? ACTIVE_CONFIG : process.env.CREDENTIALS_DIRECTORY === "/run/credentials/chogcare-ingress-watchdog-observe.service" ? OBSERVE_ACTIVE_CONFIG : null; need(activeConfigPath);
+  const ownStartTicks = processStartTicks((await boundedDescriptor("/proc/self/stat", 16384)).text);
   const secret = await boundedDescriptor(credentialPath, 44, { privateMode: [0o400, 0o440] });
   const token = secret.text.replace(/\n$/, ""); need(token.length === 43 && /^[A-Za-z0-9_-]{43}$/.test(token) && Buffer.from(token, "base64url").toString("base64url") === token);
   const readBoot = async () => { const value = (await boundedDescriptor("/proc/sys/kernel/random/boot_id", 64)).text.trim(); need(/^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/.test(value)); return hash(value); };
@@ -254,15 +277,15 @@ export async function createProductionIo() {
     bootId: readBoot, now: monoNow, store: createPrivateStateStore(),
     async observe(bootId) {
       try {
-        const before = await inspectRuntime(token, bootId);
+        const before = await inspectRuntime(token, bootId, activeConfigPath, ownStartTicks);
         const child = parseMasterPlaylist(await readLoopbackPlaylist("index.m3u8", token));
         const playlist = parseMediaPlaylist(await readLoopbackPlaylist(child, token));
-        const after = await inspectRuntime(token, bootId);
+        const after = await inspectRuntime(token, bootId, activeConfigPath, ownStartTicks);
         return { valid: before === after && playlist.eligible === true, safe: before === after, generation: after, playlist };
       } catch (error) { return { valid: false, safe: false, generation: null, playlist: null, reason: ["unit_guard_failed", "process_guard_failed", "socket_cgroup_guard_failed", "active_config_guard_failed"].includes(error.guard) ? error.guard : "playlist_guard_failed" }; }
     },
     async tryRestart(fresh, bootId) {
-      try { if (await inspectRuntime(token, bootId) !== fresh.generation) return { requested: false, succeeded: false }; }
+      try { if (await inspectRuntime(token, bootId, activeConfigPath, ownStartTicks) !== fresh.generation) return { requested: false, succeeded: false }; }
       catch { return { requested: false, succeeded: false }; }
       try { await exec("/usr/bin/systemctl", ["--job-mode=fail", "try-restart", "chogcare-stream.service"], { timeout: 20000, maxBuffer: 4096 }); return { requested: true, succeeded: true }; }
       catch { return { requested: true, succeeded: false }; }

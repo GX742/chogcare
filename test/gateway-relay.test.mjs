@@ -80,6 +80,7 @@ test('relay authenticates only with the dedicated identity and pinned host key',
     UserKnownHostsFile: '/etc/chogcare-relay/known_hosts', GlobalKnownHostsFile: '/dev/null',
     PermitLocalCommand: 'no', ProxyCommand: 'none', ProxyJump: 'none',
     ControlMaster: 'no', ControlPath: 'none',
+    IPQoS: 'none',
   };
   for (const [key, value] of Object.entries(expected)) assert.equal(options.get(key), value, key);
   // Reject any future option outside the reviewed fixed transport and liveness settings.
@@ -135,6 +136,8 @@ test('VPS restrictions apply only to the relay account and deny sessions and oth
     AllowAgentForwarding: 'no', AllowTcpForwarding: 'remote', AllowStreamLocalForwarding: 'no',
     GatewayPorts: 'no', PermitListen: '127.0.0.1:18090', PermitOpen: 'none',
     PermitTTY: 'no', X11Forwarding: 'no', PermitTunnel: 'no', PermitUserRC: 'no', MaxSessions: '0',
+    ClientAliveInterval: '15', ClientAliveCountMax: '3',
+    IPQoS: 'none',
   });
   assert.match(serverSource, /END of sshd_config/);
   assert.match(serverSource, /sshd -t before reloading/);

@@ -21,10 +21,11 @@ WorkingDirectory=/var/lib/chogcare-mobile
 # scheduler queue; VFR never manufactures old frames across a skipped input gap.
 # The loopback input helper handles bounded playlist refresh retries. Preserve
 # VFR timestamps while declaring x264's real 15 fps input rate explicitly.
-# Three-second segments amortize the public relay's per-request latency. The
-# slower compression preset preserves more detail within its measured capacity.
+# Six-second segments amortize the public relay's per-request latency.
+# The 160 kbps profile leaves headroom for retransmits over the lossy public uplink.
+# Twelve segments keep a 72-second recovery window without increasing live lag.
 # Microsecond numbering prevents reused segment URLs when the encoder restarts.
-ExecStart=/opt/owncast/ffmpeg -hide_banner -loglevel warning -nostdin -rw_timeout 15000000 -fflags +nobuffer -flags low_delay -probesize 131072 -analyzeduration 1000000 -filter_threads 2 -threads 2 -copyts -live_start_index -1 -an -thread_queue_size 1 -http_multiple 0 -http_persistent 0 -seg_max_retry 2 -avioflags direct -i http://127.0.0.1:8091/stream.m3u8 -map 0:v:0 -vf scale=720:1280:force_original_aspect_ratio=decrease:force_divisible_by=2,pad=720:1280:(ow-iw)/2:(oh-ih)/2,framestep=2 -x264-params fps=15/1 -threads 2 -c:v libx264 -profile:v main -level:v 3.1 -preset medium -tune zerolatency -b:v 500k -maxrate 650k -bufsize 650k -g 45 -keyint_min 45 -sc_threshold 0 -pix_fmt yuv420p -an -fps_mode vfr -max_interleave_delta 1000000 -flush_packets 1 -f hls -hls_time 3 -hls_list_size 8 -hls_delete_threshold 5 -hls_flags delete_segments+independent_segments+temp_file -hls_segment_options mpegts_copyts=1 -hls_start_number_source epoch_us -hls_segment_filename /var/lib/chogcare-mobile/stream-%%d.ts /var/lib/chogcare-mobile/stream.m3u8
+ExecStart=/opt/owncast/ffmpeg -hide_banner -loglevel warning -nostdin -rw_timeout 15000000 -fflags +nobuffer -flags low_delay -probesize 131072 -analyzeduration 1000000 -filter_threads 2 -threads 2 -copyts -live_start_index -1 -an -thread_queue_size 1 -http_multiple 0 -http_persistent 0 -seg_max_retry 2 -avioflags direct -i http://127.0.0.1:8091/stream.m3u8 -map 0:v:0 -vf scale=360:640:force_original_aspect_ratio=decrease:force_divisible_by=2,pad=360:640:(ow-iw)/2:(oh-ih)/2,framestep=2 -x264-params fps=15/1 -threads 2 -c:v libx264 -profile:v main -level:v 3.1 -preset medium -tune zerolatency -b:v 160k -maxrate 220k -bufsize 220k -g 90 -keyint_min 90 -sc_threshold 0 -pix_fmt yuv420p -an -fps_mode vfr -max_interleave_delta 1000000 -flush_packets 1 -f hls -hls_time 6 -hls_list_size 12 -hls_delete_threshold 5 -hls_flags delete_segments+independent_segments+temp_file -hls_segment_options mpegts_copyts=1 -hls_start_number_source epoch_us -hls_segment_filename /var/lib/chogcare-mobile/stream-%%d.ts /var/lib/chogcare-mobile/stream.m3u8
 Restart=always
 RestartSec=5
 UMask=0022

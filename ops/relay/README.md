@@ -23,7 +23,7 @@ its worker or the reverse tunnel is offline.
 
 ## Render the nginx configuration
 
-`nginx-config.mjs` exports two pure functions:
+`nginx-config.mjs` exports pure configuration renderers:
 
 ```js
 import { renderBootstrapNginx, renderRelayNginx } from "./nginx-config.mjs";
@@ -51,6 +51,51 @@ listener. Remove the distribution's unused default site before validating
 the replacement. Preserve a private backup, run `nginx -t`, then reload nginx
 gracefully. The generated configuration works with nginx 1.24 and newer; it
 does not depend on the newer `http2 on` directive.
+
+An existing, owner-approved Tailscale Funnel to that same local gateway can
+instead supply the upstream transport through
+`renderFunnelRelayNginx({ publicIp, certificateName, funnelHostname })`.
+This optional renderer accepts only a lowercase machine and tailnet label
+under `ts.net`; it does not configure or enable a Funnel. It preserves every
+public route, method and checkout session header from the SSH renderer.
+The fixed HTTPS upstream uses its hostname for Host and TLS SNI, verifies its
+certificate against the system CA bundle, and keeps up to 16 idle HTTP/1.1
+connections for successive media requests. The local gateway still supplies
+the canonical payment-worker Host. Its upstream connection budget is 10 seconds
+to include a cold WAN TLS handshake; the SSH loopback renderer retains its
+3-second connection timeout. nginx applies this timeout to upstream TLS
+handshaking as well as TCP connection setup (see the
+[connection timeout directive](https://nginx.org/en/docs/http/ngx_http_proxy_module.html#proxy_connect_timeout)
+and [upstream TLS implementation](https://github.com/nginx/nginx/blob/master/src/http/ngx_http_upstream.c)).
+The original SSH renderer remains the
+default. Keep the actual Funnel hostname and generated configuration private;
+validate and replace the same nginx include using the backup and reload
+procedure above.
+
+For an installation with both existing transports, use
+`renderResilientHlsRelayNginx` with those same validated parameters. HLS uses
+the verified HTTPS Funnel first and falls back to the fixed SSH loopback
+listener only on 502, 503 or 504. The fallback accepts only GET/HEAD and cannot
+be requested directly. A missing segment (404) does not trigger failover.
+The payment location remains byte-for-byte identical to the Funnel renderer;
+payment POST requests are never retried through the HLS fallback.
+
+The HLS hostname is fixed by configuration, with certificate verification and
+SNI still enabled. The existing HTTP/1.1 connection pool avoids repeating a WAN
+TLS handshake for every segment. The HTTPS connection budget is ten seconds
+and the HLS idle-read budget is fifteen seconds per transport. An active
+download can continue while bytes arrive. Failover uses nginx's documented
+[named error locations](https://nginx.org/en/docs/http/ngx_http_core_module.html#error_page).
+Keep the existing completed-segment cache when updating an installed relay;
+playlists, previews, failures and payment responses must remain uncached.
+Any prewarmer must read playlists through this same public HTTPS HLS route,
+with normal certificate verification, rather than depending on SSH being up.
+The isolated nginx fixture exercises failover without changing live services.
+Failover handles failures before response headers are sent; the player retries
+a stalled partial download. An existing strict cache-status map can leave a
+failed-over `502 : 200` response uncached on the relay. Keep that conservative
+guard: completed successful TS responses still carry the gateway's public CDN
+cache policy, while errors, playlists and payment responses remain uncached.
 
 ## IP certificate and renewal
 
@@ -111,6 +156,41 @@ and all health checks.
 
 ## Reverse tunnel boundary
 
+### Native Windows reserve
+
+When the Windows network path works but WSL's SSH connection is unstable,
+`windows-relay.ps1` supervises the same restricted remote forward through the
+installed Windows OpenSSH client. The destination public IPv4 and private file
+paths are supplied locally; no inventory or credential belongs in the source.
+An additional Windows copy of the existing identity requires the owner's
+authorization. Create and verify a protected directory and empty target files
+before copying any bytes. Only the current user and SYSTEM may have access;
+preserve the Linux originals and verify equality without printing credentials.
+
+Run the supervisor in its own hidden `powershell.exe -File` process, with
+`-RelayHost`, `-IdentityFile` and `-KnownHostsFile`. It validates the private-file
+ACLs, uses the pinned server identity, disables password/agent/session features,
+and permits only `127.0.0.1:18090:127.0.0.1:8090`. Connections retry after five
+seconds with the same fifteen-second, three-miss keepalives. Forward allocation
+failure exits the SSH child; it never evicts another connection or widens the
+listener. This permits an additive reserve alongside the existing WSL client.
+
+An unnamed Windows Job Object owns only this isolated supervisor and its
+children. Terminating it also terminates its own SSH child, avoiding an orphaned
+forward; unrelated SSH processes are unaffected. The test uses bounded dummy
+children and a separate sentinel, never real SSH, tasks or credentials.
+
+For persistence, install the reviewed script at a stable protected path outside
+Git and disposable worktrees. Register one current-user AtLogon task using
+InteractiveToken and LeastPrivilege, with no stored password, unlimited runtime,
+IgnoreNew instances, and bounded one-minute task-failure retries. Keep its action
+and arguments fixed and hidden, validate the task XML before registration, and
+refuse to overwrite an unrelated task or a changed installed script. A locked
+desktop can keep serving; logout, stopped WSL/OBS or a sleeping computer still
+prevents this local installation from producing live video.
+
+### WSL client
+
 Run the tunnel from the local environment that can already reach
 `127.0.0.1:8090`. In the current deployment that is WSL, alongside nginx.
 The remote forward is exactly:
@@ -127,6 +207,19 @@ server host key. Do not use password authentication, agent forwarding or
 network disappears. Its private key and known-hosts file stay outside Git.
 Never print the private key or the server's general SSH configuration while
 checking the tunnel.
+
+Keepalives run in both directions: the client uses `ServerAliveInterval=15`
+and `ServerAliveCountMax=3`; the server's relay-only `Match User` block uses
+`ClientAliveInterval 15` and `ClientAliveCountMax 3`. Each peer can close an
+unresponsive SSH connection after roughly 45 seconds. The server-side timeout
+releases a stale forward listener so the supervised client can reconnect.
+These settings take effect on new connections after a validated reload; they monitor SSH transport
+health. See the [OpenSSH keepalive documentation](https://man.openbsd.org/sshd_config#ClientAliveCountMax).
+
+Both the client and the relay account use `IPQoS none`, leaving packet marking
+to the operating system default. This scoped transport setting supports testing paths that may
+handle marked traffic poorly; verify completed segment throughput after reconnecting.
+See the [OpenSSH IPQoS documentation](https://man.openbsd.org/sshd_config#IPQoS).
 
 On the server, constrain this account to remote forwarding only:
 `AllowTcpForwarding remote`, `PermitListen 127.0.0.1:18090`, `GatewayPorts no`,

@@ -27,7 +27,8 @@ LockPersonality=true
 RestrictAddressFamilies=AF_UNIX AF_INET
 CapabilityBoundingSet=
 AmbientCapabilities=
-MemoryMax=64M
+MemoryMax=128M
+MemorySwapMax=64M
 TasksMax=32
 
 [Install]

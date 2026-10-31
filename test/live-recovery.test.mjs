@@ -44,9 +44,9 @@ function deferred() {
   return { promise, resolve, reject };
 }
 
-function playerFixture() {
-  const clock = fakeClock(), states = [], calls = { play: [], load: [], catchUp: [], reconnect: [], playing: [], waiting: [] };
-  let active = true, playBehavior, reconnectBehavior;
+function playerFixture({frameDriven=false}={}) {
+  const clock = fakeClock(), states = [], calls = { play: [], load: [], catchUp: [], reconnect: [], playing: [], waiting: [], transfer: [] };
+  let active = true, playBehavior, reconnectBehavior, transfer=null;
   const media = {
     currentTime: 10, paused: true, ended: false, seeking: false, readyState: 4,
     play() {
@@ -62,6 +62,7 @@ function playerFixture() {
   });
   const recovery = createLivePlaybackRecovery({
     media, active: () => active, monitor,
+    frameDriven, transferProgress:()=>{calls.transfer.push(clock.now());return transfer;},
     resumeLoading(catchUp = false) { calls.load.push(clock.now()); calls.catchUp.push(catchUp); },
     reconnect() { calls.reconnect.push(clock.now()); reconnectBehavior?.(); },
     onPlaying() { calls.playing.push(clock.now()); },
@@ -73,6 +74,7 @@ function playerFixture() {
     setActive(value) { active = value; },
     setPlayBehavior(value) { playBehavior = value; },
     setReconnectBehavior(value) { reconnectBehavior = value; },
+    setTransfer(value) { transfer=value; },
     async start() { recovery.play(); await flushPromises(); recovery.playing(); },
     dispose() { recovery.dispose(); monitor.dispose(); },
   };
@@ -217,6 +219,157 @@ test("a stream frozen without a fatal error is nudged and then reconnected autom
   assert.equal(fixture.calls.reconnect.length, 1, "Persistent lack of progress triggers a real reconnect");
   assert.equal(fixture.states.includes("blocked"), false);
   fixture.dispose();
+});
+
+test("a stale HTTP-200 playlist recovers after frames stop without aborting buffered healthy playback", async () => {
+  const fixture=playerFixture();await fixture.start();
+  fixture.recovery.playlistStalled();
+  for(let index=0;index<15;index++){
+    fixture.media.currentTime+=1;fixture.recovery.progress();await fixture.clock.advance(1000);
+  }
+  assert.equal(fixture.calls.reconnect.length,0,"A stale playlist does not discard still-playing buffered media");
+  await fixture.clock.advance(4000);
+  assert.equal(fixture.calls.reconnect.length,1,"Once frames stop, the known stale playlist uses bounded fast recovery");
+  fixture.dispose();
+});
+
+test("an advancing or restarted producer clears stale-playlist state without fabricating a decoded frame", async () => {
+  const fixture=playerFixture();await fixture.start();
+  fixture.recovery.playlistStalled();await fixture.clock.advance(2000);
+  const frames=fixture.calls.playing.length;
+  fixture.recovery.playlistAdvanced();
+  await fixture.clock.advance(40_000);
+  assert.equal(fixture.calls.reconnect.length,0,"A changed producer snapshot clears the early stale recovery");
+  assert.equal(fixture.calls.playing.length,frames,"New playlist metadata does not prove video playback");
+  await fixture.clock.advance(4000);
+  assert.equal(fixture.calls.reconnect.length,1,"A decoder still frozen behind a healthy producer retains its finite watchdog");
+  fixture.dispose();
+});
+
+test("growing fragment bytes protect a useful slow download while a stuck counter cannot postpone recovery", async () => {
+  const fixture=playerFixture(),request={};await fixture.start();fixture.recovery.waiting();
+  for(let index=1;index<=16;index++){
+    fixture.setTransfer({request,loaded:index*1000});await fixture.clock.advance(5000);
+  }
+  assert.equal(fixture.calls.reconnect.length,0,"Eighty seconds of real received bytes must not abort the fragment at forty-five seconds");
+  fixture.setTransfer(null);fixture.media.currentTime+=.25;fixture.recovery.progress();
+  assert.equal(fixture.monitor.state,"playing");fixture.dispose();
+
+  const stuck=playerFixture();await stuck.start();stuck.setTransfer({request:{},loaded:1000});
+  await stuck.clock.advance(46_000);
+  assert.equal(stuck.calls.reconnect.length,1,"A single old byte count is not continuing network progress");
+  stuck.dispose();
+});
+
+test("an endless byte trickle without decoded frames still reaches the hard recovery deadline", async () => {
+  const fixture=playerFixture(),request={};await fixture.start();
+  for(let index=1;index<=24;index++){
+    fixture.setTransfer({request,loaded:index});await fixture.clock.advance(5000);
+  }
+  await fixture.clock.advance(1000);
+  assert.equal(fixture.calls.reconnect.length,1,"Actual byte progress cannot disable the two-minute hard ceiling");
+  fixture.dispose();
+});
+
+test("a pending first-byte request gets the relay's fifty-second budget without changing generic stall recovery", async () => {
+  for(const stale of [false,true]){
+    const fixture=playerFixture();await fixture.start();fixture.setTransfer({request:{},loaded:0});
+    if(stale)fixture.recovery.playlistStalled();
+    await fixture.clock.advance(46_000);
+    assert.equal(fixture.calls.reconnect.length,0,"A real pending relay request must survive the former forty-five-second watchdog");
+    for(let index=0;index<4;index++){
+      fixture.recovery.waiting();await fixture.clock.advance(1000);
+    }
+    assert.equal(fixture.calls.reconnect.length,0,"Repeated waiting cannot reset or shorten the first-byte budget");
+    await fixture.clock.advance(2000);
+    assert.deepEqual(fixture.calls.reconnect,[52_000],"First health observation adds at most one tick, followed by normal recovery backoff");
+    fixture.dispose();
+  }
+  const generic=playerFixture();await generic.start();await generic.clock.advance(46_000);
+  assert.deepEqual(generic.calls.reconnect,[46_000],"A player without an actual pending request keeps its existing recovery deadline");
+  generic.dispose();
+});
+
+test("new zero-byte requests cannot keep extending the overall hard recovery ceiling", async () => {
+  const fixture=playerFixture();await fixture.start();
+  for(let index=0;index<24;index++){
+    fixture.setTransfer({request:{},loaded:0});fixture.recovery.waiting();
+    fixture.recovery.playlistAdvanced();await fixture.clock.advance(5000);
+  }
+  await fixture.clock.advance(1000);
+  assert.deepEqual(fixture.calls.reconnect,[121_000],"Retry/request identities and playlist events cannot postpone the hard ceiling");
+  fixture.dispose();
+});
+
+test("a pending playlist grants only first-byte grace and completion/error removes that grace without fabricating frames", async () => {
+  for(const outcome of ["loaded","nonfatal-error"]){
+    const fixture=playerFixture();await fixture.start();
+    const playlist={kind:"playlist",loaded:0},frames=fixture.calls.playing.length;
+    fixture.setTransfer({request:playlist,loaded:0});
+    await fixture.clock.advance(46_000);
+    assert.equal(fixture.calls.reconnect.length,0,"A playlist request can finish relay failover after the generic stall deadline");
+    assert.equal(fixture.calls.playing.length,frames,"Synthetic playlist metadata cannot invent bytes or decoded video");
+    fixture.setTransfer(null); // LEVEL_LOADED or its matching nonfatal load error.
+    await fixture.clock.advance(2000);
+    assert.equal(fixture.calls.reconnect.length,1,`${outcome} must release pending-request grace if the video remains frozen`);
+    assert.equal(fixture.calls.playing.length,frames);
+    fixture.dispose();
+  }
+});
+
+test("a fragment completing between watchdog ticks gets a short decode grace without inventing playback", async () => {
+  const fixture=playerFixture();await fixture.start();
+  await fixture.clock.advance(44_900);
+  const frames=fixture.calls.playing.length;
+  fixture.recovery.receivedData(1000);
+  await fixture.clock.advance(3000);
+  assert.equal(fixture.calls.reconnect.length,0,"A newly completed download must be allowed to reach the decoder");
+  assert.equal(fixture.calls.playing.length,frames);
+  fixture.media.currentTime+=.25;fixture.recovery.progress();
+  assert.equal(fixture.monitor.state,"playing");fixture.dispose();
+});
+
+test("repeated active resume notifications cannot extend an established freeze forever", async () => {
+  const fixture=playerFixture();await fixture.start();
+  for(let index=0;index<9;index++){
+    fixture.recovery.resume();await fixture.clock.advance(5000);
+  }
+  await fixture.clock.advance(1000);
+  assert.equal(fixture.calls.reconnect.length,1,"Only a genuine suspension may rebase the resumed playback deadline");
+  fixture.dispose();
+});
+
+test("frame-capable browsers require decoded video progress rather than play promises or advancing audio time", async () => {
+  const fixture=playerFixture({frameDriven:true});await fixture.start();
+  assert.equal(fixture.calls.playing.length,0);
+  fixture.media.currentTime+=1;fixture.recovery.progress();
+  assert.equal(fixture.calls.playing.length,0,"A timeupdate alone cannot turn LIVE on");
+  fixture.recovery.frame(fixture.media.currentTime);
+  assert.equal(fixture.calls.playing.length,1);assert.equal(fixture.monitor.state,"playing");
+  for(let index=0;index<46;index++){
+    fixture.media.currentTime+=1;fixture.recovery.progress();await fixture.clock.advance(1000);
+  }
+  assert.equal(fixture.calls.reconnect.length,1,"An advancing media clock cannot mask a frozen video decoder");
+  fixture.dispose();
+});
+
+test("hidden or disposed players stop polling byte progress and ignore late decoded-frame callbacks", async () => {
+  const fixture=playerFixture({frameDriven:true});await fixture.start();
+  fixture.media.currentTime+=1;fixture.recovery.frame(fixture.media.currentTime);
+  fixture.setTransfer({request:{},loaded:1000});await fixture.clock.advance(1000);
+  fixture.setActive(false);fixture.recovery.suspend();
+  const frames=fixture.calls.playing.length,polls=fixture.calls.transfer.length;
+  fixture.media.currentTime+=1;fixture.recovery.frame(fixture.media.currentTime);
+  fixture.recovery.receivedData(2000);fixture.recovery.playlistStalled();
+  await fixture.clock.advance(90_000);
+  assert.equal(fixture.calls.playing.length,frames);assert.equal(fixture.calls.transfer.length,polls);
+  assert.equal(fixture.clock.size,0);
+  fixture.dispose();fixture.setActive(true);
+  fixture.recovery.frame(fixture.media.currentTime+1);fixture.recovery.receivedData(3000);
+  fixture.recovery.playlistAdvanced();fixture.recovery.playlistStalled();
+  await fixture.clock.advance(90_000);
+  assert.equal(fixture.calls.playing.length,frames);assert.equal(fixture.calls.transfer.length,polls);
+  assert.equal(fixture.clock.size,0);
 });
 
 test("a playlist retry followed by a thirty-four-second segment load can finish without a watchdog rebuild", async () => {

@@ -27,7 +27,10 @@ export function broadcastStreamUrl(configuredUrl: unknown, applicationOrigin: st
     if (url.origin === legacyBroadcastOrigin) url = new URL(publicBroadcastOrigin);
     const localApplication = ["http:", "https:"].includes(application.protocol) && ["localhost", "127.0.0.1", "[::1]"].includes(application.hostname);
     if (url.origin !== publicBroadcastOrigin && !(localApplication && localBroadcastOrigins.includes(url.origin))) return null;
-    const path = mobile && url.origin === publicBroadcastOrigin ? "/hls/mobile/stream.m3u8" : "/hls/stream.m3u8";
+    // The original has audio while the lighter rendition is video-only. HLS
+    // clients can pin that codec group and never adapt down from the original.
+    // Use the bounded rendition for every public viewer, including desktops.
+    const path = url.origin === publicBroadcastOrigin && (!localApplication || mobile) ? "/hls/mobile/stream.m3u8" : "/hls/stream.m3u8";
     if (!localApplication) return application.protocol === "https:" ? new URL(path, application.origin).href : null;
     url.pathname = path;
     url.search = "";

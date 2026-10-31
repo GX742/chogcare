@@ -10,7 +10,7 @@ test("public broadcast proxy is loopback-only and exposes only HLS and payment r
   assert.equal([...config.matchAll(/\blisten\s/g)].length, 1);
   assert.deepEqual([...config.matchAll(/^\s*location\s+([^\{]+)\{/gm)].map(match => match[1].trim()), ["= /hls/stream.m3u8", "= /hls/mobile/preview.jpg", "^~ /hls/mobile/", "^~ /hls/", "^~ /api/payments/", "/"]);
   assert.match(config, /location \/ \{ return 404; \}/);
-  assert.deepEqual([...config.matchAll(/proxy_pass\s+([^;]+);/g)].map(match => match[1]), ["http://127.0.0.1:8082", "http://127.0.0.1:8082", "http://127.0.0.1:4174"]);
+  assert.deepEqual([...config.matchAll(/proxy_pass\s+([^;]+);/g)].map(match => match[1]), ["http://127.0.0.1:8082", "http://127.0.0.1:4174"]);
   assert.doesNotMatch(config, /^\s*(?:root|auth_basic_user_file)\s/m);
   assert.deepEqual([...config.matchAll(/^\s*alias\s+([^;]+);/gm)].map(match=>match[1]), ["/var/lib/chogcare-preview/preview.jpg", "/var/lib/chogcare-mobile/"]);
   const mobile=config.slice(config.indexOf("location ^~ /hls/mobile/"),config.indexOf("location ^~ /hls/ {"));
@@ -22,6 +22,38 @@ test("public broadcast proxy is loopback-only and exposes only HLS and payment r
   const paymentRoute=config.slice(config.indexOf("location ^~ /api/payments/"),config.indexOf("location / {"));
   assert.match(paymentRoute,/proxy_set_header Host chogcare\.xyz;/);
   assert.doesNotMatch(paymentRoute,/proxy_set_header Host chogcare\.vercel\.app;/);
+});
+
+test("public master advertises only the bounded mobile rendition and rejects non-read methods", () => {
+  const config = readFileSync(new URL("../ops/owncast/nginx-public.conf", import.meta.url), "utf8");
+  const master = config.slice(config.indexOf("location = /hls/stream.m3u8"), config.indexOf("location = /hls/mobile/preview.jpg"));
+  const body = master.match(/return 200 '([^']+)';/)[1].replaceAll("\\n", "\n");
+  assert.deepEqual(body.trim().split("\n"), [
+    "#EXTM3U",
+    "#EXT-X-VERSION:3",
+    '#EXT-X-STREAM-INF:BANDWIDTH=280000,AVERAGE-BANDWIDTH=200000,RESOLUTION=360x640,FRAME-RATE=15.000,CODECS="avc1.4d401f"',
+    "mobile/stream.m3u8",
+  ]);
+  assert.match(master, /if \(\$request_method !~ \^\(GET\|HEAD\)\$\) \{ return 403; \}/);
+  assert.ok(master.indexOf("return 403;") < master.indexOf("return 200 "));
+  assert.match(master, /default_type "";/);
+  assert.doesNotMatch(master, /proxy_pass|sub_filter|\badd_header\s/);
+});
+
+test("mobile keyframes align with six-second segments and preserve a 72-second recovery window", () => {
+  const unit = readFileSync(new URL("../ops/owncast/chogcare-mobile.service", import.meta.url), "utf8");
+  const command = unit.match(/^ExecStart=(.*)$/m)[1];
+  const option = name => Number(command.match(new RegExp(`(?:^| )-${name} ([0-9]+)(?: |$)`))[1]);
+  const fps = Number(command.match(/-x264-params fps=([0-9]+)\/1(?: |$)/)[1]);
+  const segmentSeconds = option("hls_time");
+  assert.equal(fps, 15);
+  assert.equal(segmentSeconds, 6);
+  assert.equal(option("g") / fps, segmentSeconds);
+  assert.equal(option("keyint_min"), option("g"));
+  assert.equal(option("sc_threshold"), 0);
+  assert.equal(option("hls_list_size") * segmentSeconds, 72);
+  assert.match(command, /framestep=2 /);
+  assert.match(command, /-fps_mode vfr /);
 });
 
 test("security headers cover rejected public paths without location inheritance gaps", () => {

@@ -1,6 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { createLiveDriftSync, createLiveLoadState, createLiveResumeSync, createLiveRetryBudget, DEFAULT_LIVE_SEGMENT_SECONDS, MOBILE_LIVE_SEGMENT_SECONDS, latestLiveRange, liveHlsConfig, livePlaybackTiming, livePlaybackStrategy, liveSegmentSeconds, portraitFrameAspect, recoverLiveNetwork, safeLiveResumeTarget } from "../src/live-player.ts";
+import Hls from "hls.js";
+import { createLiveDriftSync, createLiveLoadState, createLiveResumeSync, createLiveRetryBudget, DEFAULT_LIVE_SEGMENT_SECONDS, MOBILE_LIVE_SEGMENT_SECONDS, latestLiveRange, liveBufferTiming, liveHlsConfig, livePlaylistKey, livePlaybackTiming, livePlaybackStrategy, liveSegmentSeconds, portraitFrameAspect, recoverLiveNetwork, safeLiveResumeTarget } from "../src/live-player.ts";
 
 test("portrait camera frame uses the actual ratio without scaling/cropping landscape fallback footage", () => {
   assert.equal(portraitFrameAspect(1080, 1920), 9 / 16);
@@ -40,6 +41,7 @@ test("live HLS uses adaptive segment-count latency with a finite recovery thresh
   assert.equal(config.backBufferLength, 4);
   assert.equal(config.lowLatencyMode, true);
   assert.equal(config.enableWorker, true);
+  assert.equal(config.liveMaxUnchangedPlaylistRefresh, 6, "Repeated HTTP-200 playlists cannot remain silently stale forever");
   for (const property of ["liveSyncDuration", "liveMaxLatencyDuration", "startLevel", "loadLevel", "currentLevel", "capLevelToPlayerSize"]) assert.equal(Object.hasOwn(config, property), false, property);
   assert.equal(config.liveSyncDurationCount * 3, 6, "Three-second segments retain a bounded client target");
   assert.equal(liveHlsConfig(1).liveSyncDurationCount, 3, "Older one-second segments retain three seconds for network jitter");
@@ -53,6 +55,84 @@ test("native HLS resumes inside the rendition's bounded live window", () => {
   assert.equal(safeLiveResumeTarget(20, ranges([0, 100]), 1), 97);
   assert.equal(safeLiveResumeTarget(0, ranges([80, 100])), 94);
   assert.equal(safeLiveResumeTarget(1, ranges([10, 12])), 10, "A short window clamps to its safe start");
+});
+
+test("six-second rendition updates both the live target and forward buffer without rebuilding the loader", () => {
+  const config=liveHlsConfig(3), loader={config,loading:true};
+  Object.assign(loader.config,liveBufferTiming(6));
+  assert.equal(loader.loading,true);
+  assert.equal(config.liveSyncDurationCount,3);assert.equal(config.liveMaxLatencyDurationCount,6);
+  assert.equal(config.maxBufferLength,24);assert.equal(config.maxMaxBufferLength,30);
+  assert.equal(config.maxBufferLength,config.liveSyncDurationCount*6+6);
+  assert.equal(liveHlsConfig(6).maxBufferLength,24);
+});
+
+test("relay load budgets are finite, cover both transports and clone the library's retry policies", () => {
+  const defaults=Hls.DefaultConfig,config=liveHlsConfig(6,defaults);
+  assert.equal(liveHlsConfig().playlistLoadPolicy,undefined,"The lightweight helper does not eagerly import the HLS runtime");
+  for(const name of ["manifestLoadPolicy","playlistLoadPolicy","fragLoadPolicy"]){
+    const before=defaults[name],copy=config[name];
+    assert.notEqual(copy,before);assert.notEqual(copy.default,before.default);
+    assert.equal(copy.default.maxTimeToFirstByteMs,50_000);
+    assert.ok(Number.isFinite(copy.default.maxLoadTimeMs));
+    assert.ok(copy.default.maxLoadTimeMs>=(name==="fragLoadPolicy"?120_000:60_000));
+    for(const retry of ["timeoutRetry","errorRetry"]){
+      assert.deepEqual(copy.default[retry],before.default[retry]);
+      if(before.default[retry]!==null){
+        assert.notEqual(copy.default[retry],before.default[retry]);
+        const count=before.default[retry].maxNumRetry;
+        copy.default[retry].maxNumRetry+=1;
+        assert.equal(before.default[retry].maxNumRetry,count,"One player cannot change another player's retry budget");
+      }
+    }
+  }
+  const shouldRetry=()=>true;
+  const custom={...defaults,playlistLoadPolicy:{default:{...defaults.playlistLoadPolicy.default,errorRetry:{...defaults.playlistLoadPolicy.default.errorRetry,shouldRetry}}}};
+  assert.equal(liveHlsConfig(6,custom).playlistLoadPolicy.default.errorRetry.shouldRetry,shouldRetry);
+});
+
+test("the real HLS XHR loader keeps one request alive through the relay's complete fallback window", t => {
+  const oldSelf=globalThis.self;
+  t.after(()=>{if(oldSelf===undefined)delete globalThis.self;else globalThis.self=oldSelf;});
+  const config=liveHlsConfig(6,Hls.DefaultConfig);
+  for(const name of ["manifestLoadPolicy","playlistLoadPolicy","fragLoadPolicy"]){
+    let now=1,sequence=0,xhr,success=0,timeouts=0;
+    const timers=new Map();
+    class TestXHR{
+      readyState=0;status=0;aborted=false;responseURL="https://example.invalid/hls/synthetic.m3u8";responseText="#EXTM3U\n";
+      constructor(){xhr=this;}
+      open(){this.readyState=1;}
+      send(){}
+      abort(){this.aborted=true;}
+      setRequestHeader(){}
+    }
+    globalThis.self={XMLHttpRequest:TestXHR,performance:{now:()=>now},
+      setTimeout(callback,delay){const id=++sequence;timers.set(id,{callback,at:now+delay});return id;},
+      clearTimeout(id){timers.delete(id);},
+    };
+    const loader=new Hls.DefaultConfig.loader(Hls.DefaultConfig);
+    loader.load({url:"https://example.invalid/hls/synthetic.m3u8",responseType:"text",type:"level"},
+      {loadPolicy:config[name].default,timeout:0,maxRetry:0,retryDelay:0,maxRetryDelay:0},
+      {onSuccess(){success++;},onTimeout(){timeouts++;},onError(){assert.fail("Synthetic successful fallback cannot fail");}});
+    now+=45_000;
+    for(const [id,timer]of timers){if(timer.at<=now){timers.delete(id);timer.callback();}}
+    assert.equal(xhr.aborted,false,`${name} cannot abort at ten seconds before the fifteen-second primary timeout`);
+    assert.equal(loader.stats.retry,0);assert.equal(timeouts,0);assert.equal(success,0);
+    xhr.readyState=2;xhr.onreadystatechange();
+    now+=1000;xhr.status=200;xhr.readyState=4;xhr.onreadystatechange();
+    assert.equal(success,1);assert.equal(timeouts,0);assert.equal(loader.stats.retry,0);assert.equal(timers.size,0);
+    loader.destroy();
+  }
+});
+
+test("playlist freshness identifies repeated 200 responses and producer timestamp/sequence restarts", () => {
+  const details={endSN:50,lastPartSn:50,lastPartIndex:-1,fragments:[{cc:0,url:"https://example.invalid/stream-50.ts"}]};
+  const before=livePlaylistKey(details);
+  assert.equal(livePlaylistKey(structuredClone(details)),before,"Reloading the same body is not producer progress");
+  assert.notEqual(livePlaylistKey({...details,endSN:51}),before);
+  assert.notEqual(livePlaylistKey({...details,endSN:0,fragments:[{cc:1,url:"https://example.invalid/restarted-0.ts"}]}),before);
+  assert.notEqual(livePlaylistKey({...details,fragments:[{cc:0,url:"https://example.invalid/restarted-50.ts"}]}),before);
+  assert.equal(livePlaylistKey({...details,fragments:[]}),null);
 });
 
 test("three-second delivery keeps a six-second client target with one extra segment of headroom", () => {

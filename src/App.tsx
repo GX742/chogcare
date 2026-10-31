@@ -17,9 +17,10 @@ import Leaderboard from "./Leaderboard";
 import SupportDialog from "./SupportDialog";
 import BroadcastPreview from "./BroadcastPreview";
 import type { SupportContext } from "./support-model";
-import { createLiveDriftSync, createLiveLoadState, createLiveResumeSync, liveHlsConfig, livePlaybackTiming, livePlaybackStrategy, liveSegmentSeconds, portraitFrameAspect, recoverLiveNetwork, DEFAULT_LIVE_SEGMENT_SECONDS, MOBILE_LIVE_SEGMENT_SECONDS, type LiveLoadState } from "./live-player";
+import { createLiveDriftSync, createLiveLoadState, createLiveResumeSync, liveBufferTiming, liveHlsConfig, livePlaylistKey, livePlaybackStrategy, liveSegmentSeconds, portraitFrameAspect, recoverLiveNetwork, DEFAULT_LIVE_SEGMENT_SECONDS, MOBILE_LIVE_SEGMENT_SECONDS, type LiveLoadState } from "./live-player";
 import { createLivePlaybackRecovery } from "./live-recovery";
 import { createLivePlaybackStatus } from "./live-status";
+import { createLiveViewportPresence } from "./live-viewport";
 import { broadcastPreviewUrl, broadcastStreamUrl } from "./broadcast-source";
 
 import "./station-redesign.css";
@@ -194,15 +195,19 @@ function NativeLivePlayer({ src, onReady, onWaiting, onAspect }: { src: string; 
     const element = videoRef.current;
     if (!element) return;
     const video: HTMLVideoElement = element;
-    let cancelled = false, inViewport = true, generation = 0;
+    let cancelled = false, inViewport = false, generation = 0;
     let segmentSeconds = src.endsWith("/hls/mobile/stream.m3u8") ? MOBILE_LIVE_SEGMENT_SECONDS : DEFAULT_LIVE_SEGMENT_SECONDS;
     let hls: HlsType | null = null, nativeActive = false;
+    let sourceStale = false, frameCallback: number | null = null;
+    let pendingFragment: { readonly stats: { loaded: number } } | null = null;
+    let pendingPlaylist: { level: number; url: string; stats: { loaded: 0 } } | null = null;
+    const frameDriven = typeof video.requestVideoFrameCallback === "function";
     const nativeHlsCapable = Boolean(video.canPlayType("application/vnd.apple.mpegurl"));
     const managedMediaSource = "ManagedMediaSource" in window;
     video.defaultMuted = true;
     video.muted = true;
     video.playsInline = true;
-    setLoadState("loading"); setHasFrame(false); setPreviewReady(false); setInView(true);
+    setLoadState("loading"); setHasFrame(false); setPreviewReady(false); setInView(false);
     callbacks.current.onWaiting();
     const active = () => {
       if (cancelled || document.hidden || !inViewport || navigator.onLine === false) return false;
@@ -224,6 +229,9 @@ function NativeLivePlayer({ src, onReady, onWaiting, onAspect }: { src: string; 
     };
     const playback = createLivePlaybackRecovery({
       media: video, active, monitor: loadMonitor,
+      frameDriven,
+      transferProgress: () => pendingFragment ? { request: pendingFragment.stats, loaded: pendingFragment.stats.loaded }
+        : pendingPlaylist ? { request: pendingPlaylist.stats, loaded: 0 } : null,
       resumeLoading: (catchUp = false) => {
         // Restarting an active loader aborts its in-flight fragment request.
         // A scroll return or watchdog nudge must leave a healthy load alone.
@@ -237,14 +245,27 @@ function NativeLivePlayer({ src, onReady, onWaiting, onAspect }: { src: string; 
         if (cancelled) return;
         updateAspect(); setHasFrame(true);
         if (nativeActive) driftSync.start();
-        liveStatus.playing();
+        if (sourceStale) liveStatus.waiting(active()); else liveStatus.playing();
       },
       onWaiting: () => { if (!cancelled) liveStatus.waiting(active()); },
     });
-    const startPlayback = () => playback.play();
-    playAction.current = () => playback.play(true);
+    const stopFrames = () => { if (frameCallback !== null) video.cancelVideoFrameCallback(frameCallback); frameCallback = null; };
+    const observeFrames = () => {
+      if (!frameDriven || frameCallback !== null || !active()) return;
+      const current = generation;
+      const token = video.requestVideoFrameCallback((_time, metadata) => {
+        if (frameCallback !== token) return;
+        frameCallback = null;
+        if (cancelled || current !== generation) return;
+        playback.frame(metadata.mediaTime); observeFrames();
+      });
+      frameCallback = token;
+    };
+    const startPlayback = () => { observeFrames(); playback.play(); };
+    const resumePlayback = () => { observeFrames(); playback.resume(); };
+    playAction.current = () => { observeFrames(); playback.play(true); };
     const waiting = () => playback.waiting();
-    const playing = () => playback.playing();
+    const playing = () => { observeFrames(); playback.playing(); };
     const progress = () => playback.progress();
     const pausedPlayback = () => playback.paused();
     const endedPlayback = () => playback.recover(undefined, true);
@@ -253,16 +274,28 @@ function NativeLivePlayer({ src, onReady, onWaiting, onAspect }: { src: string; 
       resumeSync.update();
       if (video.paused) startPlayback();
     };
-    const suspendPlayback = () => { playback.suspend(); liveStatus.suspend(); };
-    const visibility = () => { if (document.hidden) suspendPlayback(); else playback.resume(); };
-    const pageShow = (event: PageTransitionEvent) => { if (event.persisted) playback.resume(); };
-    const online = () => playback.resume();
-    const offline = () => { suspendPlayback(); liveStatus.unavailable(); };
+    const suspendPlayback = () => { stopFrames(); playback.suspend(); liveStatus.suspend(); };
+    const presence = createLiveViewportPresence({
+      read: () => {
+        if (cancelled || document.hidden || navigator.onLine === false) return false;
+        const box = video.getBoundingClientRect();
+        return box.width > 0 && box.height > 0 && box.bottom > 0 && box.right > 0 && box.top < window.innerHeight && box.left < window.innerWidth;
+      },
+      onChange: visible => {
+        inViewport = visible; setInView(visible);
+        if (visible) resumePlayback(); else suspendPlayback();
+      },
+    });
+    const invalidatePresence = () => presence.invalidate();
+    const visibility = () => { if (document.hidden) presence.suspend(); else presence.invalidate(); };
+    const pageShow = (event: PageTransitionEvent) => { if (event.persisted) { presence.invalidate(); if (active()) resumePlayback(); } };
+    const online = () => presence.invalidate();
+    const offline = () => { presence.suspend(); liveStatus.unavailable(); };
     const nativeError = () => playback.recover(undefined, true);
 
     function startNative() {
       if (cancelled || !nativeHlsCapable) return;
-      generation++; playback.resetSource();
+      generation++; stopFrames(); pendingFragment = null; pendingPlaylist = null; sourceStale = false; playback.resetSource();
       setHasFrame(false); setPreviewReady(false);
       hls?.destroy(); hls = null; nativeActive = true;
       video.src = src; video.load(); waiting(); startPlayback();
@@ -270,7 +303,7 @@ function NativeLivePlayer({ src, onReady, onWaiting, onAspect }: { src: string; 
     function installHls() {
       if (cancelled) return;
       const current = ++generation;
-      playback.resetSource();
+      stopFrames(); pendingFragment = null; pendingPlaylist = null; sourceStale = false; playback.resetSource();
       setHasFrame(false); setPreviewReady(false);
       hls?.destroy(); hls = null; nativeActive = false;
       video.removeAttribute("src"); video.load(); waiting();
@@ -278,19 +311,52 @@ function NativeLivePlayer({ src, onReady, onWaiting, onAspect }: { src: string; 
         if (cancelled || current !== generation) return;
         const strategy = livePlaybackStrategy(Hls.isSupported(), nativeHlsCapable, managedMediaSource);
         if (strategy !== "hls") { if (strategy === "native") startNative(); else playback.unavailable(); return; }
-        const engine = new Hls(liveHlsConfig(segmentSeconds));
+        const engine = new Hls(liveHlsConfig(segmentSeconds, Hls.DefaultConfig));
+        let previousPlaylist: string | null = null;
         hls = engine;
         engine.on(Hls.Events.MANIFEST_PARSED, () => { if (hls === engine && !cancelled) startPlayback(); });
+        engine.on(Hls.Events.LEVEL_LOADING, (_event, data) => {
+          if (hls !== engine || cancelled) return;
+          // Playlist loading exposes no live byte counter. Its stable zero-byte
+          // identity grants only the finite first-byte window, never progress.
+          pendingPlaylist = { level: data.level, url: data.url, stats: { loaded: 0 } };
+        });
+        engine.on(Hls.Events.LEVEL_LOADED, (_event, data) => {
+          if (hls !== engine || cancelled) return;
+          if (pendingPlaylist?.level === data.level && (!data.context?.url || data.context.url === pendingPlaylist.url)) pendingPlaylist = null;
+        });
         engine.on(Hls.Events.LEVEL_UPDATED, (_event, data) => {
           if (hls !== engine || cancelled) return;
           segmentSeconds = liveSegmentSeconds(data.details.targetduration);
-          const timing = livePlaybackTiming(segmentSeconds);
-          engine.config.liveSyncDurationCount = timing.liveSyncDurationCount;
-          engine.config.liveMaxLatencyDurationCount = timing.liveMaxLatencyDurationCount;
+          Object.assign(engine.config, liveBufferTiming(segmentSeconds));
+          const key = livePlaylistKey(data.details);
+          if (key !== null && key !== previousPlaylist) {
+            previousPlaylist = key; sourceStale = !data.details.live;
+            if (!sourceStale) playback.playlistAdvanced();
+          }
+          if (!data.details.live) { sourceStale = true; playback.playlistStalled(); liveStatus.waiting(active()); }
           if (active()) resumeSync.update();
         });
+        engine.on(Hls.Events.FRAG_LOADING, (_event, data) => { if (hls === engine && !cancelled) pendingFragment = data.frag; });
+        engine.on(Hls.Events.FRAG_LOADED, (_event, data) => {
+          if (hls !== engine || cancelled) return;
+          playback.receivedData(data.frag.stats.loaded);
+          if (pendingFragment === data.frag) pendingFragment = null;
+        });
         engine.on(Hls.Events.ERROR, (_event, data) => {
-          if (!data.fatal || hls !== engine || cancelled) return;
+          if (hls !== engine || cancelled) return;
+          if ((data.details === "fragLoadError" || data.details === "fragLoadTimeOut") && pendingFragment === data.frag) pendingFragment = null;
+          if (data.details === "levelLoadError" || data.details === "levelLoadTimeOut") {
+            const level = data.context?.level ?? data.level, url = data.context?.url ?? data.url;
+            if (pendingPlaylist && (level === undefined || pendingPlaylist.level === level) && (!url || pendingPlaylist.url === url)) pendingPlaylist = null;
+          }
+          // hls.js deliberately leaves this error nonfatal, even with one
+          // rendition. An unchanged HTTP-200 playlist still needs recovery.
+          if (data.details === "playlistUnchangedError") {
+            sourceStale = true; liveStatus.waiting(active()); playback.playlistStalled(); return;
+          }
+          if (!data.fatal) return;
+          pendingFragment = null; pendingPlaylist = null;
           if (data.type === Hls.ErrorTypes.NETWORK_ERROR) playback.recover(() => {
             if (hls === engine) { recoverLiveNetwork(engine, src, data.details); startPlayback(); }
           }, true);
@@ -321,24 +387,19 @@ function NativeLivePlayer({ src, onReady, onWaiting, onAspect }: { src: string; 
     window.addEventListener("pageshow", pageShow);
     window.addEventListener("online", online);
     window.addEventListener("offline", offline);
-    const observer = typeof IntersectionObserver === "function" ? new IntersectionObserver(entries => {
-      const entry = entries.find(item => item.target === video);
-      if (!entry || cancelled) return;
-      const visible = entry.isIntersecting && entry.intersectionRatio > 0;
-      if (visible === inViewport) return;
-      inViewport = visible;
-      setInView(inViewport);
-      if (inViewport) playback.resume(); else suspendPlayback();
-    }, { threshold: [0, 0.01] }) : null;
+    window.addEventListener("scroll", invalidatePresence, { capture: true, passive: true });
+    window.addEventListener("resize", invalidatePresence, { passive: true });
+    const observer = typeof IntersectionObserver === "function" ? new IntersectionObserver(invalidatePresence, { threshold: [0, 0.01] }) : null;
     observer?.observe(video);
+    presence.invalidate();
 
     // Safari's native player starts without downloading the MSE engine.
     if (livePlaybackStrategy(typeof window.MediaSource === "function" || managedMediaSource, nativeHlsCapable, managedMediaSource) === "native") startNative();
     else installHls();
 
     return () => {
-      cancelled = true; generation++; playAction.current = null;
-      observer?.disconnect(); playback.dispose(); loadMonitor.dispose(); liveStatus.dispose();
+      cancelled = true; generation++; playAction.current = null; stopFrames(); pendingFragment = null; pendingPlaylist = null;
+      observer?.disconnect(); presence.dispose(); playback.dispose(); loadMonitor.dispose(); liveStatus.dispose();
       resumeSync.dispose(); driftSync.dispose();
       video.removeEventListener("loadedmetadata", metadata);
       video.removeEventListener("loadeddata", updateAspect);
@@ -355,6 +416,8 @@ function NativeLivePlayer({ src, onReady, onWaiting, onAspect }: { src: string; 
       window.removeEventListener("pageshow", pageShow);
       window.removeEventListener("online", online);
       window.removeEventListener("offline", offline);
+      window.removeEventListener("scroll", invalidatePresence, true);
+      window.removeEventListener("resize", invalidatePresence);
       hls?.destroy(); video.pause(); video.removeAttribute("src"); video.load();
     };
   }, [src, attempt]);

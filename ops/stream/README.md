@@ -10,9 +10,10 @@ offline image as LIVE.
 This profile is prepared for MediaMTX **1.21.3**. It remuxes H.264/AAC and does not
 transcode. OBS must produce a one-second keyframe interval, no B frames, and a
 bitrate the source upload can sustain. One-second segments and 200 ms parts set
-the packaging target; source GOP, player buffering and network throughput still
-determine measured end-to-end delay. The seven-segment window does not promise
-seven seconds of viewing latency.
+the internal packaging target; public viewers receive complete fMP4 segments.
+Source GOP, player buffering and network throughput still determine measured
+end-to-end delay. The seven-segment window does not promise seven seconds of
+viewing latency.
 
 ## Configuration and credentials
 
@@ -68,13 +69,23 @@ provides just the new location for a reviewed runtime adapter when the existing
 installation has additional cache directives. Do not replace such a deployed
 configuration with a fresh generic renderer and silently discard its settings.
 
-The new route accepts GET/HEAD for direct-child media filenames, preserves
-LL-HLS query arguments, and uses one fixed loopback upstream. It has no fallback
+The new route accepts GET/HEAD for direct-child media filenames, clears upstream
+query arguments, and uses one fixed loopback upstream. It has no fallback
 to old video. It disables caching and proxy buffering, including CDN caching,
 so a restarted muxer cannot reuse an old initialization file. All security
 headers are repeated where local cache headers replace nginx inheritance.
 HEAD is sent upstream as GET because MediaMTX's HLS handler implements GET;
 nginx suppresses the response body for the client.
+
+The public boundary comments out the five LL-HLS control/part tags in MPEGURL
+responses and always requests full playlists. Complete segments, initialization
+files, master and audio playlists keep their original URIs and media bytes.
+This avoids native Safari's permanent playback failure when MediaMTX changes
+its advertised part timing, reported in upstream
+[issue 6237](https://github.com/bluenviron/mediamtx/issues/6237). MediaMTX's
+loopback playlists remain LL-HLS for origin health checks. No publisher restart,
+transcoding or credential change is needed for this projection; actual iPhone
+playback still needs verification after a reviewed rollout.
 
 ## Rollout and rollback
 
@@ -90,7 +101,8 @@ nginx suppresses the response body for the client.
    files before the additive nginx change; require the expected old hashes.
 3. Run an isolated synthetic publisher first. Check valid and invalid auth,
    rejection of other paths/plaintext protocols, advancing LL-HLS playlists,
-   init files/parts, query-preserving proxying and source disconnect behavior.
+   init files/parts, complete public playlists with queries cleared, unchanged
+   media bytes and source disconnect behavior.
 4. Start the new server origin in parallel, leaving the old pipeline active.
    Validate nginx configuration before a graceful reload. Verify the new path
    through the actual public site, decoded moving frames and measured capture

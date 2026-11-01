@@ -115,8 +115,9 @@ test("bounded private descriptors reject zero, excessive bytes and multiple link
 test("a pathname replaced after descriptor acquisition is rejected before any payload read", async () => {
   const directory = await mkdtemp(join(tmpdir(), "publisher-file-")), path = join(directory, "synthetic.json"); let file;
   try {
-    await writeFile(path, "original-synthetic"); file = await open(path, "r");
-    await rename(path, join(directory, "original-held.json")); await writeFile(path, "replacement-synthetic");
+    file = await open(path, "wx+", 0o600);
+    const payload = Buffer.from("original-synthetic"); await file.write(payload, 0, payload.length, 0);
+    await rename(path, join(directory, "original-held.json")); await writeFile(path, "replacement-synthetic", { flag: "wx", mode: 0o600 });
     await assert.rejects(() => readBoundedDescriptor(file, path));
     const first = Buffer.alloc(1); await file.read(first, 0, 1, null); assert.equal(first.toString(), "o", "rejection must precede reading the original descriptor");
   } finally { await file?.close(); await cleanupFixture(directory); }

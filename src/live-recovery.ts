@@ -15,7 +15,7 @@ type Media = {
 // instead of turning a temporary suspension into a permanent Retry screen.
 export function createLivePlaybackRecovery({
   media, active, monitor, resumeLoading, reconnect, onPlaying, onWaiting,
-  frameDriven = false, transferProgress = () => null,
+  frameDriven = false, transferProgress = () => null, onSuspend = () => {},
   transport = "relay",
   now = Date.now, schedule = setTimeout, cancel = clearTimeout,
 }: {
@@ -26,6 +26,7 @@ export function createLivePlaybackRecovery({
   reconnect: () => void;
   onPlaying: () => void;
   onWaiting: () => void;
+  onSuspend?: () => void;
   frameDriven?: boolean;
   transport?: LiveTransport;
   transferProgress?: () => { request: object; loaded: number } | null;
@@ -47,8 +48,12 @@ export function createLivePlaybackRecovery({
   const clearHealth = () => { if (healthTimer !== null) cancel(healthTimer); healthTimer = null; };
   const clearRecovery = () => { if (recoveryTimer !== null) cancel(recoveryTimer); recoveryTimer = null; };
   const suspend = () => {
+    const notify = !suspended;
     suspended = true;
     invalidatePlay(); clearHealth(); clearRecovery(); monitor.suspend(); onWaiting();
+    // Presence may still be cached as visible when a health tick first notices
+    // inactive geometry. Notify once so it can reconcile without recursive work.
+    if (notify) onSuspend();
   };
   const waiting = () => {
     if (disposed) return;

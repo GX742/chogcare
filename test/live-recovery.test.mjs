@@ -2,6 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { createLivePlaybackRecovery } from "../src/live-recovery.ts";
 import { createLiveLoadState } from "../src/live-player.ts";
+import { createLiveViewportPresence } from "../src/live-viewport.ts";
 
 const flushPromises = async () => { await Promise.resolve(); await Promise.resolve(); await Promise.resolve(); };
 
@@ -79,6 +80,124 @@ function playerFixture({frameDriven=false,transport="relay"}={}) {
     dispose() { recovery.dispose(); monitor.dispose(); },
   };
 }
+
+function viewportPlayerFixture() {
+  const clock = fakeClock(), frames = new Map();
+  const calls = { resume: [], suspend: [], reconnect: [], presence: [], play: [] };
+  let geometry = true, observable = true, inViewport = false, disposed = false, nextFrame = 0;
+  const media = {
+    currentTime: 10, paused: true, ended: false, seeking: false, readyState: 4,
+    play() { calls.play.push(clock.now()); media.paused = false; return Promise.resolve(); },
+  };
+  const monitor = createLiveLoadState({ onChange() {}, schedule: clock.schedule, cancel: clock.cancel });
+  const recovery = createLivePlaybackRecovery({
+    media, active: () => !disposed && observable && geometry && inViewport, monitor,
+    frameDriven: true, transport: "server", resumeLoading() {},
+    reconnect() { calls.reconnect.push(clock.now()); }, onPlaying() {}, onWaiting() {},
+    onSuspend() {
+      calls.suspend.push(clock.now());
+      if (disposed || !inViewport) return;
+      presence.suspend();
+      presence.invalidate();
+    },
+    now: clock.now, schedule: clock.schedule, cancel: clock.cancel,
+  });
+  const presence = createLiveViewportPresence({
+    read: () => !disposed && observable && geometry,
+    onChange(visible) {
+      inViewport = visible; calls.presence.push(visible);
+      if (visible) { calls.resume.push(clock.now()); recovery.resume(); }
+      else recovery.suspend();
+    },
+    schedule(callback) { const frame = ++nextFrame; frames.set(frame, callback); return frame; },
+    cancel(frame) { frames.delete(frame); },
+  });
+  const flushPresence = async () => {
+    const queued = [...frames.values()]; frames.clear(); queued.forEach(callback => callback());
+    await flushPromises();
+  };
+  return {
+    clock, calls, media, monitor, recovery, presence, flushPresence,
+    setGeometry(value) { geometry = value; },
+    setObservable(value) { observable = value; },
+    get pendingFrames() { return frames.size; },
+    async start() {
+      presence.invalidate(); recovery.waiting(); await flushPresence();
+      media.currentTime = 11; recovery.frame(11);
+    },
+    dispose() { disposed = true; presence.dispose(); recovery.dispose(); monitor.dispose(); },
+  };
+}
+
+test("an inactive health tick reconciles cached visibility and resumes after a transient geometry gap", async () => {
+  const fixture = viewportPlayerFixture();
+  await fixture.start();
+  fixture.setGeometry(false); fixture.presence.invalidate();
+  await fixture.clock.advance(1000);
+  assert.deepEqual(fixture.calls.presence, [true, false]);
+  assert.equal(fixture.clock.size, 0);
+  assert.equal(fixture.pendingFrames, 1, "The discarded geometry sample is replaced with one fresh sample");
+  assert.deepEqual(fixture.calls.suspend, [0, 1000], "The nested viewport suspension notifies only once");
+  fixture.setGeometry(true); fixture.media.readyState = 2;
+  await fixture.flushPresence();
+  assert.deepEqual(fixture.calls.presence, [true, false, true]);
+  assert.deepEqual(fixture.calls.resume, [0, 1000]);
+  await fixture.clock.advance(7000);
+  assert.deepEqual(fixture.calls.reconnect, [8000], "A frozen returned video reconnects without a click or another observer event");
+  assert.ok(fixture.clock.maximumPending <= 3);
+  fixture.dispose();
+});
+
+test("startup suspension preserves the first viewport sample without an observer or scroll event", async () => {
+  const fixture = viewportPlayerFixture();
+  fixture.presence.invalidate(); fixture.recovery.waiting();
+  assert.equal(fixture.pendingFrames, 1);
+  await fixture.flushPresence();
+  assert.deepEqual(fixture.calls.resume, [0]);
+  assert.equal(fixture.calls.play.length, 1);
+  assert.ok(fixture.clock.size > 0);
+  fixture.media.currentTime = 11; fixture.recovery.frame(11);
+  assert.equal(fixture.monitor.state, "playing");
+  fixture.dispose();
+});
+
+test("unchanged visible samples do not reset a stalled player's recovery deadline", async () => {
+  const fixture = viewportPlayerFixture();
+  await fixture.start(); fixture.media.readyState = 2;
+  for (let second = 0; second < 7; second++) {
+    fixture.presence.invalidate(); await fixture.flushPresence(); await fixture.clock.advance(1000);
+  }
+  assert.deepEqual(fixture.calls.resume, [0]);
+  assert.deepEqual(fixture.calls.reconnect, [7000]);
+  fixture.dispose();
+});
+
+test("explicit hidden or offline suspension stays idle overnight and resumes once", async () => {
+  const fixture = viewportPlayerFixture();
+  await fixture.start(); fixture.setObservable(false); fixture.presence.suspend();
+  for (let index = 0; index < 20; index++) { fixture.recovery.waiting(); fixture.recovery.paused(); }
+  assert.equal(fixture.pendingFrames, 0);
+  await fixture.clock.advance(9 * 60 * 60 * 1000);
+  assert.equal(fixture.clock.size, 0);
+  assert.deepEqual(fixture.calls.reconnect, []);
+  fixture.setObservable(true); fixture.media.readyState = 2; fixture.presence.invalidate();
+  await fixture.flushPresence();
+  assert.equal(fixture.calls.resume.length, 2);
+  await fixture.clock.advance(7000);
+  assert.equal(fixture.calls.reconnect.length, 1);
+  fixture.dispose();
+});
+
+test("disposal cancels geometry reconciliation and cannot notify or resume a removed player", async () => {
+  const fixture = viewportPlayerFixture();
+  await fixture.start(); fixture.setGeometry(false); await fixture.clock.advance(1000);
+  assert.equal(fixture.pendingFrames, 1);
+  fixture.dispose(); const snapshot = structuredClone(fixture.calls);
+  fixture.setGeometry(true); fixture.presence.invalidate(); fixture.recovery.suspend(); fixture.recovery.waiting();
+  await fixture.flushPresence(); await fixture.clock.advance(60000);
+  assert.equal(fixture.pendingFrames, 0); assert.equal(fixture.clock.size, 0);
+  assert.deepEqual(fixture.calls, snapshot);
+});
 
 test("server delivery rebuilds a frozen player after six seconds instead of the relay's long failover window", async () => {
   const fixture = playerFixture({ frameDriven: true, transport: "server" });

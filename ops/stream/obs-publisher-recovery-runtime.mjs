@@ -57,18 +57,23 @@ export async function verifyPrivateAcl(path, directory, command = exec) {
   need(result.stdout === "true");
 }
 
-export async function readBoundedFile(path, maximum = 32768) {
+export async function readBoundedDescriptor(file, path, maximum = 32768) {
+  need(Number.isSafeInteger(maximum) && maximum > 0 && maximum <= 131072);
+  const before = await file.stat({ bigint: true });
+  need(before.isFile() && before.nlink === 1n && before.size > 0n && before.size <= BigInt(maximum));
   const namedBefore = await lstat(path, { bigint: true });
-  need(namedBefore.isFile() && !namedBefore.isSymbolicLink() && namedBefore.nlink === 1n && namedBefore.size > 0n && namedBefore.size <= BigInt(maximum));
+  need(namedBefore.isFile() && !namedBefore.isSymbolicLink() && identity(before) === identity(namedBefore));
+  const bytes = Buffer.alloc(maximum + 1); let count = 0;
+  while (count < bytes.length) { const result = await file.read(bytes, count, bytes.length - count, null); if (!result.bytesRead) break; count += result.bytesRead; }
+  const after = await file.stat({ bigint: true }), named = await lstat(path, { bigint: true });
+  need(count <= maximum && BigInt(count) === before.size && named.isFile() && !named.isSymbolicLink() && identity(before) === identity(after) && identity(before) === identity(named));
+  return { bytes: bytes.subarray(0, count), lease: identity(before), metadata: before };
+}
+
+export async function readBoundedFile(path, maximum = 32768) {
   const file = await open(path, constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0) | constants.O_NONBLOCK);
-  try {
-    const before = await file.stat({ bigint: true }); need(identity(before) === identity(namedBefore));
-    const bytes = Buffer.alloc(maximum + 1); let count = 0;
-    while (count < bytes.length) { const result = await file.read(bytes, count, bytes.length - count, null); if (!result.bytesRead) break; count += result.bytesRead; }
-    const after = await file.stat({ bigint: true }), named = await lstat(path, { bigint: true });
-    need(count <= maximum && BigInt(count) === before.size && !named.isSymbolicLink() && identity(before) === identity(after) && identity(before) === identity(named));
-    return { bytes: bytes.subarray(0, count), lease: identity(before), metadata: before };
-  } finally { await file.close(); }
+  try { return await readBoundedDescriptor(file, path, maximum); }
+  finally { await file.close(); }
 }
 
 /** The caller creates the owner+SYSTEM directory before any private bytes exist. */
@@ -85,10 +90,11 @@ export function createPrivateStore(directory, { prove = verifyPrivateAcl, flush 
   const path = name => { need(names.has(name)); return join(directory, name); };
   const read = async name => {
     try {
-      const before = await lstat(path(name), { bigint: true });
-      if (trusted.get(name) !== inode(before)) await prove(path(name), false);
       const result = await readBoundedFile(path(name), name === "binding.json" ? 16384 : 8192);
-      need(inode(before) === inode(result.metadata)); trusted.set(name, inode(result.metadata)); return result;
+      if (trusted.get(name) !== inode(result.metadata)) await prove(path(name), false);
+      const named = await lstat(path(name), { bigint: true });
+      need(!named.isSymbolicLink() && identity(named) === identity(result.metadata));
+      trusted.set(name, inode(result.metadata)); return result;
     }
     catch (error) { if (error.code === "ENOENT") return null; throw error; }
   };
@@ -162,9 +168,17 @@ async function moduleHashes() {
   return result;
 }
 
-export async function readObsConfiguration(path = join(process.env.APPDATA ?? "", "obs-studio/plugin_config/obs-websocket/config.json")) {
-  need(process.platform === "win32" && win32.isAbsolute(path));
-  const { bytes } = await readBoundedFile(path, 65536);
+export async function obsConfigurationPath(command = exec) {
+  const script = String.raw`$ErrorActionPreference='Stop';[Console]::Out.Write([Environment]::GetFolderPath('ApplicationData'))`;
+  const result = await command(powershell, ["-NoProfile", "-NonInteractive", "-EncodedCommand", Buffer.from(script, "utf16le").toString("base64")], { timeout: 5000, maxBuffer: 8192, windowsHide: true, shell: false });
+  const directory = result.stdout;
+  need(typeof directory === "string" && directory.length > 0 && directory.length <= 2048 && win32.isAbsolute(directory) && /^[A-Za-z]:\\/.test(directory) && !directory.startsWith("\\\\") && directory === win32.normalize(directory) && !/[\x00-\x1f]/.test(directory));
+  return win32.join(directory, "obs-studio", "plugin_config", "obs-websocket", "config.json");
+}
+
+export async function readObsConfiguration() {
+  need(process.platform === "win32");
+  const { bytes } = await readBoundedFile(await obsConfigurationPath(), 65536);
   try { const value = JSON.parse(bytes.toString("utf8")); need(value.server_enabled === true && value.auth_required === true && value.server_port === 4455 && typeof value.server_password === "string" && value.server_password.length >= 8 && value.server_password.length <= 1024); return { port: 4455, password: value.server_password }; }
   finally { bytes.fill(0); }
 }
@@ -349,7 +363,15 @@ export function acquireSingleton(serverFactory = createServer) {
 export function parseArguments(args) {
   const modes = ["--enroll", "--observe", "--run", "--pause"]; need(modes.includes(args[0]));
   const result = { mode: args[0] };
-  for (let index = 1; index < args.length; index += 2) { const key = args[index]; need(["--directory", "--public-origin", "--origin"].includes(key) && !Object.hasOwn(result, key) && typeof args[index + 1] === "string"); result[key] = args[index + 1]; }
+  for (let index = 1; index < args.length; index += 2) {
+    const value = args[index + 1]; need(typeof value === "string");
+    switch (args[index]) {
+      case "--directory": need(!Object.hasOwn(result, "--directory")); result["--directory"] = value; break;
+      case "--public-origin": need(!Object.hasOwn(result, "--public-origin")); result["--public-origin"] = value; break;
+      case "--origin": need(!Object.hasOwn(result, "--origin")); result["--origin"] = value; break;
+      default: throw Error("publisher_runtime_refused");
+    }
+  }
   need(typeof result["--directory"] === "string" && win32.isAbsolute(result["--directory"]) && !result["--directory"].startsWith("\\\\"));
   if (result.mode === "--enroll") { validateOrigin(result["--public-origin"]); validateOrigin(result["--origin"]); }
   else need(!Object.hasOwn(result, "--public-origin") && !Object.hasOwn(result, "--origin"));

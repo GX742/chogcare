@@ -1,13 +1,13 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
-import { mkdtemp, readFile, writeFile, readdir, rm, link, lstat, realpath } from "node:fs/promises";
+import { mkdtemp, readFile, writeFile, readdir, rm, link, lstat, realpath, open, rename, symlink } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { basename, dirname, join, resolve } from "node:path";
 import { EventEmitter } from "node:events";
 import { createState } from "../ops/stream/obs-publisher-recovery.mjs";
 import { acquireSingleton, createEventGuard, createPrivateStore, createPublisherAdapter, createSessionTracker,
-  getHttpsText, parseArguments, probeHls, readBoundedFile, runPublisherLoop, sourceHash, validateBinding, validateOrigin } from "../ops/stream/obs-publisher-recovery-runtime.mjs";
+  getHttpsText, obsConfigurationPath, parseArguments, probeHls, readBoundedDescriptor, readBoundedFile, runPublisherLoop, sourceHash, validateBinding, validateOrigin } from "../ops/stream/obs-publisher-recovery-runtime.mjs";
 
 const hash = value => createHash("sha256").update(value).digest("hex");
 const bootId = hash("synthetic-boot");
@@ -30,7 +30,21 @@ test("enrolled origins accept only bounded HTTPS roots, and later CLI modes cann
   assert.equal(validateBinding(binding), binding);
   for (const invalid of ["http://site.example", "https://user:password@site.example", "https://site.example/live/station/", "https://site.example?key=x", "https://site.example/#x", "https://site.example:1936", "https://localhost", "https://127.0.0.1", "https://10.0.0.1", "https://172.16.1.2", "https://192.168.1.2", "https://[::1]"]) assert.throws(() => validateOrigin(invalid));
   assert.equal(parseArguments(["--enroll", "--directory", "C:/synthetic/private", "--public-origin", binding.publicOrigin, "--origin", binding.origin]).mode, "--enroll");
-  for (const args of [["--run"], ["--run", "--directory", "C:/synthetic/private", "--origin", binding.origin], ["--run", "--directory", "C:/a", "--directory", "C:/b"], ["--run", "--directory", "\\\\server\\share"], ["--unknown", "--directory", "C:/a"]]) assert.throws(() => parseArguments(args));
+  for (const args of [["--run"], ["--run", "--directory", "C:/synthetic/private", "--origin", binding.origin], ["--run", "--directory", "C:/a", "--directory", "C:/b"], ["--run", "--directory", "\\\\server\\share"], ["--unknown", "--directory", "C:/a"],
+    ["--run", "--directory", "C:/a", "__proto__", "synthetic"], ["--run", "--directory", "C:/a", "constructor", "synthetic"], ["--enroll", "--directory", "C:/a", "--origin", binding.origin, "--origin", binding.origin, "--public-origin", binding.publicOrigin]]) assert.throws(() => parseArguments(args));
+});
+
+test("OBS configuration uses the OS KnownFolder query and refuses malformed or remote returned roots", async () => {
+  const result = await obsConfigurationPath(async (executable, args, options) => {
+    assert.equal(executable, "C:/Windows/System32/WindowsPowerShell/v1.0/powershell.exe");
+    assert.deepEqual(args.slice(0, 3), ["-NoProfile", "-NonInteractive", "-EncodedCommand"]);
+    assert.equal(Buffer.from(args[3], "base64").toString("utf16le"), "$ErrorActionPreference='Stop';[Console]::Out.Write([Environment]::GetFolderPath('ApplicationData'))");
+    assert.equal(options.shell, false); assert.equal(options.windowsHide, true); assert.equal(options.timeout, 5000); assert.equal(options.maxBuffer, 8192);
+    return { stdout: "C:\\synthetic\\Roaming" };
+  });
+  assert.equal(result, "C:\\synthetic\\Roaming\\obs-studio\\plugin_config\\obs-websocket\\config.json");
+  for (const stdout of ["", "C:relative", "\\root-relative", "\\\\server\\share", "C:\\synthetic\\..\\other", "C:\\synthetic\ninvalid", "x".repeat(2049)])
+    await assert.rejects(() => obsConfigurationPath(async () => ({ stdout })));
 });
 
 test("HLS health follows only one validated video child with one shared endpoint deadline", async () => {
@@ -96,6 +110,25 @@ test("bounded private descriptors reject zero, excessive bytes and multiple link
     await writeFile(path, "x".repeat(100)); await assert.rejects(() => readBoundedFile(path, 50));
     await writeFile(path, "synthetic"); await link(path, join(directory, "hardlink")); await assert.rejects(() => readBoundedFile(path));
   } finally { await cleanupFixture(directory); }
+});
+
+test("a pathname replaced after descriptor acquisition is rejected before any payload read", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "publisher-file-")), path = join(directory, "synthetic.json"); let file;
+  try {
+    await writeFile(path, "original-synthetic"); file = await open(path, "r");
+    await rename(path, join(directory, "original-held.json")); await writeFile(path, "replacement-synthetic");
+    await assert.rejects(() => readBoundedDescriptor(file, path));
+    const first = Buffer.alloc(1); await file.read(first, 0, 1, null); assert.equal(first.toString(), "o", "rejection must precede reading the original descriptor");
+  } finally { await file?.close(); await cleanupFixture(directory); }
+});
+
+test("symbolic links fail both no-follow opening and named-descriptor verification", { skip: process.platform === "win32" ? "Unprivileged Windows symlink creation is not assumed; exercised in Linux fixture" : false }, async () => {
+  const directory = await mkdtemp(join(tmpdir(), "publisher-file-")), target = join(directory, "target.json"), path = join(directory, "symbolic.json"); let file;
+  try {
+    await writeFile(target, "synthetic"); await symlink(target, path);
+    await assert.rejects(() => readBoundedFile(path));
+    file = await open(path, "r"); await assert.rejects(() => readBoundedDescriptor(file, path));
+  } finally { await file?.close(); await cleanupFixture(directory); }
 });
 
 test("session continuity resets on any counter rollback or more than two seconds of start-time drift", () => {

@@ -5,6 +5,7 @@ import { mkdtemp, readFile, writeFile, readdir, rm, link, lstat, realpath, open,
 import { tmpdir } from "node:os";
 import { basename, dirname, join, resolve } from "node:path";
 import { EventEmitter } from "node:events";
+import { renderServerMediaLocation } from "../ops/relay/nginx-config.mjs";
 import { createState } from "../ops/stream/obs-publisher-recovery.mjs";
 import { acquireSingleton, createEventGuard, createPrivateStore, createPublisherAdapter, createSessionTracker,
   getHttpsText, obsConfigurationPath, parseArguments, probeHls, readBoundedDescriptor, readBoundedFile, runPublisherLoop, sourceHash, validateBinding, validateOrigin } from "../ops/stream/obs-publisher-recovery-runtime.mjs";
@@ -62,6 +63,39 @@ test("HLS health follows only one validated video child with one shared endpoint
     assert.equal(bad.valid, false); assert.equal(count, 1);
   }
   assert.deepEqual(await probeHls(binding.origin, { get: async () => ({ status: 404, text: "" }) }), { status: 404, valid: false, mediaIdHash: null });
+});
+
+test("HLS health accepts the actual classic projection without counting parts or fetching their URIs", async () => {
+  const master = '#EXTM3U\n#EXT-X-MEDIA:TYPE=AUDIO,URI="audio.m3u8"\n#EXT-X-STREAM-INF:BANDWIDTH=1200000\nvideo.m3u8\n';
+  const media = '#EXTM3U\n#EXT-X-VERSION:10\n#EXT-X-TARGETDURATION:2\n#EXT-X-MEDIA-SEQUENCE:3\n#EXT-X-SERVER-CONTROL:CAN-BLOCK-RELOAD=YES,PART-HOLD-BACK=0.8325\n#EXT-X-PART-INF:PART-TARGET=0.333\n#EXT-X-MAP:URI="abcdef_video_init.mp4"\n#EXT-X-PROGRAM-DATE-TIME:2026-11-01T06:39:00Z\n#EXT-X-PART:DURATION=0.333,URI="abcdef_video_part3.mp4"\n#EXTINF:1,\nabcdef_video_seg3.mp4\n#EXTINF:1,\nabcdef_video_seg4.mp4\n#EXT-X-PRELOAD-HINT:TYPE=PART,URI="abcdef_video_part5.mp4"\n';
+  const filters = [...renderServerMediaLocation({ hlsReadToken: Buffer.alloc(32, 7).toString("base64url") }).matchAll(/^\s*sub_filter '([^']+)' '([^']+)';$/gm)];
+  assert.equal(filters.length, 5);
+  const classic = filters.reduce((text, [, from, to]) => text.replaceAll(from, to), media);
+  const check = async text => {
+    const calls = [];
+    const result = await probeHls(binding.publicOrigin, { clock: () => 0, get: async url => {
+      calls.push(url); return { status: 200, text: calls.length === 1 ? master : text };
+    } });
+    assert.deepEqual(calls, ["https://site.example/live/station/index.m3u8", "https://site.example/live/station/video.m3u8"]);
+    return result;
+  };
+  const original = await check(media), projected = await check(classic);
+  assert.equal(original.valid, true); assert.deepEqual(projected, original, "The complete media identity must survive the real renderer's substitutions");
+  assert.deepEqual(await check(classic.replaceAll("abcdef_video_part3.mp4", "abcdef_video_part99.mp4").replace("DURATION=0.333,URI", "DURATION=0.777,URI")), original, "Partial media never counts as completed progress");
+  assert.notEqual((await check(classic.replace("SEQUENCE:3", "SEQUENCE:4").replace("seg4.mp4", "seg5.mp4").replace("seg3.mp4", "seg4.mp4"))).mediaIdHash, original.mediaIdHash);
+  for (const tag of ["PART:DURATION=0.333", "PRELOAD-HINT:TYPE=PART"]) {
+    for (const uri of ["https://other.example/part.mp4", "../part.mp4", "/part.mp4", "part.mp4?secret=x"]) {
+      assert.equal((await check(classic + `#CHOGCARE-${tag},URI="${uri}"\n`)).valid, false);
+    }
+  }
+  for (const line of ['#CHOGCARE-UNKNOWN:value', '#CHOGCARE-PART-INFORMATION:value', '#CHOGCARE-RENDITION-REPORT:URI="audio.m3u8",LAST-MSN=3', '#CHOGCARE-PART:DURATION=0.333', '#CHOGCARE-PRELOAD-HINT:TYPE=PART'])
+    assert.equal((await check(classic + line + "\n")).valid, false);
+  // The bound applies before normalization, even when known prefixes would
+  // otherwise shrink an oversized input below the parser's own byte limit.
+  const oversized = classic + '#CHOGCARE-PART-INF:\n'.repeat(3600);
+  assert.ok(Buffer.byteLength(oversized) > 65536);
+  assert.ok(Buffer.byteLength(oversized.replaceAll("#CHOGCARE-PART-INF:", "#EXT-X-PART-INF:")) < 65536);
+  assert.equal((await check(oversized)).valid, false);
 });
 
 test("HTTPS transport keeps TLS verification and sends no credentials, cookies, redirect or media request", async () => {

@@ -198,6 +198,14 @@ export function getHttpsText(url, milliseconds, requestImpl = request) {
   });
 }
 
+function parseHealthMediaPlaylist(text) {
+  need(typeof text === "string" && Buffer.byteLength(text) <= 65536);
+  // The public classic projection comments out these LL-HLS tags. Restore only
+  // their exact line prefixes so the existing parser still checks part URIs
+  // and counts only completed EXTINF media. Unknown comments remain rejected.
+  return parseMediaPlaylist(text.replace(/^#CHOGCARE-(SERVER-CONTROL|PART-INF|PART|PRELOAD-HINT):/gm, "#EXT-X-$1:"));
+}
+
 export async function probeHls(origin, { get = getHttpsText, clock = () => performance.now() } = {}) {
   const fixed = validateOrigin(origin), deadline = clock() + 3000;
   const read = async child => {
@@ -207,7 +215,7 @@ export async function probeHls(origin, { get = getHttpsText, clock = () => perfo
   try {
     const master = await read("index.m3u8"); if (master.status !== 200) return { status: master.status, valid: false, mediaIdHash: null };
     const media = await read(parseMasterPlaylist(master.text)); if (media.status !== 200) return { status: media.status, valid: false, mediaIdHash: null };
-    const playlist = parseMediaPlaylist(media.text); need(playlist.eligible && playlist.segments.length > 0);
+    const playlist = parseHealthMediaPlaylist(media.text); need(playlist.eligible && playlist.segments.length > 0);
     return { status: 200, valid: true, mediaIdHash: hash(JSON.stringify([playlist.initId, playlist.segments.map(segment => [segment.sequence, segment.id, segment.durationMs])])) };
   } catch { return { status: 0, valid: false, mediaIdHash: null }; }
 }

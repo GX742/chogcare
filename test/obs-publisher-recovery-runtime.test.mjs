@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
-import { mkdtemp, readFile, writeFile, readdir, rm, link, lstat, realpath, open, rename, symlink } from "node:fs/promises";
+import { mkdtemp, readFile, writeFile, readdir, rm, link, lstat, realpath, open, symlink } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { basename, dirname, join, resolve } from "node:path";
 import { EventEmitter } from "node:events";
@@ -112,15 +112,19 @@ test("bounded private descriptors reject zero, excessive bytes and multiple link
   } finally { await cleanupFixture(directory); }
 });
 
-test("a pathname replaced after descriptor acquisition is rejected before any payload read", async () => {
-  const directory = await mkdtemp(join(tmpdir(), "publisher-file-")), path = join(directory, "synthetic.json"); let file;
+test("a descriptor and a different file's pathname are rejected before any payload read", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "publisher-file-")), path = join(directory, "other.json"); let file, other;
   try {
-    file = await open(path, "wx+", 0o600);
-    const payload = Buffer.from("original-synthetic"); await file.write(payload, 0, payload.length, 0);
-    await rename(path, join(directory, "original-held.json")); await writeFile(path, "replacement-synthetic", { flag: "wx", mode: 0o600 });
+    file = await open(join(directory, "original.json"), "wx+", 0o600); other = await open(path, "wx+", 0o600);
+    const payload = Buffer.from("original-synthetic");
+    for (const descriptor of [file, other]) await descriptor.write(payload, 0, payload.length, 0);
+    const originalInfo = await file.stat({ bigint: true }), otherInfo = await other.stat({ bigint: true });
+    for (const info of [originalInfo, otherInfo]) { assert.equal(info.isFile(), true); assert.equal(info.nlink, 1n); assert.equal(info.size, BigInt(payload.length)); }
+    assert.notDeepEqual([originalInfo.dev, originalInfo.ino], [otherInfo.dev, otherInfo.ino]);
+    assert.deepEqual((await readBoundedDescriptor(other, path)).bytes, payload, "the matching descriptor/name pair must remain readable");
     await assert.rejects(() => readBoundedDescriptor(file, path));
     const first = Buffer.alloc(1); await file.read(first, 0, 1, null); assert.equal(first.toString(), "o", "rejection must precede reading the original descriptor");
-  } finally { await file?.close(); await cleanupFixture(directory); }
+  } finally { await other?.close(); await file?.close(); await cleanupFixture(directory); }
 });
 
 test("symbolic links fail both no-follow opening and named-descriptor verification", { skip: process.platform === "win32" ? "Unprivileged Windows symlink creation is not assumed; exercised in Linux fixture" : false }, async () => {

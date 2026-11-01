@@ -248,7 +248,7 @@ export function renderResilientHlsRelayNginx(options = {}) {
     }`);
 }
 
-/** Server-local LL-HLS, with the two legacy transports left intact. */
+/** Server-local media, projected as classic HLS at the public boundary. */
 export function renderServerMediaLocation({ streamPath = "station", hlsPort = 8888, hlsReadToken } = {}) {
   const path = streamPathSegment(streamPath);
   const port = streamListenerPort(hlsPort);
@@ -258,8 +258,10 @@ export function renderServerMediaLocation({ streamPath = "station", hlsPort = 88
     location ^~ /live/${path}/ {
         limit_except GET { deny all; }
         # MediaMTX emits direct-child playlists, initialization files and parts.
-        # Queries, including LL-HLS blocking reload parameters, pass unchanged.
+        # Always request a complete upstream playlist; a delta cannot be
+        # interpreted after its low-latency control tags have been removed.
         if ($uri !~ "^/live/${path}/[A-Za-z0-9_-]{1,160}\\\\.(m3u8|mp4|m4s|ts)$") { return 404; }
+        set $args "";
         proxy_connect_timeout 1s;
         proxy_read_timeout 8s;
         proxy_send_timeout 5s;
@@ -287,7 +289,17 @@ export function renderServerMediaLocation({ streamPath = "station", hlsPort = 88
         proxy_set_header Cookie "";
         proxy_set_header Idempotency-Key "";
         proxy_set_header Content-Length "";
+        proxy_set_header Accept-Encoding "";
         proxy_set_header Authorization "Bearer ${token}";
+        # Changing LL-HLS part metadata can permanently stop native Safari.
+        # Keep complete segments, initialization, audio and master URIs intact.
+        sub_filter_types application/vnd.apple.mpegurl application/x-mpegurl;
+        sub_filter_once off;
+        sub_filter '#EXT-X-SERVER-CONTROL:' '#CHOGCARE-SERVER-CONTROL:';
+        sub_filter '#EXT-X-PART-INF:' '#CHOGCARE-PART-INF:';
+        sub_filter '#EXT-X-PART:' '#CHOGCARE-PART:';
+        sub_filter '#EXT-X-PRELOAD-HINT:' '#CHOGCARE-PRELOAD-HINT:';
+        sub_filter '#EXT-X-RENDITION-REPORT:' '#CHOGCARE-RENDITION-REPORT:';
         proxy_hide_header Cache-Control;
         proxy_hide_header CDN-Cache-Control;
         proxy_hide_header Vercel-CDN-Cache-Control;

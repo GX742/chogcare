@@ -106,11 +106,22 @@ test("new video route preserves the complete existing relay, payment and TLS bou
   assert.doesNotMatch(addition, /proxy_ssl_verify|proxy_pass https|18090|proxy_cache_valid/);
 });
 
-test("server video route accepts only direct-child media reads, preserves LL-HLS query and bypasses caches", () => {
+test("server video route accepts only direct-child media reads, requests complete playlists and bypasses caches", () => {
   const route = mediaLocation();
   assert.match(route, /limit_except GET \{ deny all; \}/);
   assert.match(route, /proxy_pass http:\/\/127\.0\.0\.1:8888\/station\/;/);
-  assert.doesNotMatch(route, /\$args|\$is_args|rewrite|error_page|proxy_pass .*\$/);
+  assert.match(route, /set \$args "";/);
+  assert.doesNotMatch(route, /\$is_args|rewrite|error_page|proxy_pass .*\$/);
+  assert.ok(route.includes("sub_filter_types application/vnd.apple.mpegurl application/x-mpegurl;"));
+  assert.ok(route.includes("sub_filter_once off;"));
+  const filters = [...route.matchAll(/sub_filter '([^']+)' '([^']+)';/g)].map(match => match.slice(1));
+  assert.deepEqual(filters, [
+    ["#EXT-X-SERVER-CONTROL:", "#CHOGCARE-SERVER-CONTROL:"],
+    ["#EXT-X-PART-INF:", "#CHOGCARE-PART-INF:"],
+    ["#EXT-X-PART:", "#CHOGCARE-PART:"],
+    ["#EXT-X-PRELOAD-HINT:", "#CHOGCARE-PRELOAD-HINT:"],
+    ["#EXT-X-RENDITION-REPORT:", "#CHOGCARE-RENDITION-REPORT:"],
+  ]);
   // Evaluate the actual generated nginx expression after its quoted-string
   // unescape, rather than testing an independent copy of the allowlist.
   const expression = route.match(/if \(\$uri !~ "([^"]+)"\)/)?.[1];
@@ -126,7 +137,7 @@ test("server video route accepts only direct-child media reads, preserves LL-HLS
   }
   for (const header of ["X-Content-Type-Options", "Referrer-Policy", "X-Frame-Options", "Content-Security-Policy", "Permissions-Policy"]) assert.match(route, new RegExp(`add_header ${header}[^\\n]*always;`));
   assert.ok(route.includes(`proxy_set_header Authorization "Bearer ${hlsReadToken}";`));
-  for (const header of ["Connection", "Upgrade", "X-Forwarded-For", "X-Real-IP", "Forwarded", "X-Forwarded-Host", "X-Forwarded-Port", "Origin", "Cookie", "Idempotency-Key", "Content-Length"]) assert.ok(route.includes(`proxy_set_header ${header} "";`));
+  for (const header of ["Connection", "Upgrade", "X-Forwarded-For", "X-Real-IP", "Forwarded", "X-Forwarded-Host", "X-Forwarded-Port", "Origin", "Cookie", "Idempotency-Key", "Content-Length", "Accept-Encoding"]) assert.ok(route.includes(`proxy_set_header ${header} "";`));
   assert.ok(route.includes("proxy_set_header X-Forwarded-Proto https;"));
   assert.ok(route.includes("proxy_set_header Host 127.0.0.1;"));
 });

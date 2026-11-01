@@ -255,6 +255,13 @@ function NativeLivePlayer({ src, onReady, onWaiting, onAspect }: { src: string; 
         if (sourceStale) liveStatus.waiting(active()); else liveStatus.playing();
       },
       onWaiting: () => { if (!cancelled) liveStatus.waiting(active()); },
+      onSuspend: () => {
+        // A health tick can see inactive geometry before the viewport sample.
+        // Preserve the initial sample, and reconcile a previously visible video.
+        if (cancelled || !inViewport) return;
+        presence.suspend();
+        presence.invalidate();
+      },
     });
     const stopFrames = () => { if (frameCallback !== null) video.cancelVideoFrameCallback(frameCallback); frameCallback = null; };
     const observeFrames = () => {

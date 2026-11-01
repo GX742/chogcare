@@ -150,7 +150,7 @@ test("verified MediaMTX parses the production renderer and serves authenticated 
 
   function publisher({ pass = password, path = "station", anonymous = false, ingestPort = ingest.port } = {}) {
     const query = anonymous ? "" : `?user=publisher&pass=${encodeURIComponent(pass)}`;
-    const child = ownedProcess(ffmpeg, ["-hide_banner", "-loglevel", "error", "-nostdin", "-re", "-f", "lavfi", "-i", "testsrc2=size=160x96:rate=10", "-t", "60", "-an", "-c:v", "libx264", "-preset", "ultrafast", "-tune", "zerolatency", "-threads", "1", "-filter_threads", "1", "-g", "10", "-keyint_min", "10", "-sc_threshold", "0", "-pix_fmt", "yuv420p", "-tls_verify", "1", "-ca_file", certificate, "-f", "flv", "-flvflags", "no_duration_filesize", `rtmps://127.0.0.1:${ingestPort}/${path}${query}`], directory);
+    const child = ownedProcess(ffmpeg, ["-hide_banner", "-loglevel", "error", "-nostdin", "-re", "-f", "lavfi", "-i", "testsrc2=size=160x96:rate=10", "-re", "-f", "lavfi", "-i", "anullsrc=r=48000:cl=stereo", "-t", "60", "-c:v", "libx264", "-preset", "ultrafast", "-tune", "zerolatency", "-threads", "1", "-filter_threads", "1", "-g", "10", "-keyint_min", "10", "-sc_threshold", "0", "-pix_fmt", "yuv420p", "-c:a", "aac", "-b:a", "64k", "-tls_verify", "1", "-ca_file", certificate, "-f", "flv", "-flvflags", "no_duration_filesize", `rtmps://127.0.0.1:${ingestPort}/${path}${query}`], directory);
     children.push(child); return child;
   }
 
@@ -173,7 +173,7 @@ test("verified MediaMTX parses the production renderer and serves authenticated 
     for await (const chunk of response.body) { bytes += chunk.length; assert.ok(bytes <= maximum, "Fixture HTTP response exceeded its byte bound"); chunks.push(chunk); }
     return { response, body: Buffer.concat(chunks) };
   }
-  let master, media, mediaPath;
+  let master, media, mediaPath, audioPath;
   await waitUntil(async () => {
     assert.equal(validPublisher.result, null, "The valid synthetic publisher must remain connected");
     master = await request("/station/index.m3u8");
@@ -189,6 +189,11 @@ test("verified MediaMTX parses the production renderer and serves authenticated 
     assert.equal(variants.length, 1);
     assert.match(variants[0], /^[A-Za-z0-9_-]+\.m3u8$/);
     mediaPath = "/station/" + variants[0]; media = await request(mediaPath);
+    const audioName = body.match(/^#EXT-X-MEDIA:TYPE=AUDIO,.*?URI="([A-Za-z0-9_-]+\.m3u8)"/m)?.[1];
+    assert.ok(audioName, "The real synthetic AAC track must have its own rendition");
+    assert.match(body, /CODECS="[^"]*mp4a\.40\.2/);
+    audioPath = "/station/" + audioName;
+    assert.equal((await request(audioPath)).response.status, 200);
     assert.equal(media.response.status, 200);
     assert.equal(media.response.headers.get("set-cookie"), null);
     assert.doesNotMatch(body + media.body, /cookieCheck|session=|integration-fixture-only|Bearer|https?:\/\//);
@@ -198,15 +203,18 @@ test("verified MediaMTX parses the production renderer and serves authenticated 
     assert.equal(wrong.response.status, 401);
   });
 
-  await t.test("one-second synthetic GOP produces one-second segments and 200ms playable fMP4 parts", async () => {
+  await t.test("one-second synthetic GOP produces one-second segments and bounded subsecond playable fMP4 parts", async () => {
     const playlist = media.body.toString();
-    assert.match(playlist, /^#EXT-X-TARGETDURATION:1\s*$/m);
+    assert.match(playlist, /^#EXT-X-TARGETDURATION:[12]\s*$/m, "The shared target may round the AAC segment above one second");
     const segments = [...playlist.matchAll(/^#EXTINF:([0-9.]+),/gm)].map(match => Number(match[1]));
     const parts = [...playlist.matchAll(/^#EXT-X-PART:DURATION=([0-9.]+),URI="([^"]+)"/gm)];
     assert.ok(segments.length > 0 && segments.every(value => Math.abs(value - 1) < 0.02));
-    assert.ok(parts.length > 0 && parts.every(match => Math.abs(Number(match[1]) - 0.2) < 0.02));
+    // AAC/video sample boundaries can quantize a 200ms minimum upward and
+    // leave a shorter final part at the GOP boundary. Test actual bounded
+    // subsecond parts instead of assuming every part is exactly 200ms.
+    assert.ok(parts.length >= 2 && parts.every(match => Number(match[1]) > 0 && Number(match[1]) <= 0.4));
     const target = playlist.match(/^#EXT-X-PART-INF:PART-TARGET=([0-9.]+)/m);
-    assert.ok(target && Math.abs(Number(target[1]) - 0.2) < 0.02);
+    assert.ok(target && Number(target[1]) >= 0.18 && Number(target[1]) <= 0.4);
     const map = playlist.match(/^#EXT-X-MAP:URI="([^"]+)"/m);
     const fetchMedia = async uri => {
       assert.match(uri, /^[A-Za-z0-9_.-]+\.mp4$/);
@@ -248,13 +256,25 @@ test("verified MediaMTX parses the production renderer and serves authenticated 
     assert.equal(reload.response.headers.get("set-cookie"), null);
   });
 
-  await t.test("the real nginx media location rewrites paths, retains LL-HLS queries and removes viewer identity", async () => {
+  await t.test("the real nginx media location projects complete video/audio playlists without changing media or viewer isolation", async () => {
     // Observe only this fixture's headers, then forward to the real MediaMTX
     // listener. This checks nginx's parsed behavior rather than matching text.
     const observed = [];
+    const witness = Buffer.from('#EXTM3U\n#EXT-X-VERSION:10\n#EXT-X-SERVER-CONTROL:CAN-BLOCK-RELOAD=YES,PART-HOLD-BACK=0.5\n#EXT-X-PART-INF:PART-TARGET=0.2\n#EXT-X-PART:DURATION=0.2,URI="part.mp4"\n#EXT-X-PRELOAD-HINT:TYPE=PART,URI="next.mp4"\n#EXT-X-RENDITION-REPORT:URI="audio.m3u8",LAST-MSN=9,LAST-PART=2\n#EXT-X-PART-INFORMATION:unknown-prefix-must-survive\n#EXT-X-MAP:URI="init.mp4"\n#EXT-X-PROGRAM-DATE-TIME:2026-01-01T00:00:00Z\n#EXTINF:1,\nsegment.mp4\n');
     const tap = createHttpServer((incoming, outgoing) => {
-      observed.push({ method: incoming.method, url: incoming.url, headers: incoming.headers });
+      const observation = { method: incoming.method, url: incoming.url, headers: incoming.headers, body: null };
+      observed.push(observation);
+      if (["/station/filter-witness.m3u8", "/station/filter-witness-alt.m3u8"].includes(incoming.url)) {
+        // The pinned muxer currently omits RENDITION-REPORT. A fixed syntax
+        // witness exercises that fifth substitution in real nginx as well.
+        observation.body = witness;
+        outgoing.writeHead(200, { "Content-Type": incoming.url.includes("-alt") ? "application/x-mpegurl" : "application/vnd.apple.mpegurl", "Content-Length": witness.length });
+        outgoing.end(witness); return;
+      }
       const upstream = httpRequest({ host: "127.0.0.1", port: hls.port, path: incoming.url, method: incoming.method, headers: incoming.headers, timeout: 4000 }, response => {
+        const chunks = []; let size = 0;
+        response.on("data", chunk => { size += chunk.length; if (size <= 2 * 1024 * 1024) chunks.push(chunk); else upstream.destroy(); });
+        response.on("end", () => { observation.body = Buffer.concat(chunks); });
         outgoing.writeHead(response.statusCode, response.headers); response.pipe(outgoing);
       });
       upstream.on("timeout", () => upstream.destroy());
@@ -272,9 +292,9 @@ test("verified MediaMTX parses the production renderer and serves authenticated 
     const nginx = ownedProcess("/usr/sbin/nginx", ["-p", directory + "/", "-c", nginxConfig, "-g", "daemon off; master_process off;"], directory);
     children.push(nginx);
     await waitUntil(async () => { assert.equal(nginx.result, null); return listening(proxy.port); }, "The isolated generated nginx location must start");
-    const headers = { Authorization: "Bearer viewer-fixture-value", Origin: "https://viewer.invalid", Cookie: "viewer-fixture=1", "Idempotency-Key": "fixture-only", "X-Forwarded-For": "198.51.100.1", "X-Real-IP": "198.51.100.1", Forwarded: "for=198.51.100.1", "X-Forwarded-Host": "viewer.invalid", "X-Forwarded-Port": "12345" };
-    const throughProxy = async (path, method = "GET") => {
-      const response = await fetch(`http://127.0.0.1:${proxy.port}${path}`, { method, headers, redirect: "manual", signal: AbortSignal.timeout(4000) });
+    const headers = { Authorization: "Bearer viewer-fixture-value", Origin: "https://viewer.invalid", Cookie: "viewer-fixture=1", "Idempotency-Key": "fixture-only", "X-Forwarded-For": "198.51.100.1", "X-Real-IP": "198.51.100.1", Forwarded: "for=198.51.100.1", "X-Forwarded-Host": "viewer.invalid", "X-Forwarded-Port": "12345", "Accept-Encoding": "gzip, deflate, br" };
+    const throughProxy = async (path, method = "GET", extraHeaders = {}) => {
+      const response = await fetch(`http://127.0.0.1:${proxy.port}${path}`, { method, headers: { ...headers, ...extraHeaders }, redirect: "manual", signal: AbortSignal.timeout(4000) });
       const chunks = []; let bytes = 0;
       for await (const chunk of response.body || []) { bytes += chunk.length; assert.ok(bytes <= 2 * 1024 * 1024); chunks.push(chunk); }
       return { response, body: Buffer.concat(chunks) };
@@ -286,20 +306,59 @@ test("verified MediaMTX parses the production renderer and serves authenticated 
     assert.equal(proxied.response.headers.get("cache-control"), "no-store");
     assert.equal(observed.at(-1).url, "/station/index.m3u8");
     assert.equal(observed.at(-1).headers.authorization, `Bearer ${readToken}`);
+    assert.equal(observed.at(-1).headers["accept-encoding"], undefined, "Playlist substitution must receive identity bytes");
     for (const header of ["origin", "cookie", "idempotency-key", "x-forwarded-for", "x-real-ip", "forwarded", "x-forwarded-host", "x-forwarded-port"]) assert.equal(observed.at(-1).headers[header], undefined, header);
     const head = await throughProxy("/live/station/index.m3u8", "HEAD");
     assert.equal(head.response.status, 200); assert.equal(head.body.length, 0);
     assert.equal(observed.at(-1).method, "GET");
-    const playlist = await throughProxy(mediaPath.replace("/station/", "/live/station/"));
-    assert.equal(playlist.response.status, 200);
-    const text = playlist.body.toString();
-    const sequence = Number(text.match(/^#EXT-X-MEDIA-SEQUENCE:(\d+)/m)?.[1]);
-    const complete = [...text.matchAll(/^#EXTINF:/gm)].length;
-    const query = `?_HLS_msn=${sequence + complete - 1}&_HLS_part=0&_HLS_skip=YES`;
-    const reload = await throughProxy(mediaPath.replace("/station/", "/live/station/") + query);
-    assert.equal(reload.response.status, 200);
-    assert.equal(observed.at(-1).url, mediaPath + query);
-    const partUri = [...text.matchAll(/^#EXT-X-PART:.*URI="([^"]+)"/gm)].at(-1)?.[1];
+    const llTags = ["SERVER-CONTROL", "PART-INF", "PART", "PRELOAD-HINT", "RENDITION-REPORT"];
+    const witnessed = new Set(); let partUri;
+    for (const path of [mediaPath, audioPath]) {
+      const playlist = await throughProxy(path.replace("/station/", "/live/station/"));
+      assert.equal(playlist.response.status, 200);
+      const text = playlist.body.toString(), original = observed.at(-1).body.toString();
+      assert.match(text, /^#EXT-X-VERSION:10$/m);
+      assert.match(text, /^#EXT-X-MAP:/m); assert.match(text, /^#EXT-X-PROGRAM-DATE-TIME:/m); assert.match(text, /^#EXTINF:/m);
+      for (const tag of llTags) {
+        assert.doesNotMatch(text, new RegExp(`^#EXT-X-${tag}:`, "m"));
+        if (original.includes(`#EXT-X-${tag}:`)) {
+          witnessed.add(tag); assert.ok(text.includes(`#CHOGCARE-${tag}:`));
+        }
+      }
+      const retained = value => value.split(/\r?\n/).filter(line => !llTags.some(tag => line.startsWith(`#EXT-X-${tag}:`) || line.startsWith(`#CHOGCARE-${tag}:`)));
+      assert.deepEqual(retained(text), retained(original), "Complete media, maps, version, timestamps and rendition metadata must be byte-preserved");
+      const sequence = Number(text.match(/^#EXT-X-MEDIA-SEQUENCE:(\d+)/m)?.[1]);
+      const complete = [...text.matchAll(/^#EXTINF:/gm)].length;
+      const query = `?_HLS_msn=${sequence + complete + 100}&_HLS_part=0&_HLS_skip=YES`;
+      const reload = await throughProxy(path.replace("/station/", "/live/station/") + query);
+      assert.equal(reload.response.status, 200, "A future blocking/delta request must become a normal full-playlist fetch");
+      assert.equal(observed.at(-1).url, path, "No viewer LL-HLS delivery directive may reach the origin");
+      assert.doesNotMatch(reload.body.toString(), /^#EXT-X-SKIP:/m);
+      assert.equal([...reload.body.toString().matchAll(/^#EXTINF:/gm)].length, [...observed.at(-1).body.toString().matchAll(/^#EXTINF:/gm)].length);
+      const map = text.match(/^#EXT-X-MAP:URI="([A-Za-z0-9_-]+\.mp4)"/m)?.[1];
+      const segment = text.split(/\r?\n/).filter(line => line && !line.startsWith("#")).at(-1);
+      for (const name of [map, segment]) {
+        assert.match(name, /^[A-Za-z0-9_-]{1,160}\.mp4$/);
+        const mp4 = await throughProxy("/live/station/" + name, "GET", { Range: "bytes=0-1" });
+        assert.equal(mp4.response.status, 200, "The existing upstream's full-200 Range behavior must be preserved");
+        assert.equal(observed.at(-1).headers.range, "bytes=0-1");
+        assert.deepEqual(mp4.body, observed.at(-1).body, "A playlist-only filter must never modify MP4 init/media bytes");
+      }
+      partUri ??= [...original.matchAll(/^#EXT-X-PART:.*URI="([^"]+)"/gm)].at(-1)?.[1];
+    }
+    for (const name of ["filter-witness.m3u8", "filter-witness-alt.m3u8"]) {
+      const result = await throughProxy("/live/station/" + name);
+      assert.equal(result.response.status, 200);
+      const text = result.body.toString();
+      for (const tag of llTags) {
+        assert.doesNotMatch(text, new RegExp(`^#EXT-X-${tag}:`, "m"));
+        assert.ok(text.includes(`#CHOGCARE-${tag}:`)); witnessed.add(tag);
+      }
+      assert.match(text, /^#EXT-X-PART-INFORMATION:unknown-prefix-must-survive$/m, "Only the exact tag-plus-colon prefixes may change");
+      const preserved = value => value.split(/\r?\n/).filter(line => !llTags.some(tag => line.startsWith(`#EXT-X-${tag}:`) || line.startsWith(`#CHOGCARE-${tag}:`)));
+      assert.deepEqual(preserved(text), preserved(witness.toString()));
+    }
+    assert.deepEqual([...witnessed].sort(), [...llTags].sort(), "Real media plus fixed MIME witnesses must exercise all five substitutions in nginx");
     assert.match(partUri, /^[A-Za-z0-9_-]{1,160}\.mp4$/);
     const part = await throughProxy("/live/station/" + partUri);
     assert.equal(part.response.status, 200); assert.ok(part.body.includes(Buffer.from("moof")));

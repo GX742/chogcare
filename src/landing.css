@@ -24,32 +24,8 @@
 .lp-text-button svg { transition: transform .2s; }
 .lp-text-button:hover svg { transform: translate(2px, -2px); }
 .lp-hero-art { position: relative; width: min(100%, 560px, calc(100svh - 290px)); justify-self: end; align-self: center; aspect-ratio: 1; }
-/* The rim follows HeartField's violet / fuchsia spectrum.
-   Transform-only gradient rotation keeps the color motion out of React. */
-.lp-broadcast-frame { position: absolute; inset: 0; overflow: hidden; isolation: isolate; border-radius: 25px; background: #8943ff; box-shadow: 0 18px 45px #0904114d; }
-.lp-broadcast-frame::before { content: ''; position: absolute; inset: -50%; background: conic-gradient(from 30deg, #401b89, #5e28c7, #8943ff, #9649ff, #d736b8, #f241ad, #ff9eda, #ffecff, #f785d3, #e234ae, #8c3ff5, #5322ab, #401b89); animation: lpBroadcastRim 13s linear infinite; }
-.lp-broadcast-interior { position: absolute; inset: 1.5px; display: grid; place-items: center; border-radius: 23.5px; background: linear-gradient(145deg, #171020, #0d0915 75%); box-shadow: inset 0 0 0 1px #ffffff06; overflow: hidden; }
-.lp-broadcast-placeholder { padding: 25px; text-align: center; color: #a993bb; }
-.lp-broadcast-placeholder svg { display: block; margin: 0 auto 19px; color: #b99bd5; }
-.lp-broadcast-placeholder h2 { font-size: 24px; line-height: 1.3; font-weight: 500; letter-spacing: -.65px; color: #ddcce9; }
-.lp-broadcast-placeholder p { margin-top: 10px; font-size: 11px; color: #ad96be; }
-.lp-broadcast-player { position: absolute; inset: 0; z-index: 1; width: 100%; height: 100%; border: 0; opacity: 0; background: #050308; color-scheme: dark; object-fit: cover; object-position: center; pointer-events: none; user-select: none; transition: opacity .25s ease; }
-.lp-broadcast-player.is-ready { opacity: 1; }
-.lp-broadcast-live { position: absolute; top: 14px; left: 14px; z-index: 3; display: inline-flex; align-items: center; gap: 7px; min-height: 30px; padding: 0 11px; border: 1px solid #ffffff29; border-radius: 9px; background: #170e20d9; color: #fff5fd; font-size: 10px; font-weight: 800; letter-spacing: .08em; pointer-events: none; backdrop-filter: blur(10px); box-shadow: 0 8px 22px #09041166, inset 0 1px 0 #ffffff17; }
-.lp-broadcast-live i { width: 7px; height: 7px; border-radius: 50%; background: #ff4fa3; box-shadow: 0 0 0 3px #ff4fa324; }
-.lp-broadcast-loading { position: absolute; inset: 0; z-index: 2; display: flex; align-items: center; justify-content: center; gap: 10px; color: #bfaed0; background: #050308; font-size: 12px; letter-spacing: .02em; opacity: 1; transition: opacity .2s ease, visibility .2s ease; pointer-events: none; }
-.lp-broadcast-loading.is-hidden { opacity: 0; visibility: hidden; }
-.lp-broadcast-loading i { width: 14px; height: 14px; border: 2px solid #6e5a80; border-top-color: #d851bb; border-radius: 50%; animation: lpBroadcastLoading .8s linear infinite; }
-.lp-broadcast-state { flex-direction: column; padding: 30px; text-align: center; line-height: 1.6; }
-.lp-broadcast-state strong { color: #f3e6fb; font-size: 20px; font-weight: 650; }
-.lp-broadcast-state > span { max-width: 28ch; }
-.lp-broadcast-state button { pointer-events: auto; min-height: 48px; padding: 10px 18px; margin-top: 10px; border: 1px solid #ab70de; border-radius: 10px; color: #fff; background: #6931aa; font: inherit; font-weight: 650; }
-.lp-broadcast-state button:hover { background: #8039cb; }
-.lp-broadcast-state button:focus-visible { outline: 2px solid #e2c1ff; outline-offset: 4px; }
 .sr-only { position: absolute !important; width: 1px !important; height: 1px !important; padding: 0 !important; margin: -1px !important; overflow: hidden !important; clip: rect(0, 0, 0, 0) !important; white-space: nowrap !important; border: 0 !important; }
 .lp-corner-chog { position: absolute; z-index: 1; right: -25px; bottom: -25px; width: clamp(104px, 10.5vw, 155px); height: auto; pointer-events: none; filter: drop-shadow(0 8px 10px #09041166); }
-@keyframes lpBroadcastRim { to { transform: rotate(360deg); } }
-@keyframes lpBroadcastLoading { to { transform: rotate(360deg); } }
 .lp-section { padding: 94px 6%; scroll-margin-top: 20px; }
 .lp-label { display: block; color: #b69acb; font-size: 11px; font-weight: 550; letter-spacing: .6px; margin-bottom: 17px; }
 .lp-section h2 { font-size: clamp(34px, 3.5vw, 51px); font-weight: 550; line-height: 1.15; letter-spacing: -.052em; }
@@ -221,9 +197,6 @@
   .lp-actions .button.primary { min-height: 48px; padding-inline: 18px; font-size: 12px; }
   .lp-actions .lp-text-button { font-size: 11px; gap: 5px; }
   .lp-hero-art { width: 100%; max-width: 420px; margin: 30px auto 20px; }
-  .lp-broadcast-frame { border-radius: 20px; }
-  .lp-broadcast-interior { border-radius: 18.5px; }
-  .lp-broadcast-placeholder h2 { font-size: 22px; }
   .lp-corner-chog { width: 102px; right: -16px; bottom: -23px; }
   .lp-section { padding: 58px 24px; }
   .lp-section h2 { font-size: 37px; }
@@ -270,7 +243,6 @@
   .lp-dialog-content > p:not(.lp-data-note) { font-size: 13px; }
   .lp-dialog-actions { align-items: stretch; flex-direction: column; gap: 12px; }
 }
-@media (prefers-reduced-motion: reduce) { .lp-broadcast-frame::before { animation: none; } }
 /* Audit: keep the requested CHOG palette; remove repeated marketing decoration. */
 .lp-causes { border-top: 1px solid var(--lp-line); }
 .lp-cause-meta { display: flex; align-items: center; justify-content: space-between; gap: 10px; min-height: 20px; }

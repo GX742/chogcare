@@ -4,7 +4,7 @@ export function contentSecurityPolicy(developmentNonce?: string): string {
   if (developmentNonce && developmentNonce.match(/^[A-Za-z0-9+/=]{24,64}$/)?.[0] !== developmentNonce) throw new Error("Invalid development CSP nonce.");
   const nonce = developmentNonce ? ` 'nonce-${developmentNonce}'` : "";
   return [
-    "default-src 'none'", "base-uri 'none'", "object-src 'none'", "frame-ancestors 'none'", "frame-src https://player.twitch.tv https://stream.chogcare.com http://127.0.0.1:8082 http://localhost:8082",
+    "default-src 'none'", "base-uri 'none'", "object-src 'none'", "frame-ancestors 'none'", "frame-src https://player.twitch.tv https://www.twitch.tv/embed/chogcare/chat",
     `script-src 'self'${nonce}`, "script-src-attr 'none'", `style-src 'self'${nonce}`, "style-src-attr 'none'",
     "img-src 'self' data: https://giveth.mypinata.cloud https://gateway.pinata.cloud https://www.animal-ethics.org https://media-refresh.heifer.org",
     // This local-only boundary supports the existing relay and local Owncast.

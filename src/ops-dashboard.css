@@ -19,6 +19,7 @@
 .ops-status-list li{display:grid;grid-template-columns:26px minmax(0,1fr) auto;align-items:center;gap:12px;padding:17px 0;border-bottom:1px solid #d6bce8;font-size:15px;font-weight:700}
 .ops-status-list li:last-child{border-bottom:0}
 .ops-status{display:inline-flex;align-items:center;gap:7px;font-size:13px;font-weight:500;white-space:nowrap}
+.ops-broadcast-link{color:#5a2c77;text-decoration:underline;text-underline-offset:3px}
 .ops-status i{width:8px;height:8px;background:#9c84af;border-radius:50%;flex-shrink:0}
 .ops-status-ready i{background:#3d7d5d;box-shadow:0 0 0 3px #3d7d5d17}
 .ops-status-paused i{background:#9d601b}

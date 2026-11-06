@@ -1,19 +1,28 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import {readFile} from "node:fs/promises";
+import { readFileSync } from "node:fs";
+import { twitchChannel, twitchChannelUrl } from "../src/twitch-channel.ts";
 
-test("broadcast rim overlays the image without shrinking its aspect-ratio viewport",async()=>{
-  const css=await readFile(new URL("../src/sunset-redesign.css",import.meta.url),"utf8");
-  assert.match(css,/\.sunset-page \.lp-broadcast-frame \{ border: 0;/);
-  assert.match(css,/lp-broadcast-frame::after \{[^}]*padding: 1px;[^}]*mask-composite: exclude;[^}]*pointer-events: none/);
-  assert.match(css,/lp-broadcast-interior \{ inset: 0; border-radius: 0; background: transparent;[^}]*clip-path: none/);
-  assert.doesNotMatch(css,/lp-broadcast-interior \{[^}]*clip-path: inset/);
+const read = file => readFileSync(new URL(file, import.meta.url), "utf8");
+const app = read("../src/App.tsx");
+const css = read("../src/sunset-redesign.css");
+
+test("Twitch player works on either page and links out below Twitch's minimum width", () => {
+  assert.equal(twitchChannel, "chogcare");
+  assert.equal(twitchChannelUrl, "https://www.twitch.tv/chogcare");
+  assert.equal((app.match(/<BroadcastPanel headingId=/g) ?? []).length, 2);
+  assert.match(app, /const twitchPlayerMinWidth = 400;/);
+  assert.match(app, /width >= twitchPlayerMinWidth/);
+  assert.match(app, /const parent = encodeURIComponent\(window\.location\.hostname\)/);
+  assert.match(app, /\?channel=\$\{twitchChannel\}&parent=\$\{parent\}&muted=true&autoplay=true/);
+  assert.match(app, /allowFullScreen/);
+  assert.match(app, /href=\{twitchChannelUrl\}[^>]*>\s*<Broadcast[^>]*\/> Watch on Twitch/);
+  assert.match(css, /\.care-twitch-player \{ aspect-ratio: 16 \/ 9; min-height: 300px; \}/);
 });
 
-test("portrait edge bleed is minimal and does not crop landscape fallback",async()=>{
-  const css=await readFile(new URL("../src/sunset-redesign.css",import.meta.url),"utf8");
-  const app=await readFile(new URL("../src/App.tsx",import.meta.url),"utf8");
-  assert.match(app,/data-camera-fit=\{portraitAspect \? "portrait" : "fallback"\}/);
-  assert.match(css,/\[data-camera-fit=portrait\] video\.lp-broadcast-player \{ inset: -1px; width: calc\(100% \+ 2px\); height: calc\(100% \+ 2px\); object-fit: cover/);
-  assert.match(css,/video\.lp-broadcast-player \{ object-fit: contain; object-position: center/);
+test("chat is collapsed by default and only loads the channel chat when opened", () => {
+  assert.match(app, /const \[chatOpen, setChatOpen\] = useState\(false\)/);
+  assert.match(app, /aria-expanded=\{chatOpen\} aria-controls=\{chatId\}/);
+  assert.match(app, /\{chatOpen && <iframe\s+className="care-twitch-chat"/);
+  assert.match(app, /https:\/\/www\.twitch\.tv\/embed\/\$\{twitchChannel\}\/chat\?parent=\$\{parent\}&darkpopout/);
 });

@@ -137,16 +137,6 @@
 .care-station-toolbar > span { color: #b1a1c7; font-size: 12px; }
 .care-station-grid { display: grid; grid-template-columns: minmax(0, 1.4fr) minmax(340px, .9fr); gap: 30px; align-items: start; }
 .care-stream-column { min-width: 0; }
-.care-stream { position: relative; width: min(100%, 430px); aspect-ratio: 3 / 4; margin-inline: auto; }
-/* Keep checkout's portrait stream compact without narrowing the form.
-   The landing preview and portrait framing/crop remain unchanged. */
-.care-station .care-stream { width: min(100%, 480px); }
-.care-stream .lp-broadcast-frame { border-radius: 24px; }
-.care-stream .lp-broadcast-interior { border-radius: 22.5px; }
-.care-stream .lp-broadcast-player { object-position: center 60%; }
-.care-stream .lp-corner-chog { width: clamp(76px, 7vw, 100px); height: auto; right: 8px; bottom: -12px; }
-.care-stream-caption { display: flex; align-items: center; gap: 10px; padding: 26px 0 18px; font-size: 13px; color: #cfbfdf; }
-.care-stream-caption > span:last-child { margin-left: auto; font-size: 11px; color: #b4a4c8; }
 .care-custody-note { max-width: 530px; color: #ac9eba; font-size: 12px; line-height: 1.8; border-top: 1px solid #bda4ee24; padding-top: 16px; }
 .care-selected { display: flex; align-items: center; gap: 17px; padding: 0 0 21px; }
 .care-selected > img { width: 70px; height: 70px; border-radius: 12px; object-fit: cover; flex-shrink: 0; }
@@ -222,8 +212,6 @@
   .care-causes { padding-inline: 5%; }
   .care-station-grid { gap: 22px; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); }
   .care-station { padding-inline: 22px; }
-  .care-stream-caption { flex-wrap: wrap; }
-  .care-stream-caption > span:last-child { margin-left: 30px; width: 100%; }
 }
 @media (max-width: 767px) {
   .care-intro { grid-template-columns: 1fr; gap: 32px; padding: 24px 24px 30px; }
@@ -251,13 +239,8 @@
   .care-station-toolbar { margin-bottom: 16px; }
   .care-station-toolbar > span { display: none; }
   .care-station-grid { grid-template-columns: 1fr; gap: 28px; }
-  .care-stream { width: 100%; margin-inline: auto; }
-  .care-stream-caption { padding-top: 24px; }
-  .care-stream-caption > span:last-child { margin-left: auto; width: auto; }
-  .care-stream .lp-corner-chog { width: 76px; }
   .care-selected h2 { font-size: 22px; }
   .care-checkout-column .lp-payment { margin-inline: 0; }
-  .care-stream .lp-broadcast-placeholder h2 { font-size: 22px; }
 }
 
 /* Mobile polish: preserve the CHOG identity and all payment states. Keep touch
@@ -304,9 +287,6 @@
   .care-station { padding: 12px 12px 28px; }
   .care-station-toolbar .lp-text-button, .care-selected .lp-text-button { min-height: 44px; }
   .care-station-grid { gap: 22px; }
-  .care-station .care-stream { width: min(100%, 360px); }
-  .care-stream .lp-broadcast-frame::before { animation: none; }
-  .care-stream .lp-broadcast-frame { box-shadow: none; }
   .care-selected { gap: 12px; padding-bottom: 16px; }
   .care-selected > img { width: 56px; height: 56px; }
   .care-selected h2 { font-size: 20px; text-wrap: balance; }

@@ -28,13 +28,11 @@ test('supplied wordmark has transparent corners and a substantial readable lette
   for (const [x, y] of [[0,0], [609,0], [0,199], [609,199]]) assert.equal(logo.data[(y*logo.width+x)*4+3], 0);
 });
 
-test('lower panels are opaque and the live frame no longer rotates a pixelated oversized rim', () => {
+test('lower panels are opaque and the brand retains its flat treatment', () => {
   assert.doesNotMatch(css, /background: #110c1df7/);
   assert.match(css, /care-lower-world[^}]*background: #110c1d;/);
   assert.match(css, /care-lower-world[^}]*border-radius: 28px;/);
   assert.match(css, /care-lower-world[^}]*border-radius: 22px;/);
-  assert.match(css, /lp-broadcast-frame::before \{ display: none/);
-  assert.match(css, /clip-path: inset\(0 round var\(--broadcast-radius\)\)/);
   assert.match(css, /care-brand-icon[^}]*box-shadow: none/);
 });
 
@@ -55,22 +53,6 @@ test('headline shade is localized and leaves the illustration sharp', () => {
   assert.match(css, /url\('\/chogcare-care-background.png'\)/);
   assert.doesNotMatch(css, /care-sunset-art[^}]*blur\(/);
   assert.match(css, /care-header-inner nav \{ display: none/);
-});
-
-test('native stream preserves the entire landscape or portrait frame instead of cropping it', () => {
-  assert.match(css, /video\.lp-broadcast-player \{ object-fit: contain; object-position: center;/);
-  assert.match(app, /loadState !== "playing"/);
-  assert.match(app, /playerLoaded \? "LIVE" : "STREAM"/);
-  assert.equal((app.match(/portraitAspect=\{portraitAspect\} onAspect=\{setPortraitAspect\}/g) ?? []).length, 2);
-  const panel = app.slice(app.indexOf('function BroadcastPanel'), app.indexOf('export default function App'));
-  assert.doesNotMatch(panel, /const \[portraitAspect, setPortraitAspect\]/);
-});
-
-test('compact broadcast sizing reduces both hero and checkout frames without restoring side bars', () => {
-  assert.match(css, /care-intro-broadcast \{ width: min\(100%, 360px\)/);
-  assert.match(css, /care-intro-broadcast \{ width: min\(100%, 300px\)/);
-  assert.match(css, /care-station \.care-stream \{ width: min\(100%, 360px\)/);
-  assert.match(css, /care-station \.care-stream, \.care-station-stream-heading \{ width: min\(100%, 300px\)/);
 });
 
 test('bridge precedes a single complete-panel motion without a separate hidden content phase', () => {
@@ -125,7 +107,6 @@ test('heart scene starts hidden above an opaque illustration and never paints a 
   assert.doesNotMatch(scene, /gsap.fromTo\(sunset/);
   assert.match(css, /care-scene-bridge[^}]*background: transparent/);
   assert.match(css, /care-header-wordmark[^}]*translateY\(-5px\)/);
-  assert.match(app, /playerLoaded \? "LIVE" : "STREAM"/);
 });
 
 test('hero signature has a readable contrast surface rather than faint text over artwork', () => {
@@ -255,9 +236,7 @@ test('concise cause cards retain original descriptions and accessible giving ste
   assert.match(giving, /aria-label="NFT pool donation steps"/);
 });
 
-test('unavailable states remain truthful with branded presentation rather than invented activity', () => {
-  assert.match(app, /care-broadcast-state-icon/);
-  assert.match(app, /Reconnecting broadcast/);
+test('unavailable leaderboard keeps its branded presentation', () => {
   const board = read('../src/Leaderboard.tsx');
   assert.match(board, /care-board-state-icon/);
   assert.match(board, /This does not mean the board is empty/);

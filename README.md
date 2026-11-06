@@ -10,7 +10,7 @@ ChogCare connects a donation website to a physical care station: a NodeMCU, a co
 
 The website and source code are public. **No login, invitation, wallet connection or payment is required to review the project.** Start with the [judge walkthrough](docs/JUDGE-ACCESS.md).
 
-The website runs on Vercel. The live camera, payment worker and USB station run on the operator's computer. Their availability depends on that installation being online; the site shows unavailable states instead of inventing successful activity.
+The website runs on Vercel and embeds the care station broadcast from [ChogCare on Twitch](https://www.twitch.tv/chogcare). The camera and USB station are operated by ChogCare.
 
 ## What the project does
 
@@ -18,7 +18,7 @@ The website runs on Vercel. The live camera, payment worker and USB station run 
 - **CHOG checkout:** an invoice pins the amount, destination chain and charity recipient. A separate 10% community-pool contribution is shown before payment.
 - **Verified delivery:** included transactions, finalized delivery and failed or uncertain processing remain distinct states.
 - **Physical response:** after a verified CHOG destination receipt, the display shows the initiative, amount and thanks. The external LED pulses for the 15-second scene, then turns off. The idle screen also rotates public donor NFT cards.
-- **Mobile broadcast:** a lightweight portrait stream, native Safari playback and refreshing camera previews cover the initial video connection period. Autoplay can still require a tap under browser restrictions.
+- **Broadcast and chat:** the home page and checkout show the Twitch player. The chat opens on demand, and narrow layouts link directly to Twitch.
 - **Operator tools:** a local Windows app manages owned services, private support messages and the USB bridge. A separate public dashboard is read-only.
 - **NFT community pool:** verified CHOG NFT holders can use the configured daily grant while the funded worker is ready. Eligibility and daily limits persist across restarts.
 
@@ -33,7 +33,7 @@ npm ci --ignore-scripts
 npm run dev
 ```
 
-Open `http://127.0.0.1:4173`. No custody setup is needed to inspect the interface. A fresh checkout does not include an unlocked payment worker, operator credentials or physical hardware. Use the public website for the existing camera installation.
+Open `http://127.0.0.1:4173`. No custody setup is needed to inspect the interface. A fresh checkout does not include an unlocked payment worker, operator credentials or physical hardware. Use the public website or Twitch to watch the care station.
 
 ```sh
 npm run build

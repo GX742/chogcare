@@ -35,12 +35,12 @@ html.care-navigation-transition::view-transition-new(root) { animation: careView
 .sunset-page .care-intro { position: relative; width: min(1360px, calc(100% - 96px)); margin: auto; grid-template-columns: minmax(0, .92fr) minmax(0, 1.08fr); column-gap: clamp(60px, 7vw, 110px); row-gap: 24px; padding: 38px 34px 32px; min-height: calc(100svh - 84px); background: transparent; }
 .sunset-page .care-intro-broadcast,
 .care-station-stream-heading,
-.sunset-page .care-station .care-broadcast { width: min(100%, 540px); margin-inline: auto; }
+.sunset-page .care-station .care-broadcast { width: min(100%, 440px); margin-inline: auto; }
 .sunset-page .care-intro-broadcast { justify-self: center; }
 .care-stream { width: 100%; }
 .care-twitch-player,
 .care-twitch-chat { display: block; width: 100%; border: 0; border-radius: 16px; background: #0e0e10; color-scheme: dark; }
-.care-twitch-player { aspect-ratio: 16 / 9; min-height: 300px; }
+.care-twitch-player { aspect-ratio: 3 / 4; min-height: 300px; max-height: 70svh; }
 .care-twitch-chat { height: 340px; }
 .care-twitch-fallback {
   display: flex;

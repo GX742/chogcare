@@ -17,7 +17,7 @@ test("Twitch player works on either page and links out below Twitch's minimum wi
   assert.match(app, /\?channel=\$\{twitchChannel\}&parent=\$\{parent\}&muted=true&autoplay=true/);
   assert.match(app, /allowFullScreen/);
   assert.match(app, /href=\{twitchChannelUrl\}[^>]*>\s*<Broadcast[^>]*\/> Watch on Twitch/);
-  assert.match(css, /\.care-twitch-player \{ aspect-ratio: 16 \/ 9; min-height: 300px; \}/);
+  assert.match(css, /\.care-twitch-player \{ aspect-ratio: 3 \/ 4; min-height: 300px; max-height: 70svh; \}/);
 });
 
 test("chat is collapsed by default and only loads the channel chat when opened", () => {

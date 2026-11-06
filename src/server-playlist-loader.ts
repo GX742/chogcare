@@ -18,8 +18,8 @@ export function createServerPlaylistLoader(Loader: HlsConfig["loader"]): NonNull
     constructor(config: HlsConfig) {
       super(config);
       const policy = config.playlistLoadPolicy.default;
-      this.totalMs = finiteBudget(policy.maxLoadTimeMs, 8_000);
-      this.firstByteMs = Math.min(finiteBudget(policy.maxTimeToFirstByteMs, 4_000), this.totalMs);
+      this.totalMs = finiteBudget(policy.maxLoadTimeMs, 16_000);
+      this.firstByteMs = Math.min(finiteBudget(policy.maxTimeToFirstByteMs, 8_000), this.totalMs);
     }
 
     override load(context: PlaylistLoaderContext, config: LoaderConfiguration, callbacks: LoaderCallbacks<PlaylistLoaderContext>): void {

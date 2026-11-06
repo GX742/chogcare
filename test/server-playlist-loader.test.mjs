@@ -97,19 +97,19 @@ test(`the real server pLoader keeps a blocking ${type} request alive past 800 ms
   assert.equal(fixture.xhr.aborted, false);
 });
 
-test(`the real server pLoader still aborts ${type} at four seconds without headers`, t => {
+test(`the real server pLoader still aborts ${type} at eight seconds without headers`, t => {
   const network = fakeNetwork(t), fixture = blockingRequest(t, network, true, type);
-  network.advance(3_999);
+  network.advance(7_999);
   assert.equal(fixture.xhr.aborted, false);
   network.advance(1);
   assert.equal(fixture.xhr.aborted, true);
   assert.equal(fixture.errors.filter(error => error.details === trackTypes[type].timeout).length, 1);
 });
 
-test(`headers do not extend the real server ${type} pLoader beyond its eight-second total budget`, t => {
+test(`headers do not extend the real server ${type} pLoader beyond its sixteen-second total budget`, t => {
   const network = fakeNetwork(t), fixture = blockingRequest(t, network, true, type);
   network.advance(1_000); fixture.xhr.headers();
-  network.advance(6_999);
+  network.advance(14_999);
   assert.equal(fixture.xhr.aborted, false);
   network.advance(1);
   assert.equal(fixture.xhr.aborted, true);
@@ -141,7 +141,7 @@ test("the extension preserves lower configured budgets, retry callbacks and shar
   assert.deepEqual(config.playlistLoadPolicy.default, { maxTimeToFirstByteMs: 1_500, maxLoadTimeMs: 2_500 });
   assert.deepEqual(Hls.DefaultConfig.playlistLoadPolicy, before);
   for (const [first, total, expectedFirst, expectedTotal] of [
-    [60_000, 60_000, 4_000, 8_000], [Infinity, Infinity, 4_000, 8_000], [3_000, 1_000, 1_000, 1_000],
+    [60_000, 60_000, 8_000, 16_000], [Infinity, Infinity, 8_000, 16_000], [3_000, 1_000, 1_000, 1_000],
   ]) {
     new Loader({ playlistLoadPolicy: { default: { maxTimeToFirstByteMs: first, maxLoadTimeMs: total } } }).load(context, request, callbacks);
     assert.equal(calls.at(-1)[1].loadPolicy.maxTimeToFirstByteMs, expectedFirst);

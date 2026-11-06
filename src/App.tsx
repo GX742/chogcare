@@ -301,9 +301,14 @@ function NativeLivePlayer({ src, onReady, onWaiting, onAspect }: { src: string; 
       },
     });
     const invalidatePresence = () => presence.invalidate();
-    const visibility = () => { if (document.hidden) presence.suspend(); else presence.invalidate(); };
-    const pageShow = (event: PageTransitionEvent) => { if (event.persisted) { presence.invalidate(); if (active()) resumePlayback(); } };
-    const online = () => presence.invalidate();
+    const visibility = () => { if (document.hidden) presence.suspend(); else presence.refresh(); };
+    const pageShow = (event: PageTransitionEvent) => {
+      if (!event.persisted) return;
+      const wasInViewport = inViewport;
+      presence.refresh();
+      if (wasInViewport && active()) resumePlayback();
+    };
+    const online = () => presence.refresh();
     const offline = () => { presence.suspend(); liveStatus.unavailable(); };
     const nativeError = () => playback.recover(undefined, true);
 

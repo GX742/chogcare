@@ -18,7 +18,7 @@ The website runs on Vercel and embeds the care station broadcast from [ChogCare 
 - **CHOG checkout:** an invoice pins the amount, destination chain and charity recipient. A separate 10% community-pool contribution is shown before payment.
 - **Verified delivery:** included transactions, finalized delivery and failed or uncertain processing remain distinct states.
 - **Physical response:** after a verified CHOG destination receipt, the display shows the initiative, amount and thanks. The external LED pulses for the 15-second scene, then turns off. The idle screen also rotates public donor NFT cards.
-- **Broadcast and chat:** the home page and checkout show the Twitch player. The chat opens on demand, and narrow layouts link directly to Twitch.
+- **Broadcast:** the home page and checkout show the vertical Twitch player on desktop and mobile.
 - **Operator tools:** a local Windows app manages owned services, private support messages and the USB bridge. A separate public dashboard is read-only.
 - **NFT community pool:** verified CHOG NFT holders can use the configured daily grant while the funded worker is ready. Eligibility and daily limits persist across restarts.
 

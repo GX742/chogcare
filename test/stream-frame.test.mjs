@@ -7,22 +7,21 @@ const read = file => readFileSync(new URL(file, import.meta.url), "utf8");
 const app = read("../src/App.tsx");
 const css = read("../src/sunset-redesign.css");
 
-test("Twitch player works on either page and links out below Twitch's minimum width", () => {
+test("Twitch player stays inline on both pages and fits narrow screens", () => {
   assert.equal(twitchChannel, "chogcare");
   assert.equal(twitchChannelUrl, "https://www.twitch.tv/chogcare");
   assert.equal((app.match(/<BroadcastPanel headingId=/g) ?? []).length, 2);
-  assert.match(app, /const twitchPlayerMinWidth = 400;/);
-  assert.match(app, /width >= twitchPlayerMinWidth/);
+  assert.match(app, /const twitchPlayerWidth = 400;/);
+  assert.match(app, /width=\{twitchPlayerWidth\}/);
+  assert.match(app, /setPlayerScale\(Math.min\(1, frame.getBoundingClientRect\(\).width \/ twitchPlayerWidth\)\)/);
   assert.match(app, /const parent = encodeURIComponent\(window\.location\.hostname\)/);
   assert.match(app, /\?channel=\$\{twitchChannel\}&parent=\$\{parent\}&muted=true&autoplay=true/);
   assert.match(app, /allowFullScreen/);
-  assert.match(app, /href=\{twitchChannelUrl\}[^>]*>\s*<Broadcast[^>]*\/> Watch on Twitch/);
-  assert.match(css, /\.care-twitch-player \{ aspect-ratio: 3 \/ 4; min-height: 300px; max-height: 70svh; \}/);
+  assert.doesNotMatch(app, /Watch on Twitch|care-twitch-fallback|playerFits/);
 });
 
-test("chat is collapsed by default and only loads the channel chat when opened", () => {
-  assert.match(app, /const \[chatOpen, setChatOpen\] = useState\(false\)/);
-  assert.match(app, /aria-expanded=\{chatOpen\} aria-controls=\{chatId\}/);
-  assert.match(app, /\{chatOpen && <iframe\s+className="care-twitch-chat"/);
-  assert.match(app, /https:\/\/www\.twitch\.tv\/embed\/\$\{twitchChannel\}\/chat\?parent=\$\{parent\}&darkpopout/);
+test("the portrait iframe fits its frame without an extra chat or link row", () => {
+  assert.match(css, /\.care-stream \{[^}]*aspect-ratio: 9 \/ 16;/);
+  assert.match(css, /\.care-twitch-player \{[^}]*aspect-ratio: 9 \/ 16;[^}]*transform-origin: top left;/);
+  assert.doesNotMatch(app, /care-broadcast-actions|care-twitch-chat|chatOpen/);
 });

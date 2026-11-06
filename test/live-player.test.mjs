@@ -17,15 +17,15 @@ const ranges = (...pairs) => ({ length: pairs.length, start: index => pairs[inde
 test("server HLS keeps a short buffer and finite origin timeouts without mutating shared vendor defaults", () => {
   const before=structuredClone(Hls.DefaultConfig.manifestLoadPolicy);
   const config=liveHlsConfig(1,Hls.DefaultConfig,"server");
-  assert.equal(config.liveSyncDurationCount,2);
-  assert.equal(config.liveMaxLatencyDurationCount,6);
-  assert.equal(config.maxBufferLength,4);
-  assert.equal(config.maxMaxBufferLength,6);
+  assert.equal(config.liveSyncDurationCount,4);
+  assert.equal(config.liveMaxLatencyDurationCount,10);
+  assert.equal(config.maxBufferLength,6);
+  assert.equal(config.maxMaxBufferLength,8);
   assert.equal(config.backBufferLength,2);
   assert.equal(config.lowLatencyMode,false);
   for (const name of ["manifestLoadPolicy","playlistLoadPolicy","fragLoadPolicy"]) {
-    assert.equal(config[name].default.maxTimeToFirstByteMs,4000);
-    assert.ok(config[name].default.maxLoadTimeMs<=12_000);
+    assert.equal(config[name].default.maxTimeToFirstByteMs,8_000);
+    assert.equal(config[name].default.maxLoadTimeMs,name === "fragLoadPolicy" ? 36_000 : 16_000);
     assert.notEqual(config[name].default,Hls.DefaultConfig[name].default);
   }
   config.manifestLoadPolicy.default.maxTimeToFirstByteMs=999;
@@ -87,7 +87,7 @@ test("the installed HLS controller selects complete server segments instead of t
       controller.levelLastLoaded = level;
       details.PTSKnown = true;
       controller.startPosition = 0;
-      assert.equal(hls.targetLatency, 2, "The explicit two-segment target wins over both hold-back values");
+      assert.equal(hls.targetLatency, 4, "The explicit four-segment target wins over both hold-back values");
       const fragment = controller.getNextFragment(7.3, details);
       assert.ok(fragment);
       assert.equal(controller.loadingParts, previousPartMode);

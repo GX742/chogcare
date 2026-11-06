@@ -2,11 +2,53 @@ import assert from "node:assert/strict";
 import { after, before, describe, it } from "node:test";
 import fs from "node:fs";
 import path from "node:path";
-import { network } from "hardhat";
-import { BrowserProvider, ContractFactory, MaxUint256, parseUnits, Wallet, ZeroHash } from "ethers";
+import { ContractDecoder, EdrContext, L1_CHAIN_TYPE, l1GenesisState, l1HardforkFromString, l1ProviderFactory, MineOrdering } from "@nomicfoundation/edr";
+import { BrowserProvider, ContractFactory, getBytes, MaxUint256, parseEther, parseUnits, Wallet, ZeroHash } from "ethers";
 
 const root = process.cwd();
 const artifact = (name) => JSON.parse(fs.readFileSync(path.join(root, "artifacts", `${name}.json`), "utf8"));
+
+async function createTestProvider() {
+  // This provider exists only in memory. Its four accounts are freshly generated
+  // and funded by the local genesis block.
+  const context = new EdrContext();
+  await context.registerProviderFactory(L1_CHAIN_TYPE, l1ProviderFactory());
+  const accounts = Array.from({ length: 4 }, () => Wallet.createRandom());
+  const hardfork = "shanghai";
+  const blockGasLimit = 30_000_000n;
+  const engine = await context.createProvider(L1_CHAIN_TYPE, {
+    allowBlocksWithSameTimestamp: false,
+    allowUnlimitedContractSize: false,
+    bailOnCallFailure: true,
+    bailOnTransactionFailure: true,
+    chainId: 31_337n,
+    networkId: 31_337n,
+    coinbase: new Uint8Array(20),
+    defaultTransactionGasLimit: blockGasLimit,
+    genesisState: [
+      ...l1GenesisState(l1HardforkFromString(hardfork)),
+      ...accounts.map(account => ({ address: getBytes(account.address), balance: parseEther("1000") })),
+    ],
+    hardfork,
+    initialBaseFeePerGas: 1_000_000_000n,
+    minGasPrice: 0n,
+    mining: { autoMine: true, blockGasLimit, memPool: { order: MineOrdering.Priority } },
+    network: { genesisBlockGasLimit: blockGasLimit, genesisBlockTime: BigInt(Math.floor(Date.now() / 1000)) },
+    observability: {},
+    ownedAccounts: accounts.map(account => account.privateKey),
+    precompileOverrides: [],
+  }, {
+    enable: false, decodeConsoleLogInputsCallback: () => [], printLineCallback() {},
+  }, { subscriptionCallback() {} }, ContractDecoder.withContracts({}));
+  return new BrowserProvider({
+    async request({ method, params = [] }) {
+      const { data } = await engine.handleRequest(JSON.stringify({ jsonrpc: "2.0", id: 1, method, params }));
+      const response = typeof data === "string" ? JSON.parse(data) : data;
+      if (response.error) throw Object.assign(new Error(response.error.message), response.error);
+      return response.result;
+    },
+  });
+}
 
 async function deploy(name, signer, args = []) {
   const { abi, bytecode } = artifact(name);
@@ -28,11 +70,9 @@ describe("ChogCare end-to-end", () => {
   let bridge;
   let source;
   let chainId;
-  let connection;
 
   before(async () => {
-    connection = await network.create({ network: "hardhatMainnet" });
-    provider = new BrowserProvider(connection.provider);
+    provider = await createTestProvider();
     admin = await provider.getSigner(0);
     adminVoucherSigner = Wallet.createRandom(); // Ephemeral test-only signer, never custody.
     donor = await provider.getSigner(1);
@@ -67,7 +107,7 @@ describe("ChogCare end-to-end", () => {
     await (await usdc.mint(await source.getAddress(), parseUnits("10", 6))).wait();
     await (await chog.connect(donor).approve(await source.getAddress(), MaxUint256)).wait();
   });
-  after(async () => { provider?.destroy(); await connection?.close(); });
+  after(() => provider?.destroy());
 
   it("swaps, adds a signed $0.50 subsidy and forwards USDC to the allowlisted recipient", async () => {
     const now = Math.floor(Date.now() / 1000);

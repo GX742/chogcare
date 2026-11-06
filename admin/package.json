@@ -9,7 +9,7 @@
   "build": {
     "appId": "com.chogcare.admin",
     "productName": "ChogCare Admin",
-    "electronVersion": "44.9.0",
+    "electronVersion": "44.10.2",
     "electronDist": "../node_modules/electron/dist",
     "asar": true,
     "electronFuses": {

@@ -69,11 +69,14 @@ test("hidden/offline suspension is immediate and visible recovery requires a new
   assert.deepEqual(view.changes, [true, false, true]);
 });
 
-test("an initially hidden player resumes when it first becomes visible", () => {
+test("an initially hidden player resumes without waiting for a background animation frame", () => {
   const view = fixture();
   view.presence.invalidate(); view.flush();
   view.presence.suspend();
-  view.setVisible(true); view.presence.invalidate(); view.flush();
+  view.setVisible(true); view.presence.invalidate(); view.presence.refresh();
+  assert.equal(view.pending, 0);
+  assert.deepEqual(view.changes, [true]);
+  view.flush();
   assert.deepEqual(view.changes, [true]);
 });
 

@@ -8,9 +8,15 @@ export const LIVE_MAX_LATENCY_SEGMENT_COUNT = 6;
 export const LIVE_FIRST_BYTE_DEADLINE_MS = 50_000;
 export type LiveTransport = "relay" | "server";
 
+const SERVER_FIRST_BYTE_MS = 8_000;
+const SERVER_PLAYLIST_LOAD_MS = 16_000;
+// Public HD fragments sometimes take longer than the old 12-second limit
+// even after their headers arrive. Let a progressing download finish.
+const SERVER_FRAGMENT_LOAD_MS = 36_000;
+
 export function liveRecoveryTiming(transport: LiveTransport = "relay") {
   return transport === "server"
-    ? { startupMs: 12_000, stallMs: 6_000, firstByteMs: 4_000, progressMs: 3_000, hardMs: 24_000 }
+    ? { startupMs: 20_000, stallMs: 6_000, firstByteMs: SERVER_FIRST_BYTE_MS, progressMs: 8_000, hardMs: 60_000 }
     : { startupMs: 60_000, stallMs: 45_000, firstByteMs: LIVE_FIRST_BYTE_DEADLINE_MS, progressMs: 10_000, hardMs: 120_000 };
 }
 
@@ -29,8 +35,9 @@ export function livePlaybackTiming(segmentSeconds = DEFAULT_LIVE_SEGMENT_SECONDS
 export function liveBufferTiming(segmentSeconds = DEFAULT_LIVE_SEGMENT_SECONDS, transport: LiveTransport = "relay") {
   if (transport === "server") {
     const segment = liveSegmentSeconds(segmentSeconds);
-    return { liveSyncDurationCount: 2, liveMaxLatencyDurationCount: 6,
-      maxBufferLength: Math.max(3, segment * 4), maxMaxBufferLength: Math.max(5, segment * 6) };
+    // A few extra complete fragments absorb transfer jitter at the live edge.
+    return { liveSyncDurationCount: 4, liveMaxLatencyDurationCount: 10,
+      maxBufferLength: Math.max(3, segment * 6), maxMaxBufferLength: Math.max(5, segment * 8) };
   }
   const segment = liveSegmentSeconds(segmentSeconds), timing = livePlaybackTiming(segment);
   return {
@@ -90,7 +97,7 @@ function relayLoadPolicy(policy: HlsConfig["manifestLoadPolicy"], minimumLoadMs:
 
 function serverLoadPolicy(policy: HlsConfig["manifestLoadPolicy"], maximumLoadMs: number) {
   const original = policy.default;
-  return { ...policy, default: { ...original, maxTimeToFirstByteMs: 4_000, maxLoadTimeMs: maximumLoadMs,
+  return { ...policy, default: { ...original, maxTimeToFirstByteMs: SERVER_FIRST_BYTE_MS, maxLoadTimeMs: maximumLoadMs,
     timeoutRetry: original.timeoutRetry === null ? null : { ...original.timeoutRetry },
     errorRetry: original.errorRetry === null ? null : { ...original.errorRetry } } };
 }
@@ -114,9 +121,9 @@ export function liveHlsConfig(segmentSeconds = DEFAULT_LIVE_SEGMENT_SECONDS, def
     backBufferLength: server ? 2 : 4,
     ...(defaults ? {
       ...(server ? { pLoader: createServerPlaylistLoader(defaults.loader) } : {}),
-      manifestLoadPolicy: server ? serverLoadPolicy(defaults.manifestLoadPolicy, 8_000) : relayLoadPolicy(defaults.manifestLoadPolicy, 60_000),
-      playlistLoadPolicy: server ? serverLoadPolicy(defaults.playlistLoadPolicy, 8_000) : relayLoadPolicy(defaults.playlistLoadPolicy, 60_000),
-      fragLoadPolicy: server ? serverLoadPolicy(defaults.fragLoadPolicy, 12_000) : relayLoadPolicy(defaults.fragLoadPolicy, 120_000),
+      manifestLoadPolicy: server ? serverLoadPolicy(defaults.manifestLoadPolicy, SERVER_PLAYLIST_LOAD_MS) : relayLoadPolicy(defaults.manifestLoadPolicy, 60_000),
+      playlistLoadPolicy: server ? serverLoadPolicy(defaults.playlistLoadPolicy, SERVER_PLAYLIST_LOAD_MS) : relayLoadPolicy(defaults.playlistLoadPolicy, 60_000),
+      fragLoadPolicy: server ? serverLoadPolicy(defaults.fragLoadPolicy, SERVER_FRAGMENT_LOAD_MS) : relayLoadPolicy(defaults.fragLoadPolicy, 120_000),
     } : {}),
   };
 }

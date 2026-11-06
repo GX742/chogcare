@@ -211,13 +211,13 @@ test("server delivery rebuilds a frozen player after six seconds instead of the 
   fixture.dispose();
 });
 
-test("a server source without its first frame has a twelve-second startup deadline", async () => {
+test("a server source without any transfer progress has a finite startup deadline", async () => {
   const fixture = playerFixture({ frameDriven: true, transport: "server" });
   await fixture.start();
-  await fixture.clock.advance(11_999);
+  await fixture.clock.advance(19_999);
   assert.equal(fixture.calls.reconnect.length, 0);
   await fixture.clock.advance(1001);
-  assert.deepEqual(fixture.calls.reconnect, [13_000]);
+  assert.deepEqual(fixture.calls.reconnect, [21_000]);
   fixture.dispose();
 });
 
@@ -225,7 +225,7 @@ test("server request churn cannot extend a frozen decoder beyond the hard deadli
   const fixture = playerFixture({ frameDriven: true, transport: "server" });
   await fixture.start();
   fixture.recovery.frame(11);
-  for (let index=0; index<23; index++) {
+  for (let index=0; index<59; index++) {
     fixture.setTransfer({ request: {}, loaded: index+1 });
     fixture.recovery.receivedData(1);
     await fixture.clock.advance(1000);
@@ -233,7 +233,7 @@ test("server request churn cannot extend a frozen decoder beyond the hard deadli
   assert.equal(fixture.calls.reconnect.length, 0, "Useful transfers get a bounded chance to finish");
   fixture.setTransfer({ request: {}, loaded: 1 });
   await fixture.clock.advance(2000);
-  assert.deepEqual(fixture.calls.reconnect, [25_000], "Only decoded progress resets the hard deadline");
+  assert.deepEqual(fixture.calls.reconnect, [61_000], "Only decoded progress resets the hard deadline");
   fixture.dispose();
 });
 

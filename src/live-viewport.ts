@@ -24,6 +24,11 @@ export function createLiveViewportPresence({
         if (!disposed) change(read());
       });
     },
+    refresh() {
+      if (disposed) return;
+      clear();
+      change(read());
+    },
     suspend() { if (!disposed) { clear(); change(false); } },
     dispose() { disposed = true; clear(); },
   };

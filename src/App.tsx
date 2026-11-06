@@ -1,6 +1,6 @@
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { flushSync } from "react-dom";
-import { ArrowRight, ArrowUpRight, Check, Copy, Broadcast, CaretDown, ChatCircle, X, XLogo } from "@phosphor-icons/react";
+import { ArrowRight, ArrowUpRight, Check, Copy, ChatCircle, X, XLogo } from "@phosphor-icons/react";
 import { useGSAP } from "@gsap/react";
 import gsap from "gsap";
 import type PaymentCheckoutView from "./PaymentCheckout";
@@ -15,7 +15,7 @@ import CheckoutSizeTransition from "./CheckoutSizeTransition";
 import Leaderboard from "./Leaderboard";
 import SupportDialog from "./SupportDialog";
 import type { SupportContext } from "./support-model";
-import { twitchChannel, twitchChannelUrl } from "./twitch-channel";
+import { twitchChannel } from "./twitch-channel";
 
 import "./station-redesign.css";
 import "./sunset-redesign.css";
@@ -166,21 +166,20 @@ function Funding({ initiative }: { initiative: Initiative }) {
   </div>;
 }
 
-const twitchPlayerMinWidth = 400;
+const twitchPlayerWidth = 400;
 
 function BroadcastPanel({ headingId }: { headingId: string }) {
   const frameRef = useRef<HTMLDivElement>(null);
-  const [playerFits, setPlayerFits] = useState(false);
-  const [chatOpen, setChatOpen] = useState(false);
-  const chatId = `${headingId}-chat`;
+  const [playerScale, setPlayerScale] = useState(1);
   const parent = encodeURIComponent(window.location.hostname);
 
   useLayoutEffect(() => {
     const frame = frameRef.current;
     if (!frame) return;
-    const checkWidth = () => setPlayerFits(frame.getBoundingClientRect().width >= twitchPlayerMinWidth);
-    checkWidth();
-    const observer = new ResizeObserver(checkWidth);
+    // Keep Twitch's viewport at 400px and fit the complete frame on narrow screens.
+    const fitPlayer = () => setPlayerScale(Math.min(1, frame.getBoundingClientRect().width / twitchPlayerWidth));
+    fitPlayer();
+    const observer = new ResizeObserver(fitPlayer);
     observer.observe(frame);
     return () => observer.disconnect();
   }, []);
@@ -188,32 +187,16 @@ function BroadcastPanel({ headingId }: { headingId: string }) {
   return <section className="care-broadcast" aria-labelledby={headingId}>
     <h2 id={headingId} className="sr-only">ChogCare broadcast</h2>
     <div className="care-stream" ref={frameRef}>
-      {playerFits ? <iframe
+      <iframe
         className="care-twitch-player"
         src={`https://player.twitch.tv/?channel=${twitchChannel}&parent=${parent}&muted=true&autoplay=true`}
         title="ChogCare Twitch broadcast"
+        width={twitchPlayerWidth}
+        style={playerScale < 1 ? { transform: `scale(${playerScale})` } : undefined}
         referrerPolicy="strict-origin-when-cross-origin"
         allow="autoplay; encrypted-media; picture-in-picture; fullscreen"
         allowFullScreen
-      /> : <a className="care-twitch-fallback" href={twitchChannelUrl} target="_blank" rel="noopener noreferrer">
-        <Broadcast size={24} aria-hidden="true" /> Watch on Twitch <ArrowUpRight size={16} aria-hidden="true" />
-      </a>}
-    </div>
-    <div className="care-broadcast-actions">
-      <button type="button" aria-expanded={chatOpen} aria-controls={chatId} onClick={() => setChatOpen(open => !open)}>
-        <ChatCircle size={18} aria-hidden="true" /> Chat <CaretDown size={14} aria-hidden="true" />
-      </button>
-      {playerFits && <a href={twitchChannelUrl} target="_blank" rel="noopener noreferrer">
-        Twitch <ArrowUpRight size={14} aria-hidden="true" />
-      </a>}
-    </div>
-    <div id={chatId} hidden={!chatOpen}>
-      {chatOpen && <iframe
-        className="care-twitch-chat"
-        src={`https://www.twitch.tv/embed/${twitchChannel}/chat?parent=${parent}&darkpopout`}
-        title="ChogCare Twitch chat"
-        referrerPolicy="strict-origin-when-cross-origin"
-      />}
+      />
     </div>
   </section>;
 }

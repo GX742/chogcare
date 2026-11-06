@@ -66,7 +66,6 @@ test("production HTML policy excludes inline scripts, eval, arbitrary images and
   assert.match(policy, /script-src 'self';/);
   assert.match(policy, /style-src 'self';/);
   assert.match(policy, /connect-src 'self' https:\/\/45\.38\.60\.159 http:\/\/127\.0\.0\.1:8082 http:\/\/localhost:8082;/);
-  assert.match(policy, /frame-src https:\/\/player\.twitch\.tv https:\/\/stream\.chogcare\.com/);
   assert.doesNotMatch(policy, /unsafe-inline|unsafe-eval|nonce-|ws:|https:\*/);
   assert.match(policy, /form-action 'none'/);
   assert.throws(()=>contentSecurityPolicy("bad'nonce"));
@@ -76,6 +75,7 @@ test("live media permits the same-origin HLS relay, local Owncast and MSE/worker
   const deployed = JSON.parse(readFileSync(new URL("../vercel.json", import.meta.url), "utf8"));
   const vercelPolicy = deployed.headers.flatMap(rule => rule.headers).find(header => header.key === "Content-Security-Policy").value;
   for (const policy of [contentSecurityPolicy(), vercelPolicy]) {
+    assert.match(policy, /(?:^|; )frame-src https:\/\/player\.twitch\.tv https:\/\/www\.twitch\.tv\/embed\/chogcare\/chat;/);
     assert.match(policy, /(?:^|; )media-src 'self' blob: https:\/\/45\.38\.60\.159(?: http:\/\/127\.0\.0\.1:8082 http:\/\/localhost:8082)?;/);
     assert.match(policy, /(?:^|; )worker-src 'self' blob:;/);
     assert.match(policy, /(?:^|; )connect-src 'self' https:\/\/45\.38\.60\.159(?: http:\/\/127\.0\.0\.1:8082 http:\/\/localhost:8082)?;/);

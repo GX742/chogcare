@@ -33,19 +33,47 @@ html.care-navigation-transition::view-transition-new(root) { animation: careView
 .sunset-page .lp-nav-donate { display: none; }
 .sunset-page .care-header-inner .creator > img { display: block; }
 .sunset-page .care-intro { position: relative; width: min(1360px, calc(100% - 96px)); margin: auto; grid-template-columns: minmax(0, .92fr) minmax(0, 1.08fr); column-gap: clamp(60px, 7vw, 110px); row-gap: 24px; padding: 38px 34px 32px; min-height: calc(100svh - 84px); background: transparent; }
-.sunset-page .care-intro-broadcast { width: min(100%, 360px); justify-self: center; filter: drop-shadow(0 24px 36px #08031666); }
-.sunset-page .care-intro .care-stream { --broadcast-radius: 26px; width: 100%; aspect-ratio: 3 / 4; }
-.sunset-page .care-intro .lp-broadcast-frame { border-radius: var(--broadcast-radius); }
-.sunset-page .care-intro .lp-broadcast-live { top: 16px; left: 16px; font-size: var(--care-label-size); min-height: 34px; padding: 0 13px; }
-.sunset-page .lp-broadcast-live.is-waiting { color: #d6c9df; }
-.sunset-page .lp-broadcast-live.is-waiting i { background: #a394b5; box-shadow: none; animation: none; }
-/* Preserve the entire frame, including landscape broadcaster/offline screens. */
-.sunset-page video.lp-broadcast-player { object-fit: contain; object-position: center; }
-.care-broadcast-preview { position: absolute; inset: 0; width: 100%; height: 100%; z-index: 2; object-fit: cover; pointer-events: none; }
-.care-broadcast-preview.is-pending { opacity: 0; }
-/* One CSS-pixel bleed covers device-pixel rounding of a decoded portrait frame.
-   Landscape fallback stays contained; do not crop an offline broadcaster card. */
-.sunset-page .care-stream[data-camera-fit=portrait] video.lp-broadcast-player { inset: -1px; width: calc(100% + 2px); height: calc(100% + 2px); object-fit: cover; }
+.sunset-page .care-intro-broadcast,
+.care-station-stream-heading,
+.sunset-page .care-station .care-broadcast { width: min(100%, 440px); margin-inline: auto; }
+.sunset-page .care-intro-broadcast { justify-self: center; }
+.care-stream { width: 100%; }
+.care-twitch-player,
+.care-twitch-chat { display: block; width: 100%; border: 0; border-radius: 16px; background: #0e0e10; color-scheme: dark; }
+.care-twitch-player { aspect-ratio: 3 / 4; min-height: 300px; max-height: 70svh; }
+.care-twitch-chat { height: 340px; }
+.care-twitch-fallback {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  min-height: 96px;
+  padding: 16px;
+  border: 1px solid #e5b4ff33;
+  border-radius: 16px;
+  background: #160e24;
+  color: #f1def9;
+  font-size: 16px;
+  font-weight: 650;
+}
+.care-broadcast-actions { display: flex; justify-content: space-between; align-items: center; margin-top: 4px; }
+.care-broadcast-actions :is(button, a) {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  min-height: 44px;
+  padding: 0 10px;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: #dcc7eb;
+  font: 600 14px/1.4 'Manrope Variable', sans-serif;
+}
+.care-broadcast-actions :is(button, a):hover,
+.care-twitch-fallback:hover { color: #fff; background: #251732; }
+.care-broadcast-actions :focus-visible,
+.care-twitch-fallback:focus-visible { outline: 2px solid #e2c1ff; outline-offset: 2px; }
+.care-broadcast-actions button[aria-expanded="true"] svg:last-child { transform: rotate(180deg); }
 .sunset-page .care-intro-copy { padding-block: 12px; animation: none; }
 .sunset-page .care-intro h1 { font-weight: 650; font-size: clamp(46px, 4.7vw, 68px); line-height: 1.08; letter-spacing: -.045em; text-wrap: balance; max-width: 13ch; margin-bottom: 24px; text-shadow: none; }
 .sunset-page .care-intro h1 > span { color: #f1a8d8; }
@@ -104,15 +132,6 @@ html.care-navigation-transition::view-transition-new(root) { animation: careView
 .sunset-page .care-station { width: min(1420px, calc(100% - 64px)); margin: 26px auto 0; border-radius: 24px; background: #110c1d; border: 1px solid #e5b4ff20; }
 .sunset-page .care-leaderboard { width: min(1480px, calc(100% - 64px)); margin: 64px auto 0; background: #110c1d; border-color: #e5b4ff20; }
 .sunset-page .lp-footer { position: relative; width: 100%; margin: 0; background: #110c1d; border-radius: 0; padding-inline: max(40px, calc((100% - 1360px) / 2)); }
-.sunset-page .care-stream { --broadcast-radius: 24px; }
-.sunset-page .care-intro .care-stream { --broadcast-radius: 26px; }
-/* The rim is an overlay, never a layout border. The video viewport therefore
-   has exactly the camera's aspect ratio, including at fractional mobile sizes.
-   Only the outer frame clips: no nested rounded black layer behind the video. */
-.sunset-page .lp-broadcast-frame { border: 0; border-radius: var(--broadcast-radius); background: #050308; overflow: hidden; clip-path: inset(0 round var(--broadcast-radius)); }
-.sunset-page .lp-broadcast-frame::before { display: none; }
-.sunset-page .lp-broadcast-frame::after { content: ''; position: absolute; inset: 0; z-index: 4; padding: 1px; border-radius: inherit; background: linear-gradient(135deg, #ffbce8, #a767ef 42%, #713aca 70%, #f586d9); -webkit-mask: linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0); mask: linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0); -webkit-mask-composite: xor; mask-composite: exclude; pointer-events: none; }
-.sunset-page .lp-broadcast-interior { inset: 0; border-radius: 0; background: transparent; box-shadow: none; clip-path: none; overflow: visible; }
 .care-support-strip { width: min(1480px, calc(100% - 64px)); margin: 48px auto; padding: 36px 44px; display: grid; grid-template-columns: auto minmax(0, 1fr) auto; gap: 26px; align-items: center; border: 1px solid #e5b4ff20; border-radius: 24px; background: #110c1d; }
 .care-support-symbol { width: 70px; height: 70px; display: grid; place-items: center; border-radius: 22px; color: #eec0f6; background: #372344; }
 .care-support-strip span { display: block; margin-bottom: 8px; color: #d4aceb; font-size: var(--care-label-size); }
@@ -150,8 +169,6 @@ html.care-navigation-transition::view-transition-new(root) { animation: careView
 .sunset-page .leaderboard-empty p { font-size: var(--care-body-size); }
 .sunset-page .care-selected span, .sunset-page .care-selected button { font-size: var(--care-label-size); }
 .sunset-page .care-selected h2 { font-weight: 650; }
-.sunset-page .lp-broadcast-state { font-size: var(--care-body-size); }
-.sunset-page .lp-broadcast-state button { font-size: var(--care-control-size); font-weight: 600; }
 .sunset-page .care-checkout-column .lp-payment-tabs button { font-size: var(--care-control-size); font-weight: 600; }
 .sunset-page .care-checkout-column .lp-payment-tabs small { font-size: var(--care-label-size); }
 .sunset-page .payment-service-notice p { font-size: var(--care-body-size); }
@@ -167,12 +184,10 @@ html.care-navigation-transition::view-transition-new(root) { animation: careView
 .sunset-page .care-station-grid { grid-template-areas: "stream checkout"; }
 .care-checkout-column { grid-area: checkout; }
 .care-stream-column { grid-area: stream; }
-.care-station-stream-heading { width: min(100%, 360px); margin: 0 auto 18px; }
-.sunset-page .care-station .care-stream { width: min(100%, 360px); }
+.care-station-stream-heading { margin-bottom: 18px; }
 .care-station-stream-heading h3 { margin: 0; color: #efe4f7; font-size: 20px; font-weight: 600; letter-spacing: -.025em; }
 .care-station-stream-heading p { margin: 6px 0 0; color: #c7b9d2; font-size: 14px; line-height: 1.6; }
-.sunset-page .lp-broadcast-state { background: radial-gradient(ellipse at 50% 44%, #24132e, #090610 75%); gap: 16px; }
-.care-broadcast-state-icon, .care-board-state-icon { display: grid; place-items: center; width: 64px; height: 64px; border: 1px solid #d7afff33; border-radius: 20px; color: #d3b2ed; background: #d7afff0b; }
+.care-board-state-icon { display: grid; place-items: center; width: 64px; height: 64px; border: 1px solid #d7afff33; border-radius: 20px; color: #d3b2ed; background: #d7afff0b; }
 .sunset-page .leaderboard-board:has(.leaderboard-unavailable):not(:has(ol)) { min-height: 0; }
 .sunset-page .leaderboard-unavailable { padding: 26px; border: 1px solid #e5b4ff20; border-radius: 20px; background: #1b1328; }
 .care-board-state-icon { margin-bottom: 20px; }
@@ -213,7 +228,6 @@ html.care-navigation-transition::view-transition-new(root) { animation: careView
   .sunset-page .care-header-inner .brand .care-header-icon { width: 40px; height: 40px; border-radius: 12px; }
   .sunset-page .care-header-inner .brand .care-header-wordmark { width: 150px; transform: translateY(-4px); }
   .sunset-page .care-intro { width: calc(100% - 64px); gap: 44px; padding-inline: 12px; min-height: calc(100svh - 80px); }
-  .sunset-page .care-intro-broadcast { max-width: 360px; }
   .sunset-page .care-intro h1 { font-size: clamp(42px, 5vw, 58px); }
   .sunset-page .care-cause-buttons { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 36px 24px; }
   .sunset-page .care-cause-visual { aspect-ratio: 5 / 4; }
@@ -249,9 +263,6 @@ html.care-navigation-transition::view-transition-new(root) { animation: careView
   .sunset-page .care-intro-copy > p { font-size: 17px; max-width: 30ch; margin-bottom: 20px; }
   .care-hero-actions { gap: 14px; align-items: center; }
   .sunset-page .care-hero-actions .button.primary { width: auto; min-height: 52px; padding-inline: 22px; font-size: 15px; gap: 18px; }
-  .sunset-page .care-intro-broadcast { width: min(100%, 300px); }
-  .sunset-page .care-station .care-stream, .care-station-stream-heading { width: min(100%, 300px); }
-  .sunset-page .care-intro .care-stream { aspect-ratio: 3 / 4; }
   .care-hero-signature { font-size: 14px; gap: 10px; margin-top: 0; }
   .care-signature-line { width: 24px; }
   .care-signature-path { gap: 14px; min-height: 44px; padding-inline: 18px; border-radius: 14px; }
@@ -304,4 +315,11 @@ html.care-navigation-transition::view-transition-new(root) { animation: careView
 @media (prefers-reduced-motion: reduce) {
   .sunset-page .care-cause-button { transition: none; }
   .sunset-page .care-header-nav a, .sunset-page .care-header-nav a::after { transition: none; }
+}
+
+@media (min-width: 768px) and (max-width: 1023px) {
+  .sunset-page .care-intro { grid-template-columns: minmax(400px, 1fr) minmax(0, 1fr); column-gap: 28px; }
+}
+@media (min-width: 768px) and (max-width: 959px) {
+  .sunset-page .care-station-grid { grid-template-columns: minmax(0, 1fr); grid-template-areas: "stream" "checkout"; }
 }

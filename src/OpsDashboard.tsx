@@ -1,30 +1,18 @@
 import { useEffect, useRef, useState } from "react";
 import { ArrowRight, ArrowsLeftRight, Broadcast, CaretDown, Coins, CreditCard, Heart, Users } from "@phosphor-icons/react";
-import { publicBroadcastOrigin } from "./broadcast-source";
+import { twitchChannelUrl } from "./twitch-channel";
 import { checkoutSelection } from "./checkout-session";
 import { initiativeNames } from "./donation-share";
-import { bridgeAmounts, dashboardChogAmount, formatEstimateUsd, observeBroadcast, parseDashboardSnapshot, readBroadcastManifest, type BridgeAmount, type BridgeEstimate, type BroadcastObservation, type DashboardSnapshot, type ServiceState } from "./ops-dashboard-model";
-import { readBoundedBroadcastBody, runBridgeEstimate } from "./ops-dashboard-requests";
+import { bridgeAmounts, dashboardChogAmount, formatEstimateUsd, parseDashboardSnapshot, type BridgeAmount, type BridgeEstimate, type DashboardSnapshot, type ServiceState } from "./ops-dashboard-model";
+import { runBridgeEstimate } from "./ops-dashboard-requests";
 import "./ops-dashboard.css";
 
 type DisplayStatus = { label: string; tone: "ready" | "paused" | "offline" | "unknown" };
 const paymentStatus = (state: ServiceState | undefined, checking: boolean): DisplayStatus => state ? { label: state === "ready" ? "Ready" : state === "paused" ? "Paused" : "Offline", tone: state } : { label: checking ? "Checking" : "Unavailable", tone: "unknown" };
-const streamUrl = `${publicBroadcastOrigin}/hls/stream.m3u8`;
-
-async function playlist(url: string, signal: AbortSignal) {
-  const response = await fetch(url, { signal, cache: "no-store", credentials: "omit", referrerPolicy: "no-referrer", redirect: "error" });
-  if (!response.ok) throw new Error("Broadcast unavailable.");
-  const body = await readBoundedBroadcastBody(response);
-  const manifest = readBroadcastManifest(body, url);
-  if (!manifest) throw new Error("Broadcast status unavailable.");
-  return manifest;
-}
 
 export default function OpsDashboard() {
   const [snapshot, setSnapshot] = useState<DashboardSnapshot | null>(null);
   const [checking, setChecking] = useState(true);
-  const [broadcast, setBroadcast] = useState<DisplayStatus>({ label: "Checking", tone: "unknown" });
-  const observation = useRef<BroadcastObservation | null>(null);
   const [amount, setAmount] = useState<BridgeAmount>("300");
   const [estimate, setEstimate] = useState<BridgeEstimate | null>(null);
   const [estimateError, setEstimateError] = useState("");
@@ -53,24 +41,16 @@ export default function OpsDashboard() {
       } catch { if (!disposed) setSnapshot(null); }
       finally { if (!disposed) setChecking(false); }
     };
-    const loadBroadcast = async (signal: AbortSignal) => {
-      try {
-        const master = await playlist(streamUrl, signal);
-        const media = master.variant ? await playlist(master.variant, signal) : master;
-        const next = observeBroadcast(observation.current, media);
-        if (!disposed) { observation.current = next.observation; setBroadcast({ label: next.live ? "Live" : "Not confirmed", tone: next.live ? "ready" : "unknown" }); }
-      } catch { if (!disposed) { observation.current = null; setBroadcast({ label: "Unavailable", tone: "unknown" }); } }
-    };
     const poll = async () => {
       if (disposed || running || document.hidden) return;
       running = true;
       try {
         const signal = AbortSignal.any([controller.signal, AbortSignal.timeout(10_000)]);
-        await Promise.all([loadDashboard(signal), loadBroadcast(signal)]);
+        await loadDashboard(signal);
       } finally { running = false; if (!disposed) timer = setTimeout(() => void poll(), 15_000); }
     };
     const visibility = () => {
-      if (document.hidden) { setSnapshot(null); setBroadcast({ label: "Not confirmed", tone: "unknown" }); observation.current = null; }
+      if (document.hidden) setSnapshot(null);
       else { clearTimeout(timer); void poll(); }
     };
     void poll(); document.addEventListener("visibilitychange", visibility);
@@ -98,7 +78,7 @@ export default function OpsDashboard() {
   const expired = !!estimate && now >= estimate.expiresAt;
   const statuses = [
     { label: "Payments", Icon: CreditCard, status: paymentStatus(snapshot?.payments.state, checking) },
-    { label: "Live broadcast", Icon: Broadcast, status: broadcast },
+    { label: "Live broadcast", Icon: Broadcast, href: twitchChannelUrl },
     { label: "NFT pool", Icon: Coins, status: paymentStatus(snapshot?.payments.nftState, checking) },
     { label: "Care station", Icon: Heart, status: { label: "Not confirmed", tone: "unknown" } as DisplayStatus },
   ];
@@ -112,7 +92,7 @@ export default function OpsDashboard() {
       </header>
       <section className="ops-status-panel" aria-labelledby="ops-service-title">
         <div className="ops-section-title"><span className="ops-title-icon"><Broadcast size={27} weight="duotone"/></span><h2 id="ops-service-title">Service status</h2></div>
-        <ul className="ops-status-list">{statuses.map(({ label, Icon, status }) => <li key={label}><Icon size={25} weight="regular" aria-hidden="true"/><span>{label}</span><span className={`ops-status ops-status-${status.tone}`}><i aria-hidden="true"/>{status.label}</span></li>)}</ul>
+        <ul className="ops-status-list">{statuses.map(({ label, Icon, status, href }) => <li key={label}><Icon size={25} weight="regular" aria-hidden="true"/><span>{label}</span>{status ? <span className={`ops-status ops-status-${status.tone}`}><i aria-hidden="true"/>{status.label}</span> : <a className="ops-status ops-broadcast-link" href={href} target="_blank" rel="noopener noreferrer">Watch on Twitch</a>}</li>)}</ul>
         <p className="ops-status-note">{snapshot ? `Checked ${new Date(snapshot.checkedAt).toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" })}. Station activity is not publicly verified.` : checking ? "Checking the public service, without admin access." : "The public service could not be checked. Unknown is not offline."}</p>
       </section>
       <section className="ops-metrics" aria-label="Donation impact">

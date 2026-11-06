@@ -80,6 +80,8 @@ test("dashboard remains a GET-only, independent read-only route with real artwor
   const source = readFileSync(new URL("../src/OpsDashboard.tsx", import.meta.url), "utf8");
   assert.ok(source.includes("/chogcare-sunset.png")); assert.ok(source.includes("/chog-donation-coin.png"));
   const requests = readFileSync(new URL("../src/ops-dashboard-requests.ts", import.meta.url), "utf8");
+  assert.ok(source.includes("Watch on Twitch"));
+  assert.doesNotMatch(source, /\.m3u8|loadBroadcast/);
   assert.ok(source.includes("/api/payments/dashboard")); assert.ok(requests.includes("/api/payments/bridge-estimate?"));
   assert.ok(!source.includes('method: "POST"')); assert.ok(!source.includes("/api/admin")); assert.ok(!source.includes("createPaymentRequest"));
   assert.ok(!requests.includes('method: "POST"')); assert.ok(!source.includes("response.text()"));

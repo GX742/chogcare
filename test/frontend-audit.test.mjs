@@ -52,14 +52,10 @@ test("site CSS references real loaded variable font families on desktop as well 
   assert.match(read("../src/styles.css"), /font-family: "DM Sans Variable"/);
 });
 
-test("player recovery stays local, accessible and free of native controls", () => {
+test("Twitch owns playback state and the public page no longer starts the legacy player", () => {
   const source = read("../src/App.tsx");
-  assert.match(read("../src/live-recovery.ts"), /mediaProblem\?\.name === "NotAllowedError"/);
-  assert.match(source, /Play broadcast/);
-  assert.match(source, /Retry broadcast/);
-  assert.match(source, /loadMonitor.dispose\(\)/);
-  assert.match(source, /removeEventListener\("pause", pausedPlayback\)/);
-  assert.match(source, /controls=\{false\}/);
+  assert.match(source, /https:\/\/player\.twitch\.tv\//);
+  assert.doesNotMatch(source, /NativeLivePlayer|VITE_OWNCAST_URL|hls\.js|playerLoaded/);
 });
 
 test("dialogs keep a close action visible while scrolling and block background scrolling", () => {

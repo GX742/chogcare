@@ -1,7 +1,6 @@
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { flushSync } from "react-dom";
-import type HlsType from "hls.js";
-import { ArrowRight, ArrowUpRight, Check, Copy, Broadcast, ChatCircle, X, XLogo } from "@phosphor-icons/react";
+import { ArrowRight, ArrowUpRight, Check, Copy, Broadcast, CaretDown, ChatCircle, X, XLogo } from "@phosphor-icons/react";
 import { useGSAP } from "@gsap/react";
 import gsap from "gsap";
 import type PaymentCheckoutView from "./PaymentCheckout";
@@ -15,13 +14,8 @@ import CheckoutRecovery from "./CheckoutRecovery";
 import CheckoutSizeTransition from "./CheckoutSizeTransition";
 import Leaderboard from "./Leaderboard";
 import SupportDialog from "./SupportDialog";
-import BroadcastPreview from "./BroadcastPreview";
 import type { SupportContext } from "./support-model";
-import { createLiveDriftSync, createLiveLoadState, createLiveResumeSync, liveBufferTiming, liveHlsConfig, livePlaylistKey, livePlaybackStrategy, liveSegmentSeconds, portraitFrameAspect, recoverLiveNetwork, DEFAULT_LIVE_SEGMENT_SECONDS, MOBILE_LIVE_SEGMENT_SECONDS, type LiveLoadState } from "./live-player";
-import { createLivePlaybackRecovery } from "./live-recovery";
-import { createLivePlaybackStatus } from "./live-status";
-import { createLiveViewportPresence } from "./live-viewport";
-import { broadcastPreviewUrl, serverBroadcastStreamUrl, serverBroadcastSource } from "./broadcast-source";
+import { twitchChannel, twitchChannelUrl } from "./twitch-channel";
 
 import "./station-redesign.css";
 import "./sunset-redesign.css";
@@ -172,335 +166,56 @@ function Funding({ initiative }: { initiative: Initiative }) {
   </div>;
 }
 
-const configuredTwitchChannel = import.meta.env.VITE_TWITCH_CHANNEL?.trim().toLowerCase() || "";
-const twitchChannel = /^[a-z0-9_]{4,25}$/.test(configuredTwitchChannel) ? configuredTwitchChannel : null;
-function owncastStreamUrl() {
-  return serverBroadcastStreamUrl(import.meta.env.VITE_OWNCAST_URL?.trim(), window.location.origin);
-}
+const twitchPlayerMinWidth = 400;
 
-function NativeLivePlayer({ src, onReady, onWaiting, onAspect }: { src: string; onReady: () => void; onWaiting: () => void; onAspect: (ratio: number | undefined) => void }) {
-  const videoRef = useRef<HTMLVideoElement>(null);
-  const callbacks = useRef({ onReady, onWaiting, onAspect });
-  const playAction = useRef<(() => void) | null>(null);
-  const [loadState, setLoadState] = useState<LiveLoadState>("loading");
-  const [hasFrame, setHasFrame] = useState(false);
-  const [previewReady, setPreviewReady] = useState(false);
-  const [inView, setInView] = useState(true);
-  const [attempt, setAttempt] = useState(0);
-  const preview = broadcastPreviewUrl(src, window.location.origin);
+function BroadcastPanel({ headingId }: { headingId: string }) {
+  const frameRef = useRef<HTMLDivElement>(null);
+  const [playerFits, setPlayerFits] = useState(false);
+  const [chatOpen, setChatOpen] = useState(false);
+  const chatId = `${headingId}-chat`;
+  const parent = encodeURIComponent(window.location.hostname);
 
-  useEffect(() => { callbacks.current = { onReady, onWaiting, onAspect }; }, [onReady, onWaiting, onAspect]);
+  useLayoutEffect(() => {
+    const frame = frameRef.current;
+    if (!frame) return;
+    const checkWidth = () => setPlayerFits(frame.getBoundingClientRect().width >= twitchPlayerMinWidth);
+    checkWidth();
+    const observer = new ResizeObserver(checkWidth);
+    observer.observe(frame);
+    return () => observer.disconnect();
+  }, []);
 
-  useEffect(() => {
-    const element = videoRef.current;
-    if (!element) return;
-    const video: HTMLVideoElement = element;
-    let cancelled = false, inViewport = false, generation = 0;
-    const transport = serverBroadcastSource(src) ? "server" : "relay";
-    let segmentSeconds = transport === "server" ? 1 : src.endsWith("/hls/mobile/stream.m3u8") ? MOBILE_LIVE_SEGMENT_SECONDS : DEFAULT_LIVE_SEGMENT_SECONDS;
-    let hls: HlsType | null = null, nativeActive = false;
-    let sourceStale = false, frameCallback: number | null = null;
-    let pendingFragment: { readonly stats: { loaded: number } } | null = null;
-    let pendingPlaylist: { level: number; url: string; stats: { loaded: 0 } } | null = null;
-    const frameDriven = typeof video.requestVideoFrameCallback === "function";
-    const nativeHlsCapable = Boolean(video.canPlayType("application/vnd.apple.mpegurl"));
-    const managedMediaSource = "ManagedMediaSource" in window;
-    video.defaultMuted = true;
-    video.muted = true;
-    video.playsInline = true;
-    setLoadState("loading"); setHasFrame(false); setPreviewReady(false); setInView(false);
-    callbacks.current.onWaiting();
-    const active = () => {
-      if (cancelled || document.hidden || !inViewport || navigator.onLine === false) return false;
-      const box = video.getBoundingClientRect();
-      return box.width > 0 && box.height > 0 && box.bottom > 0 && box.right > 0 && box.top < window.innerHeight && box.left < window.innerWidth;
-    };
-    const liveStatus = createLivePlaybackStatus({ onChange: live => {
-      if (!cancelled) { if (live) callbacks.current.onReady(); else callbacks.current.onWaiting(); }
-    } });
-    const loadMonitor = createLiveLoadState({ onChange: state => {
-      if (cancelled) return;
-      setLoadState(state);
-      if (state === "blocked" || state === "unavailable") liveStatus.unavailable();
-    } });
-    const resumeSync = createLiveResumeSync({
-      media: video, segmentSeconds: () => segmentSeconds,
-      liveSyncPosition: () => hls?.liveSyncPosition ?? null,
-      // MSE seekable describes the advertised live window, including media
-      // still being downloaded. Resume only inside data already buffered.
-      bufferRanges: () => hls ? video.buffered : video.seekable,
-    });
-    const driftSync = createLiveDriftSync({ media: video, active: () => nativeActive && active(), segmentSeconds: () => segmentSeconds });
-    const updateAspect = () => {
-      if (!cancelled && video.videoWidth > 0 && video.videoHeight > 0) callbacks.current.onAspect(portraitFrameAspect(video.videoWidth, video.videoHeight));
-    };
-    const playback = createLivePlaybackRecovery({
-      media: video, active, monitor: loadMonitor,
-      frameDriven, transport,
-      transferProgress: () => pendingFragment ? { request: pendingFragment.stats, loaded: pendingFragment.stats.loaded }
-        : pendingPlaylist ? { request: pendingPlaylist.stats, loaded: 0 } : null,
-      resumeLoading: (catchUp = false) => {
-        // Restarting an active loader aborts its in-flight fragment request.
-        // A scroll return or watchdog nudge must leave a healthy load alone.
-        if (hls?.levels.length && !hls.loadingEnabled) hls.startLoad(-1, true);
-        // A watchdog nudge must not chase the moving edge while a fragment
-        // is loading. Catch up only after an actual viewport/online resume.
-        if (catchUp) resumeSync.request();
-      },
-      reconnect: () => { if (nativeActive) startNative(); else installHls(); },
-      onPlaying: () => {
-        if (cancelled) return;
-        updateAspect(); setHasFrame(true);
-        if (nativeActive) driftSync.start();
-        if (sourceStale) liveStatus.waiting(active()); else liveStatus.playing();
-      },
-      onWaiting: () => { if (!cancelled) liveStatus.waiting(active()); },
-      onSuspend: () => {
-        // A health tick can see inactive geometry before the viewport sample.
-        // Preserve the initial sample, and reconcile a previously visible video.
-        if (cancelled || !inViewport) return;
-        presence.suspend();
-        presence.invalidate();
-      },
-    });
-    const stopFrames = () => { if (frameCallback !== null) video.cancelVideoFrameCallback(frameCallback); frameCallback = null; };
-    const observeFrames = () => {
-      if (!frameDriven || frameCallback !== null || !active()) return;
-      const current = generation;
-      const token = video.requestVideoFrameCallback((_time, metadata) => {
-        if (frameCallback !== token) return;
-        frameCallback = null;
-        if (cancelled || current !== generation) return;
-        playback.frame(metadata.mediaTime); observeFrames();
-      });
-      frameCallback = token;
-    };
-    const startPlayback = () => { observeFrames(); playback.play(); };
-    const resumePlayback = () => { observeFrames(); playback.resume(); };
-    playAction.current = () => { observeFrames(); playback.play(true); };
-    const waiting = () => playback.waiting();
-    const playing = () => { observeFrames(); playback.playing(); };
-    const progress = () => playback.progress();
-    const pausedPlayback = () => playback.paused();
-    const endedPlayback = () => playback.recover(undefined, true);
-    const metadata = () => { updateAspect(); resumeSync.update(); startPlayback(); };
-    const canPlay = () => {
-      resumeSync.update();
-      if (video.paused) startPlayback();
-    };
-    const suspendPlayback = () => { stopFrames(); playback.suspend(); liveStatus.suspend(); };
-    const presence = createLiveViewportPresence({
-      read: () => {
-        if (cancelled || document.hidden || navigator.onLine === false) return false;
-        const box = video.getBoundingClientRect();
-        return box.width > 0 && box.height > 0 && box.bottom > 0 && box.right > 0 && box.top < window.innerHeight && box.left < window.innerWidth;
-      },
-      onChange: visible => {
-        inViewport = visible; setInView(visible);
-        if (visible) resumePlayback(); else suspendPlayback();
-      },
-    });
-    const invalidatePresence = () => presence.invalidate();
-    const visibility = () => { if (document.hidden) presence.suspend(); else presence.refresh(); };
-    const pageShow = (event: PageTransitionEvent) => {
-      if (!event.persisted) return;
-      const wasInViewport = inViewport;
-      presence.refresh();
-      if (wasInViewport && active()) resumePlayback();
-    };
-    const online = () => presence.refresh();
-    const offline = () => { presence.suspend(); liveStatus.unavailable(); };
-    const nativeError = () => playback.recover(undefined, true);
-
-    function startNative() {
-      if (cancelled || !nativeHlsCapable) return;
-      generation++; stopFrames(); pendingFragment = null; pendingPlaylist = null; sourceStale = false; playback.resetSource();
-      setHasFrame(false); setPreviewReady(false);
-      hls?.destroy(); hls = null; nativeActive = true;
-      video.src = src; video.load(); waiting(); startPlayback();
-    }
-    function installHls() {
-      if (cancelled) return;
-      const current = ++generation;
-      stopFrames(); pendingFragment = null; pendingPlaylist = null; sourceStale = false; playback.resetSource();
-      setHasFrame(false); setPreviewReady(false);
-      hls?.destroy(); hls = null; nativeActive = false;
-      video.removeAttribute("src"); video.load(); waiting();
-      void import("hls.js").then(({ default: Hls }) => {
-        if (cancelled || current !== generation) return;
-        const strategy = livePlaybackStrategy(Hls.isSupported(), nativeHlsCapable, managedMediaSource);
-        if (strategy !== "hls") { if (strategy === "native") startNative(); else playback.unavailable(); return; }
-        const engine = new Hls(liveHlsConfig(segmentSeconds, Hls.DefaultConfig, transport));
-        let previousPlaylist: string | null = null;
-        hls = engine;
-        engine.on(Hls.Events.MANIFEST_PARSED, () => { if (hls === engine && !cancelled) startPlayback(); });
-        engine.on(Hls.Events.LEVEL_LOADING, (_event, data) => {
-          if (hls !== engine || cancelled) return;
-          // Playlist loading exposes no live byte counter. Its stable zero-byte
-          // identity grants only the finite first-byte window, never progress.
-          pendingPlaylist = { level: data.level, url: data.url, stats: { loaded: 0 } };
-        });
-        engine.on(Hls.Events.LEVEL_LOADED, (_event, data) => {
-          if (hls !== engine || cancelled) return;
-          if (pendingPlaylist?.level === data.level && (!data.context?.url || data.context.url === pendingPlaylist.url)) pendingPlaylist = null;
-        });
-        engine.on(Hls.Events.LEVEL_UPDATED, (_event, data) => {
-          if (hls !== engine || cancelled) return;
-          segmentSeconds = liveSegmentSeconds(data.details.targetduration);
-          Object.assign(engine.config, liveBufferTiming(segmentSeconds, transport));
-          const key = livePlaylistKey(data.details);
-          if (key !== null && key !== previousPlaylist) {
-            previousPlaylist = key; sourceStale = !data.details.live;
-            if (!sourceStale) playback.playlistAdvanced();
-          }
-          if (!data.details.live) { sourceStale = true; playback.playlistStalled(); liveStatus.waiting(active()); }
-          if (active()) resumeSync.update();
-        });
-        engine.on(Hls.Events.FRAG_LOADING, (_event, data) => { if (hls === engine && !cancelled) pendingFragment = data.frag; });
-        engine.on(Hls.Events.FRAG_LOADED, (_event, data) => {
-          if (hls !== engine || cancelled) return;
-          playback.receivedData(data.frag.stats.loaded);
-          if (pendingFragment === data.frag) pendingFragment = null;
-        });
-        engine.on(Hls.Events.ERROR, (_event, data) => {
-          if (hls !== engine || cancelled) return;
-          if ((data.details === "fragLoadError" || data.details === "fragLoadTimeOut") && pendingFragment === data.frag) pendingFragment = null;
-          if (data.details === "levelLoadError" || data.details === "levelLoadTimeOut") {
-            const level = data.context?.level ?? data.level, url = data.context?.url ?? data.url;
-            if (pendingPlaylist && (level === undefined || pendingPlaylist.level === level) && (!url || pendingPlaylist.url === url)) pendingPlaylist = null;
-          }
-          // hls.js deliberately leaves this error nonfatal, even with one
-          // rendition. An unchanged HTTP-200 playlist still needs recovery.
-          if (data.details === "playlistUnchangedError") {
-            sourceStale = true; liveStatus.waiting(active()); playback.playlistStalled(); return;
-          }
-          if (!data.fatal) return;
-          pendingFragment = null; pendingPlaylist = null;
-          if (data.type === Hls.ErrorTypes.NETWORK_ERROR) playback.recover(() => {
-            if (hls === engine) { recoverLiveNetwork(engine, src, data.details); startPlayback(); }
-          }, true);
-          else if (data.type === Hls.ErrorTypes.MEDIA_ERROR) playback.recover(() => {
-            if (hls === engine) { engine.recoverMediaError(); startPlayback(); }
-          }, true);
-          else playback.recover(undefined, true);
-        });
-        engine.attachMedia(video); engine.loadSource(src);
-      }).catch(() => {
-        if (cancelled || current !== generation) return;
-        if (nativeHlsCapable) startNative(); else playback.recover();
-      });
-    }
-
-    video.addEventListener("loadedmetadata", metadata);
-    video.addEventListener("loadeddata", updateAspect);
-    video.addEventListener("resize", updateAspect);
-    video.addEventListener("playing", playing);
-    video.addEventListener("timeupdate", progress);
-    video.addEventListener("pause", pausedPlayback);
-    video.addEventListener("ended", endedPlayback);
-    video.addEventListener("waiting", waiting);
-    video.addEventListener("stalled", waiting);
-    video.addEventListener("canplay", canPlay);
-    video.addEventListener("error", nativeError);
-    document.addEventListener("visibilitychange", visibility);
-    window.addEventListener("pageshow", pageShow);
-    window.addEventListener("online", online);
-    window.addEventListener("offline", offline);
-    window.addEventListener("scroll", invalidatePresence, { capture: true, passive: true });
-    window.addEventListener("resize", invalidatePresence, { passive: true });
-    const observer = typeof IntersectionObserver === "function" ? new IntersectionObserver(invalidatePresence, { threshold: [0, 0.01] }) : null;
-    observer?.observe(video);
-    presence.invalidate();
-
-    // Safari's native player starts without downloading the MSE engine.
-    if (livePlaybackStrategy(typeof window.MediaSource === "function" || managedMediaSource, nativeHlsCapable, managedMediaSource) === "native") startNative();
-    else installHls();
-
-    return () => {
-      cancelled = true; generation++; playAction.current = null; stopFrames(); pendingFragment = null; pendingPlaylist = null;
-      observer?.disconnect(); presence.dispose(); playback.dispose(); loadMonitor.dispose(); liveStatus.dispose();
-      resumeSync.dispose(); driftSync.dispose();
-      video.removeEventListener("loadedmetadata", metadata);
-      video.removeEventListener("loadeddata", updateAspect);
-      video.removeEventListener("resize", updateAspect);
-      video.removeEventListener("playing", playing);
-      video.removeEventListener("timeupdate", progress);
-      video.removeEventListener("pause", pausedPlayback);
-      video.removeEventListener("ended", endedPlayback);
-      video.removeEventListener("waiting", waiting);
-      video.removeEventListener("stalled", waiting);
-      video.removeEventListener("canplay", canPlay);
-      video.removeEventListener("error", nativeError);
-      document.removeEventListener("visibilitychange", visibility);
-      window.removeEventListener("pageshow", pageShow);
-      window.removeEventListener("online", online);
-      window.removeEventListener("offline", offline);
-      window.removeEventListener("scroll", invalidatePresence, true);
-      window.removeEventListener("resize", invalidatePresence);
-      hls?.destroy(); video.pause(); video.removeAttribute("src"); video.load();
-    };
-  }, [src, attempt]);
-
-  return <>
-    {preview && !hasFrame && <BroadcastPreview key={preview} src={preview} refresh={inView && (loadState === "loading" || loadState === "unavailable")}
-      onReady={() => setPreviewReady(true)}
-      onAspect={(width, height) => callbacks.current.onAspect(portraitFrameAspect(width, height))} />}
-    <video ref={videoRef} className="lp-broadcast-player is-ready" autoPlay muted playsInline preload="auto"
-      disableRemotePlayback disablePictureInPicture controls={false}
-      controlsList="nodownload noplaybackrate noremoteplayback" tabIndex={-1}
-      aria-label="ChogCare live broadcast" onContextMenu={(event) => event.preventDefault()} />
-    {loadState !== "playing" && !((hasFrame || previewReady) && loadState === "loading") && <div className="lp-broadcast-loading lp-broadcast-state" role="status" aria-live="polite">
-      {loadState === "loading" ? <><i aria-hidden="true"/><span>Loading live broadcast…</span></> : <>
-        <span className="care-broadcast-state-icon" aria-hidden="true"><Broadcast size={30} weight="light" /></span>
-        <strong>{loadState === "blocked" ? "Ready when you are." : "Reconnecting broadcast"}</strong>
-        <span>{loadState === "blocked" ? "Your browser needs a tap to start the video." : "The connection was interrupted. Retrying automatically."}</span>
-        <button type="button" onClick={() => { if (loadState === "blocked") playAction.current?.(); else setAttempt(value => value + 1); }}>{loadState === "blocked" ? "Play broadcast" : "Retry broadcast"}</button>
-      </>}
-    </div>}
-  </>;
-}
-
-function BroadcastPanel({ headingId, portraitAspect, onAspect }: { headingId: string; portraitAspect: number | undefined; onAspect: (ratio: number | undefined) => void }) {
-  const [playerLoaded, setPlayerLoaded] = useState(false);
-  useEffect(() => {
-    if (!playerLoaded) return;
-    const timer = setTimeout(() => { void loadPaymentCheckout().catch(() => {}); }, 1500);
-    return () => clearTimeout(timer);
-  }, [playerLoaded]);
-  const owncastUrl = owncastStreamUrl();
-  const twitchUrl = twitchChannel
-    ? `https://player.twitch.tv/?channel=${encodeURIComponent(twitchChannel)}&parent=${encodeURIComponent(window.location.hostname)}&muted=true&autoplay=true`
-    : null;
-
-  return <div className="care-stream" data-camera-fit={portraitAspect ? "portrait" : "fallback"} style={portraitAspect ? { aspectRatio: portraitAspect } : undefined}>
-    <section className="lp-broadcast-frame" aria-labelledby={headingId}>
-      <div className="lp-broadcast-interior">
-        {owncastUrl || twitchUrl ? <>
-          <h2 id={headingId} className="sr-only">ChogCare live broadcast</h2>
-          {owncastUrl ? <NativeLivePlayer src={owncastUrl} onReady={() => setPlayerLoaded(true)} onWaiting={() => setPlayerLoaded(false)} onAspect={onAspect} /> : <iframe
-              className={`lp-broadcast-player${playerLoaded ? " is-ready" : ""}`}
-              src={twitchUrl ?? undefined}
-              title="ChogCare live broadcast"
-              loading="eager"
-              referrerPolicy="strict-origin-when-cross-origin"
-              allow="autoplay; encrypted-media; picture-in-picture; fullscreen"
-              allowFullScreen
-              onLoad={() => setPlayerLoaded(true)}
-            />}
-          <span className={`lp-broadcast-live${playerLoaded ? "" : " is-waiting"}`} role="status" aria-label={playerLoaded ? "Live broadcast" : "Broadcast not playing"}>
-            <i aria-hidden="true" />{playerLoaded ? "LIVE" : "STREAM"}
-          </span>
-          {!owncastUrl && <span className={`lp-broadcast-loading${playerLoaded ? " is-hidden" : ""}`} aria-hidden="true">
-            <i />Loading live broadcast…
-          </span>}
-        </> : <div className="lp-broadcast-placeholder">
-          <Broadcast size={38} weight="light" aria-hidden="true" />
-          <h2 id={headingId}>ChogCare broadcast</h2>
-          <p>Coming soon</p>
-        </div>}
-      </div>
-    </section>
-  </div>;
+  return <section className="care-broadcast" aria-labelledby={headingId}>
+    <h2 id={headingId} className="sr-only">ChogCare broadcast</h2>
+    <div className="care-stream" ref={frameRef}>
+      {playerFits ? <iframe
+        className="care-twitch-player"
+        src={`https://player.twitch.tv/?channel=${twitchChannel}&parent=${parent}&muted=true&autoplay=true`}
+        title="ChogCare Twitch broadcast"
+        referrerPolicy="strict-origin-when-cross-origin"
+        allow="autoplay; encrypted-media; picture-in-picture; fullscreen"
+        allowFullScreen
+      /> : <a className="care-twitch-fallback" href={twitchChannelUrl} target="_blank" rel="noopener noreferrer">
+        <Broadcast size={24} aria-hidden="true" /> Watch on Twitch <ArrowUpRight size={16} aria-hidden="true" />
+      </a>}
+    </div>
+    <div className="care-broadcast-actions">
+      <button type="button" aria-expanded={chatOpen} aria-controls={chatId} onClick={() => setChatOpen(open => !open)}>
+        <ChatCircle size={18} aria-hidden="true" /> Chat <CaretDown size={14} aria-hidden="true" />
+      </button>
+      {playerFits && <a href={twitchChannelUrl} target="_blank" rel="noopener noreferrer">
+        Twitch <ArrowUpRight size={14} aria-hidden="true" />
+      </a>}
+    </div>
+    <div id={chatId} hidden={!chatOpen}>
+      {chatOpen && <iframe
+        className="care-twitch-chat"
+        src={`https://www.twitch.tv/embed/${twitchChannel}/chat?parent=${parent}&darkpopout`}
+        title="ChogCare Twitch chat"
+        referrerPolicy="strict-origin-when-cross-origin"
+      />}
+    </div>
+  </section>;
 }
 
 export default function App() {
@@ -519,11 +234,13 @@ export default function App() {
   const [stationOpen, setStationOpen] = useState(initialSelection.outstanding);
   const [checkoutVisited, setCheckoutVisited] = useState(initialSelection.outstanding);
   useEffect(() => { if (stationOpen) setCheckoutVisited(true); }, [stationOpen]);
+  useEffect(() => {
+    if (stationOpen) return;
+    const timer = window.setTimeout(() => { void loadPaymentCheckout().catch(() => {}); }, 1500);
+    return () => window.clearTimeout(timer);
+  }, [stationOpen]);
   const [exitTarget, setExitTarget] = useState<string | null>(null);
   const [returnedToLanding, setReturnedToLanding] = useState(false);
-  // Keep the observed camera ratio across checkout navigation so its delayed
-  // metadata cannot resize the hero and shift the destination after returning.
-  const [portraitAspect, setPortraitAspect] = useState<number | undefined>();
   const [recoveryVersion, setRecoveryVersion] = useState(0);
   const [resumeNotice, setResumeNotice] = useState(false);
   const stationRef = useRef<HTMLElement>(null);
@@ -665,7 +382,7 @@ export default function App() {
       <main id="main" className="lp-main">
         <div hidden={stationOpen}>
           <section ref={heroRef} className="care-intro" aria-labelledby="hero-heading">
-            <div className="care-intro-broadcast">{!stationOpen && <BroadcastPanel headingId="intro-broadcast-heading" portraitAspect={portraitAspect} onAspect={setPortraitAspect} />}</div>
+            <div className="care-intro-broadcast">{!stationOpen && <BroadcastPanel headingId="intro-broadcast-heading" />}</div>
             <div className="care-intro-copy">
               <h1 id="hero-heading">Your $CHOG.<br/><span>Real-world care.</span></h1>
               <p>Give to a cause. Watch the care station light up.</p>
@@ -709,7 +426,7 @@ export default function App() {
           <div className="care-station-grid">
             <div className="care-stream-column" id="care-livestream" tabIndex={-1}>
               <div className="care-station-stream-heading"><h3>Care station</h3><p>The broadcast stays here while you give.</p></div>
-              {stationOpen && <BroadcastPanel headingId="broadcast-heading" portraitAspect={portraitAspect} onAspect={setPortraitAspect} />}
+              {stationOpen && <BroadcastPanel headingId="broadcast-heading" />}
             </div>
             <div className="care-checkout-column">
               <div className="care-selected"><img src={selected.image} alt={selected.imageAlt} loading="lazy" width="76" height="76" /><div><span>{selected.category} · {selected.location}</span><h2>{selected.name}</h2><button className="lp-text-button" onClick={() => setOpenInitiative(selected)}>About this initiative <ArrowUpRight size={14} /></button></div></div>
